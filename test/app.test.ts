@@ -8,7 +8,7 @@ test("createRuntime: the session event records the prompt and tools; the search 
   process.env.TAVILY_API_KEY = "tvly-test";
   process.env.AGENT_PROMPT_RULES = "tools";
   try {
-    const runtime = createRuntime("ask", { sessionsDir: tempWorkspace() });
+    const runtime = createRuntime("ask", { sessionsDir: tempWorkspace(), dataDir: tempWorkspace() });
     // bash inherits process.env; the key now lives only in the tool.
     assert.equal(process.env.TAVILY_API_KEY, undefined);
     const meta = runtime.store.create(tempWorkspace(), runtime.model, "ask");
@@ -22,7 +22,7 @@ test("createRuntime: the session event records the prompt and tools; the search 
     assert.match(session.data.system, /Use the dedicated tools for files/);
 
     process.env.TAVILY_API_KEY = "tvly-test";
-    const offline = createRuntime("auto", { sessionsDir: tempWorkspace(), webSearch: false });
+    const offline = createRuntime("auto", { sessionsDir: tempWorkspace(), dataDir: tempWorkspace(), webSearch: false });
     const m2 = offline.store.create(tempWorkspace(), offline.model, "auto");
     assert.ok(!offline.makeDeps(m2, { approvalMode: () => "auto", confirm: async () => true }).tools.some((t) => t.spec.name === "web_search"));
   } finally {

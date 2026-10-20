@@ -6,7 +6,7 @@ import type { AgentDeps } from "../src/agent/loop.ts";
 import { createTracer, nullTracer } from "../src/agent/trace.ts";
 import { DEFAULT_PRICING } from "../src/pricing.ts";
 import { SessionStore } from "../src/session/store.ts";
-import { WorkspaceStore } from "../src/workspace/store.ts";
+import { ProjectStore } from "../src/workspace/store.ts";
 import { defaultTools } from "../src/tools/index.ts";
 import type { CompletionRequest, CompletionResponse, Provider, StopReason, ToolCall } from "../src/types.ts";
 
@@ -65,7 +65,7 @@ export function testRuntime(provider: Provider): Runtime {
   const store = new SessionStore(tempWorkspace());
   return {
     store,
-    workspaces: new WorkspaceStore(join(tempWorkspace(), "workspaces.json")),
+    projects: new ProjectStore(join(tempWorkspace(), "projects.json"), join(tempWorkspace(), "worktrees.json")),
     model: provider.model,
     pricing: DEFAULT_PRICING,
     promptRules: [],

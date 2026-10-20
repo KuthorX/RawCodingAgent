@@ -81,8 +81,8 @@ function folderPicker(pick: PickFolder): () => Promise<string | null> {
   };
 }
 
-// Routes: /api/workspaces[/remove|/pick]
-async function handleWorkspaces(
+// Routes: /api/projects[/remove|/pick|/branches|/workspaces[/remove]]
+async function handleProjects(
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
@@ -90,23 +90,33 @@ async function handleWorkspaces(
   pick: () => Promise<string | null>,
 ): Promise<void> {
   const route = `${req.method} ${url.pathname}`;
-  // Opens the OS folder chooser, then opens the chosen folder as a workspace.
-  if (route === "POST /api/workspaces/pick") {
+  if (route === "GET /api/projects") return sendJson(res, 200, await manager.describeProjects());
+  if (route === "GET /api/projects/branches") return sendJson(res, 200, await manager.branches(manager.project(url.searchParams.get("project"))));
+  // Opens the OS folder chooser, then opens the chosen folder as a project.
+  if (route === "POST /api/projects/pick") {
     const path = await pick();
-    return path === null ? sendJson(res, 200, { cancelled: true }) : sendJson(res, 201, manager.openWorkspace(path));
-  }
-  if (route === "GET /api/workspaces") {
-    const sessions = manager.store.list();
-    return sendJson(
-      res,
-      200,
-      manager.workspaces.list().map((w) => ({ ...w, sessions: sessions.filter((s) => s.workspace === w.path).length })),
-    );
+    return path === null ? sendJson(res, 200, { cancelled: true }) : sendJson(res, 201, manager.openProject(path));
   }
   const body = await readJson(req);
+  if (route === "POST /api/projects/workspaces") {
+    const str = (key: string) => (typeof body[key] === "string" && (body[key] as string).trim() ? (body[key] as string).trim() : undefined);
+    return sendJson(res, 201, await manager.createWorkspace(manager.project(body.project), { name: str("name"), branch: str("branch"), base: str("base") }));
+  }
+  if (route === "POST /api/projects/workspaces/remove") {
+    if (typeof body.root !== "string") throw new HttpError(400, '"root" is required');
+    return sendJson(res, 200, await manager.removeWorkspace(manager.project(body.project), body.root, body.force === true));
+  }
   if (typeof body.path !== "string" || !body.path.trim()) throw new HttpError(400, '"path" is required');
-  if (route === "POST /api/workspaces") return sendJson(res, 201, manager.openWorkspace(body.path));
-  if (route === "POST /api/workspaces/remove") return sendJson(res, 200, { ok: true, removed: manager.workspaces.remove(body.path) });
+  // Only directories the project list knows about; this endpoint must not open arbitrary paths.
+  if (route === "POST /api/projects/reveal") {
+    const path = body.path;
+    const known = (await manager.describeProjects()).some((p) => p.workspaces.some((w) => w.path === path && !w.missing));
+    if (!known) throw new HttpError(404, "not a known workspace");
+    await revealInFileManager(path);
+    return sendJson(res, 200, { ok: true });
+  }
+  if (route === "POST /api/projects") return sendJson(res, 201, manager.openProject(body.path));
+  if (route === "POST /api/projects/remove") return sendJson(res, 200, { ok: true, removed: manager.projects.remove(body.path) });
   throw new HttpError(404, "not found");
 }
 
@@ -123,7 +133,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
         throw new HttpError(400, '"approvalMode" must be "ask" or "auto"');
       }
       if (typeof body.workspace !== "string" || !body.workspace.trim()) throw new HttpError(400, '"workspace" path is required');
-      return sendJson(res, 201, manager.create(body.workspace, body.approvalMode));
+      return sendJson(res, 201, await manager.create(body.workspace, body.approvalMode));
     }
     throw new HttpError(405, "method not allowed");
   }
@@ -157,8 +167,13 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       done.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
       return sendJson(res, 202, { ok: true, queued });
     }
-    case "POST fork":
-      return sendJson(res, 201, manager.fork(id));
+    case "POST fork": {
+      const body = await readJson(req);
+      const nw = body.newWorkspace;
+      if (nw !== undefined && (typeof nw !== "object" || nw === null)) throw new HttpError(400, '"newWorkspace" must be an object');
+      const name = typeof (nw as { name?: unknown } | undefined)?.name === "string" ? (nw as { name: string }).name : undefined;
+      return sendJson(res, 201, await manager.fork(id, nw === undefined ? undefined : { name }));
+    }
     case "POST stop": {
       return sendJson(res, 200, { ok: true, stopped: manager.get(id).stop() });
     }
@@ -206,7 +221,7 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, { manager, t
   const events = url.pathname.match(/^\/events\/([^/]+)$/);
   if (req.method === "GET" && events) return streamEvents(req, res, manager, sessionId(events[1]));
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager);
-  if (url.pathname.startsWith("/api/workspaces")) return handleWorkspaces(req, res, url, manager, pick);
+  if (url.pathname.startsWith("/api/projects")) return handleProjects(req, res, url, manager, pick);
   return sendJson(res, 404, { error: "not found" });
 }
 

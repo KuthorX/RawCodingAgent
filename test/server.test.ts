@@ -104,15 +104,68 @@ test("approval mode can be set at creation and changed per session", async () =>
   assert.equal((await call("POST", `/api/sessions/${plain.id}/settings`, { token: null, body: { approvalMode: "auto" } })).status, 401);
 });
 
-test("fork creates a new session; 404 for an unknown one", async () => {
+test("stop is a no-op when idle", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  const res = await call("POST", `/api/sessions/${id}/stop`, { body: {} });
+  assert.deepEqual(JSON.parse(res.body), { ok: true, stopped: false });
+});
+
+test("projects are opened, listed with their workspaces, and removed without touching sessions", async () => {
+  const added = await call("POST", "/api/projects", { body: { path: workspace + "/" } });
+  assert.equal(added.status, 201);
+  assert.equal(JSON.parse(added.body).path, workspace);
+  const list = JSON.parse((await call("GET", "/api/projects")).body) as { path: string; repo: string | null; workspaces: { path: string; main: boolean }[] }[];
+  const entry = list.find((p) => p.path === workspace)!;
+  assert.equal(entry.repo, null);
+  assert.deepEqual(entry.workspaces.map((w) => [w.path, w.main]), [[workspace, true]]);
+  assert.equal((await call("POST", "/api/projects", { body: { path: "/definitely/not/here" } })).status, 400);
+  assert.equal((await call("POST", "/api/projects", { body: {} })).status, 400);
+  assert.equal((await call("POST", "/api/projects/workspaces", { body: { project: workspace } })).status, 400); // not a git repo
+  assert.equal((await call("POST", "/api/projects/workspaces", { body: { project: "/nope" } })).status, 404);
+
+  const before = (JSON.parse((await call("GET", "/api/sessions")).body) as unknown[]).length;
+  const removed = await call("POST", "/api/projects/remove", { body: { path: workspace } });
+  assert.deepEqual(JSON.parse(removed.body), { ok: true, removed: true });
+  assert.equal((JSON.parse((await call("GET", "/api/sessions")).body) as unknown[]).length, before);
+  assert.equal((JSON.parse((await call("GET", "/api/projects")).body) as unknown[]).length, 0);
+});
+
+test("picking a folder opens it as a project; cancel and a missing folder are handled", async () => {
+  nextPick = async () => workspace;
+  const picked = await call("POST", "/api/projects/pick", { body: {} });
+  assert.equal(picked.status, 201);
+  assert.equal((JSON.parse(picked.body) as { path: string }).path, workspace);
+
+  nextPick = async () => null;
+  assert.deepEqual(JSON.parse((await call("POST", "/api/projects/pick", { body: {} })).body), { cancelled: true });
+
+  nextPick = async () => "/definitely/not/here";
+  assert.equal((await call("POST", "/api/projects/pick", { body: {} })).status, 400);
+
+  assert.equal((await call("POST", "/api/projects/pick", { body: {}, token: null })).status, 401);
+  await call("POST", "/api/projects/remove", { body: { path: workspace } });
+});
+
+test("only one folder dialog at a time", async () => {
+  let release: (path: string | null) => void = () => {};
+  nextPick = () => new Promise((resolve) => (release = resolve));
+  const first = call("POST", "/api/projects/pick", { body: {} });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal((await call("POST", "/api/projects/pick", { body: {} })).status, 409);
+  release(null);
+  assert.equal((await first).status, 200);
+});
+
+test("fork creates a new session; 404 for an unknown one; a new workspace needs git", async () => {
   const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
   const res = await call("POST", `/api/sessions/${id}/fork`, { body: {} });
   assert.equal(res.status, 201);
-  const fork = JSON.parse(res.body) as { id: string; forkedFrom: { id: string } };
+  const fork = (JSON.parse(res.body) as { meta: { id: string; forkedFrom: { id: string } } }).meta;
   assert.notEqual(fork.id, id);
   assert.equal(fork.forkedFrom.id, id);
   assert.equal((await call("GET", `/api/sessions/${fork.id}`)).status, 200);
   assert.equal((await call("POST", "/api/sessions/20260101-000000-abcdef/fork", { body: {} })).status, 404);
+  assert.equal((await call("POST", `/api/sessions/${id}/fork`, { body: { newWorkspace: { name: "x" } } })).status, 400);
 });
 
 test("message with pasted images: saved, served back, validated", async () => {
@@ -130,53 +183,4 @@ test("message with pasted images: saved, served back, validated", async () => {
   assert.equal(img.status, 200);
   assert.equal((await call("GET", `/api/sessions/${id}/attachment?name=..%2Fmeta.json`)).status, 400);
   assert.equal((await call("GET", `/api/sessions/${id}/attachment?name=1-abcdef.png`)).status, 404);
-});
-
-test("stop is a no-op when idle", async () => {
-  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
-  const res = await call("POST", `/api/sessions/${id}/stop`, { body: {} });
-  assert.deepEqual(JSON.parse(res.body), { ok: true, stopped: false });
-});
-
-test("workspaces are opened, listed with session counts, and removed without touching sessions", async () => {
-  const added = await call("POST", "/api/workspaces", { body: { path: workspace + "/" } });
-  assert.equal(added.status, 201);
-  assert.equal(JSON.parse(added.body).path, workspace);
-  const list = JSON.parse((await call("GET", "/api/workspaces")).body) as { path: string; sessions: number }[];
-  const entry = list.find((w) => w.path === workspace);
-  assert.ok(entry && entry.sessions > 0);
-  assert.equal((await call("POST", "/api/workspaces", { body: { path: "/definitely/not/here" } })).status, 400);
-  assert.equal((await call("POST", "/api/workspaces", { body: {} })).status, 400);
-
-  const before = (JSON.parse((await call("GET", "/api/sessions")).body) as unknown[]).length;
-  const removed = await call("POST", "/api/workspaces/remove", { body: { path: workspace } });
-  assert.deepEqual(JSON.parse(removed.body), { ok: true, removed: true });
-  assert.equal((JSON.parse((await call("GET", "/api/sessions")).body) as unknown[]).length, before);
-  assert.equal((JSON.parse((await call("GET", "/api/workspaces")).body) as unknown[]).length, 0);
-});
-
-test("picking a folder opens it as a workspace; cancel and a missing folder are handled", async () => {
-  nextPick = async () => workspace;
-  const picked = await call("POST", "/api/workspaces/pick", { body: {} });
-  assert.equal(picked.status, 201);
-  assert.equal((JSON.parse(picked.body) as { path: string }).path, workspace);
-
-  nextPick = async () => null;
-  assert.deepEqual(JSON.parse((await call("POST", "/api/workspaces/pick", { body: {} })).body), { cancelled: true });
-
-  nextPick = async () => "/definitely/not/here";
-  assert.equal((await call("POST", "/api/workspaces/pick", { body: {} })).status, 400);
-
-  assert.equal((await call("POST", "/api/workspaces/pick", { body: {}, token: null })).status, 401);
-  await call("POST", "/api/workspaces/remove", { body: { path: workspace } });
-});
-
-test("only one folder dialog at a time", async () => {
-  let release: (path: string | null) => void = () => {};
-  nextPick = () => new Promise((resolve) => (release = resolve));
-  const first = call("POST", "/api/workspaces/pick", { body: {} });
-  await new Promise((r) => setTimeout(r, 30));
-  assert.equal((await call("POST", "/api/workspaces/pick", { body: {} })).status, 409);
-  release(null);
-  assert.equal((await first).status, 200);
 });

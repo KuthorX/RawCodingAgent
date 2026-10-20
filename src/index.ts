@@ -35,11 +35,11 @@ async function main(): Promise<void> {
 
   const runtime = createRuntime(values.yes ? "auto" : "ask");
   // Every workspace used is remembered, so the GUI can offer it next time without --cwd.
-  const workspace = values.cwd === undefined ? undefined : runtime.workspaces.add(values.cwd).path;
+  const workspace = values.cwd === undefined ? undefined : runtime.projects.add(values.cwd).path;
 
   if (!values.gui) {
     const task = positionals.join(" ").trim();
-    const cwd = workspace ?? (values.resume ? process.cwd() : runtime.workspaces.add(process.cwd()).path);
+    const cwd = workspace ?? (values.resume ? process.cwd() : runtime.projects.add(process.cwd()).path);
     await runCli(runtime, { workspace: cwd, resumeId: values.resume, task, forceAuto: values.yes });
     return;
   }

@@ -4,3 +4,5 @@ node_modules/
 .workspaces.json
 .eval-runs/
 .traces/
+.projects.json
+.worktrees.json

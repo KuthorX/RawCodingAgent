@@ -30,8 +30,29 @@
   .ws-head button.x { border: 0; background: none; color: var(--muted); padding: 0 4px; visibility: hidden; }
   .ws-head:hover button.x { visibility: visible; }
   .ws-head.current .name { color: var(--accent); }
-  .ws-empty { padding: 8px 12px 10px 26px; font-size: 12px; color: var(--muted); }
+  /* Level 2: a workspace (the project directory, or one of its worktrees) inside a project. */
+  .ws-head.sub { position: static; background: none; border: 0; margin: 0; height: 30px; padding-left: 22px; font-weight: 500; }
+  .ws-head.sub:hover { background: var(--soft); }
+  .ws-head .branch { font: 12px var(--mono); color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+  .ws-head .dirty { color: var(--warn); font-weight: 400; font-size: 12px; flex: none; }
+  .ws-head .gone { color: var(--err); font-weight: 400; font-size: 12px; flex: none; }
+  .ws-head.sub button { visibility: hidden; }
+  .ws-head.sub:hover button, .ws-head.sub.current button { visibility: visible; }
+  .ws-empty { padding: 4px 12px 8px 40px; font-size: 12px; color: var(--muted); }
   .item { display: block; padding: 8px 12px 8px 26px; color: var(--ink); cursor: pointer; }
+  .in-ws .item { padding-left: 40px; }
+  dialog { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); padding: 18px 20px; width: 420px; box-shadow: 0 8px 32px rgb(0 0 0 / .18); }
+  dialog::backdrop { background: rgb(0 0 0 / .25); }
+  dialog [hidden] { display: none !important; }
+  dialog h3 { margin: 0 0 4px; font-size: 16px; }
+  dialog p { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+  dialog form { display: flex; flex-direction: column; gap: 10px; max-width: none; align-items: stretch; }
+  dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  dialog label.radio { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
+  dialog input[type=text], dialog select { font: 13px var(--mono); padding: 0 8px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+  dialog .row button { height: 32px; }
+  dialog .hint { font-size: 12px; color: var(--muted); }
   .item:hover { background: var(--soft); text-decoration: none; }
   .item.active { background: var(--soft); box-shadow: inset 3px 0 0 var(--accent); }
   .item .title { display: flex; gap: 6px; align-items: center; font-size: 13px; }
@@ -159,9 +180,9 @@
 <div class="layout" id="root">
   <aside>
     <div class="new">
-      <button id="ws-add" type="button">+ 打开工作区</button>
+      <button id="ws-add" type="button">+ 打开项目</button>
       <div class="open-row" id="ws-form" hidden>
-        <input type="text" id="ws-path" placeholder="工作区路径，或点右边选择">
+        <input type="text" id="ws-path" placeholder="项目路径，或点右边选择">
         <button id="ws-open" type="button" title="弹出系统的文件夹选择框">选择…</button>
       </div>
     </div>
@@ -191,6 +212,22 @@
     </footer>
   </section>
 </div>
+<dialog id="ws-dialog">
+  <form method="dialog" id="ws-dialog-form">
+    <h3 id="ws-dialog-title">新建工作区</h3>
+    <p id="ws-dialog-desc"></p>
+    <label>名字（目录名，留空自动生成）<input type="text" id="wsd-name" autocomplete="off"></label>
+    <label class="radio"><input type="radio" name="wsd-mode" value="new" checked> 新建分支 <code id="wsd-branch-preview">agent/…</code></label>
+    <label id="wsd-base-row">从哪里开始<input type="text" id="wsd-base" autocomplete="off"></label>
+    <label class="radio" id="wsd-existing-radio"><input type="radio" name="wsd-mode" value="existing"> 使用已有分支（删除工作区时不会删除这条分支）</label>
+    <label id="wsd-existing-row" hidden>分支<select id="wsd-existing"></select></label>
+    <div class="hint" id="wsd-hint"></div>
+    <div class="row">
+      <button type="button" id="wsd-cancel">取消</button>
+      <button type="submit" class="primary" id="wsd-ok">创建</button>
+    </div>
+  </form>
+</dialog>
 <script src="/common.js"></script>
 <script src="/markdown.js"></script>
 <script>
@@ -337,76 +374,216 @@ document.addEventListener("click", closeMenu);
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeMenu(); });
 window.addEventListener("blur", closeMenu);
 
-async function forkSession(id) {
-  try {
-    const meta = await api(`/api/sessions/${id}/fork`, {});
-    location.hash = meta.id;
-    toast("已 fork 为新会话");
-  } catch (e) { alert(e.message); }
+// newWorkspace: { name } to fork into a new worktree that starts at the source workspace's current commit.
+async function forkSession(id, newWorkspace) {
+  const res = await api(`/api/sessions/${id}/fork`, newWorkspace ? { newWorkspace } : {});
+  location.hash = res.meta.id;
+  if (!newWorkspace) return toast("已 fork 为新会话（同一个工作区）");
+  const notes = [`已 fork 到新工作区 ${res.workspace.name}（分支 ${res.workspace.branch}）`];
+  if (res.uncommitted) notes.push(`原工作区有 ${res.uncommitted} 个未提交的改动，没有带过去`);
+  toast(notes.join("；"));
 }
 
 function sessionMenu(ev, s) {
-  showMenu(ev, [
+  const items = [
     ["复制 session id", () => copyText(s.id, " session id")],
     ["复制工作区路径", () => copyText(s.workspace, "工作区路径")],
     null,
-    ["Fork 会话", () => forkSession(s.id)],
-  ]);
+    ["Fork（同一工作区）", () => forkSession(s.id).catch((e) => alert(e.message))],
+  ];
+  const project = projectOf(s.workspace);
+  if (project?.repo) items.push(["Fork 到新工作区…", () => openWorkspaceDialog(project, { forkFrom: s })]);
+  showMenu(ev, items);
+}
+
+// The project whose workspaces include this directory.
+function projectOf(path) {
+  return projects.find((p) => p.workspaces.some((w) => w.path === path)) ?? null;
 }
 
 function toggleGroup(key) {
   if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
   localStorage.setItem("rca.collapsed", JSON.stringify([...collapsed]));
-  refreshSessions();
+  renderSidebar();
 }
 
-// One collapsible group per workspace; ws is null for the "other" group.
-function workspaceGroup(key, ws, sessions) {
+function smallButton(label, title, onclick, className = "") {
+  const btn = el("button", className, label);
+  btn.type = "button";
+  btn.title = title;
+  btn.onclick = (ev) => { ev.stopPropagation(); onclick(); };
+  return btn;
+}
+
+// Level 1: a project (a repository, or any folder). Its workspaces are listed under it.
+function projectGroup(p, sessions) {
   const frag = document.createDocumentFragment();
-  const head = el("div", "ws-head" + (ws && ws.path === currentWorkspace ? " current" : ""));
-  head.title = ws ? ws.path : "不在工作区列表里的会话（可在上方打开对应路径）";
-  head.append(el("span", "caret", collapsed.has(key) ? "▸" : "▾"), el("span", "name", ws ? ws.name : "其他"),
-    el("span", "count", String(sessions.length)));
+  const key = "p:" + p.path;
+  const head = el("div", "ws-head" + (p.workspaces.some((w) => w.path === currentWorkspace) ? " current" : ""));
+  head.title = p.repo ? `${p.path}\ngit 仓库：${p.repo}` : `${p.path}\n不是 git 仓库：只有主目录，不能新建工作区`;
+  const count = sessions.filter((s) => p.workspaces.some((w) => w.path === s.workspace)).length;
+  head.append(el("span", "caret", collapsed.has(key) ? "▸" : "▾"), el("span", "name", p.name), el("span", "count", String(count)));
   head.onclick = () => toggleGroup(key);
-  if (ws) {
-    const add = el("button", "", "+ 新会话");
-    add.type = "button";
-    add.title = `在 ${ws.path} 新建会话`;
-    add.onclick = (ev) => { ev.stopPropagation(); createSession(ws.path); };
-    const remove = el("button", "x", "×");
-    remove.type = "button";
-    remove.title = "从列表移除（不删除文件和会话）";
-    remove.onclick = async (ev) => {
-      ev.stopPropagation();
-      if (!confirm(`从列表移除工作区 ${ws.path}？\n不会删除任何文件，它的会话会归到“其他”。`)) return;
-      await api("/api/workspaces/remove", { path: ws.path }).catch((e) => alert(e.message));
-      refreshSessions();
-    };
-    head.append(add, remove);
-  }
+  if (p.repo) head.append(smallButton("+ 工作区", "新建一个 git worktree（独立的分支和目录）", () => openWorkspaceDialog(p)));
+  head.append(smallButton("×", "从列表移除项目（不删除文件、工作区和会话）", async () => {
+    if (!confirm(`从列表移除项目 ${p.path}？\n不会删除任何文件、worktree 或会话，它的会话会归到“其他”。`)) return;
+    await api("/api/projects/remove", { path: p.path }).catch((e) => alert(e.message));
+    refreshSessions();
+  }, "x"));
   frag.append(head);
   if (!collapsed.has(key)) {
-    if (sessions.length === 0) frag.append(el("div", "ws-empty", "还没有会话，点 “+ 新会话” 开始"));
-    for (const s of sessions) frag.append(sessionItem(s));
+    for (const w of p.workspaces) frag.append(workspaceGroup(p, w, sessions.filter((s) => s.workspace === w.path)));
   }
   return frag;
 }
 
+// Level 2: a workspace with its branch and uncommitted file count, then its sessions.
+function workspaceGroup(p, w, sessions) {
+  const frag = document.createDocumentFragment();
+  const key = "w:" + w.path;
+  const head = el("div", "ws-head sub" + (w.path === currentWorkspace ? " current" : ""));
+  head.title = [w.path, w.branch ? `分支 ${w.branch}` : "", w.managed ? "由这里创建" : w.main ? "项目主目录" : "手动创建的 worktree"].filter(Boolean).join("\n");
+  head.append(el("span", "caret", collapsed.has(key) ? "▸" : "▾"), el("span", "name", w.name));
+  if (w.branch) head.append(el("span", "branch", w.branch));
+  if (w.missing) head.append(el("span", "gone", "目录不存在"));
+  else if (w.dirty) head.append(el("span", "dirty", `${w.dirty} 改动`));
+  if (!w.missing) head.append(smallButton("+ 会话", `在 ${w.path} 新建会话`, () => createSession(w.path)));
+  head.onclick = () => toggleGroup(key);
+  head.addEventListener("contextmenu", (ev) => workspaceMenu(ev, p, w));
+  frag.append(head);
+  if (!collapsed.has(key)) {
+    const box = el("div", "in-ws");
+    if (sessions.length === 0 && !w.missing) box.append(el("div", "ws-empty", "还没有会话"));
+    for (const s of sessions) box.append(sessionItem(s));
+    frag.append(box);
+  }
+  return frag;
+}
+
+function workspaceMenu(ev, p, w) {
+  const items = [["复制路径", () => copyText(w.path, "路径")]];
+  if (w.branch) items.push(["复制分支名", () => copyText(w.branch, "分支名")]);
+  if (!w.missing) items.push(["在文件管理器中打开", () => api("/api/projects/reveal", { path: w.path }).catch((e) => alert(e.message))]);
+  if (!w.main) items.push(null, ["删除工作区…", () => deleteWorkspace(p, w)]);
+  showMenu(ev, items);
+}
+
+async function deleteWorkspace(p, w) {
+  const branchNote = !w.branch ? "" : w.managed ? `\n分支 ${w.branch} 已合并时一起删除，有未合并的提交就保留。` : `\n分支 ${w.branch} 不会被删除。`;
+  if (!confirm(`删除工作区 ${w.name}？\n会删除目录 ${w.root}${branchNote}\n这个工作区的会话记录会保留（归到“其他”）。`)) return;
+  let res;
+  try {
+    res = await api("/api/projects/workspaces/remove", { project: p.path, root: w.root });
+  } catch (e) {
+    if (!e.message.startsWith("409") || !e.message.includes("未提交")) return alert(e.message);
+    if (!confirm(`${e.message.replace(/^409 /, "")}。\n仍然删除？这些改动会丢失。`)) return;
+    try { res = await api("/api/projects/workspaces/remove", { project: p.path, root: w.root, force: true }); } catch (e2) { return alert(e2.message); }
+  }
+  toast(res.note ?? (res.branchDeleted ? `已删除工作区和分支 ${res.branch}` : "已删除工作区"));
+  refreshSessions();
+}
+
+let sessionList = [];
+let projects = [];
+
 async function refreshSessions() {
-  let list, workspaces;
-  try { [list, workspaces] = await Promise.all([api("/api/sessions"), api("/api/workspaces")]); } catch (e) { return; }
-  currentWorkspace = list.find((s) => s.id === current)?.workspace ?? currentWorkspace;
+  try { [sessionList, projects] = await Promise.all([api("/api/sessions"), api("/api/projects")]); } catch (e) { return; }
+  currentWorkspace = sessionList.find((s) => s.id === current)?.workspace ?? currentWorkspace;
+  renderSidebar();
+}
+
+function renderSidebar() {
   const box = $("sessions");
   box.replaceChildren();
-  if (workspaces.length === 0) box.append(el("div", "ws-empty", "点上方「选择…」或输入路径，打开第一个工作区"));
-  const known = new Set(workspaces.map((w) => w.path));
-  for (const ws of workspaces) box.append(workspaceGroup(ws.path, ws, list.filter((s) => s.workspace === ws.path)));
-  const others = list.filter((s) => !known.has(s.workspace));
-  if (others.length) box.append(workspaceGroup("__other__", null, others));
-  $("ws-form").hidden = workspaces.length > 0 && !wsFormOpen;
-  $("ws-add").hidden = workspaces.length === 0;
-  if (!current) renderStart(workspaces);
+  if (projects.length === 0) box.append(el("div", "ws-empty", "点上方「选择…」或输入路径，打开第一个项目"));
+  for (const p of projects) box.append(projectGroup(p, sessionList));
+  const known = new Set(projects.flatMap((p) => p.workspaces.map((w) => w.path)));
+  const others = sessionList.filter((s) => !known.has(s.workspace));
+  if (others.length) {
+    const key = "__other__";
+    const head = el("div", "ws-head");
+    head.title = "目录不在任何项目里的会话（项目被移除、或工作区已删除）";
+    head.append(el("span", "caret", collapsed.has(key) ? "▸" : "▾"), el("span", "name", "其他"), el("span", "count", String(others.length)));
+    head.onclick = () => toggleGroup(key);
+    box.append(head);
+    if (!collapsed.has(key)) for (const s of others) box.append(sessionItem(s));
+  }
+  $("ws-form").hidden = projects.length > 0 && !wsFormOpen;
+  $("ws-add").hidden = projects.length === 0;
+  if (!current) renderStart();
 }
+
+// ---------- new workspace / fork into a new workspace ----------
+let dialogState = null; // { project, forkFrom? }
+
+function branchPreview() {
+  const name = $("wsd-name").value.trim().replace(/\s+/g, "-").replace(/[^\w.-]/g, "");
+  $("wsd-branch-preview").textContent = `agent/${name || "<自动生成>"}`;
+}
+
+function syncDialogMode() {
+  const existing = document.querySelector('input[name="wsd-mode"]:checked').value === "existing";
+  $("wsd-existing-row").hidden = !existing;
+  $("wsd-base-row").hidden = existing || Boolean(dialogState?.forkFrom);
+}
+
+async function openWorkspaceDialog(project, { forkFrom } = {}) {
+  dialogState = { project, forkFrom };
+  const fork = Boolean(forkFrom);
+  $("ws-dialog-title").textContent = fork ? "Fork 到新工作区" : "新建工作区";
+  // Same rule as the server: <main checkout>.worktrees/<name>, next to the repository.
+  const main = project.workspaces.find((w) => w.main)?.root ?? project.repo;
+  $("ws-dialog-desc").textContent = fork
+    ? `复制会话「${forkFrom.title || forkFrom.id}」的历史，在一个新的 git worktree 里继续。新分支从原工作区当前的提交开始（未提交的改动不会带过去）。`
+    : `新建一个 git worktree，放在 ${main}.worktrees 下。仓库根目录的 .worktreeinclude 里列出的文件（如 .env）会被复制过去。`;
+  $("wsd-name").value = "";
+  document.querySelector('input[name="wsd-mode"][value="new"]').checked = true;
+  $("wsd-existing-radio").hidden = fork;
+  $("wsd-base").value = "";
+  $("wsd-hint").textContent = "";
+  $("wsd-ok").textContent = fork ? "Fork" : "创建并新建会话";
+  branchPreview();
+  syncDialogMode();
+  $("ws-dialog").showModal();
+  if (fork) return;
+  try {
+    const { branches, base } = await api(`/api/projects/branches?project=${encodeURIComponent(project.path)}`);
+    $("wsd-base").placeholder = base;
+    $("wsd-existing").replaceChildren(...branches.map((b) => { const o = el("option", "", b); o.value = b; return o; }));
+    if (branches.length === 0) $("wsd-existing-radio").hidden = true;
+  } catch (e) { $("wsd-hint").textContent = e.message; }
+}
+
+$("wsd-name").addEventListener("input", branchPreview);
+document.querySelectorAll('input[name="wsd-mode"]').forEach((r) => r.addEventListener("change", syncDialogMode));
+$("wsd-cancel").onclick = () => $("ws-dialog").close();
+$("ws-dialog-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const { project, forkFrom } = dialogState;
+  const name = $("wsd-name").value.trim();
+  const ok = $("wsd-ok");
+  ok.disabled = true;
+  $("wsd-hint").textContent = forkFrom ? "正在创建 worktree…" : "正在创建 worktree（git worktree add）…";
+  try {
+    if (forkFrom) {
+      await forkSession(forkFrom.id, { name });
+    } else {
+      const existing = document.querySelector('input[name="wsd-mode"]:checked').value === "existing";
+      const body = { project: project.path, name, ...(existing ? { branch: $("wsd-existing").value } : { base: $("wsd-base").value.trim() }) };
+      const res = await api("/api/projects/workspaces", body);
+      collapsed.delete("p:" + project.path);
+      if (res.copied.length) toast(`已复制 ${res.copied.join("、")}`);
+      if (res.workspace.missing) toast(`分支 ${res.workspace.branch} 里没有 ${project.subdir}，没法在这里新建会话`);
+      else await createSession(res.workspace.path);
+    }
+    $("ws-dialog").close();
+    refreshSessions();
+  } catch (e) {
+    $("wsd-hint").textContent = e.message;
+  } finally {
+    ok.disabled = false;
+  }
+});
 
 let wsFormOpen = false;
 $("ws-add").onclick = () => {
@@ -416,16 +593,18 @@ $("ws-add").onclick = () => {
 };
 
 // What the chat pane shows when no session is open.
-function renderStart(workspaces) {
+function renderStart() {
   const box = el("div", "start");
   box.append(el("h2", "", "在哪个目录工作？"),
-    el("p", "", workspaces.length ? "选一个工作区新建会话，或从左侧继续之前的会话。" : "先在左上角打开一个工作区，agent 会在那个目录里读写文件、运行命令。"));
-  for (const ws of workspaces) {
-    const btn = el("button");
-    btn.type = "button";
-    btn.append(el("span", "name", ws.name), el("span", "path", ws.path));
-    btn.onclick = () => createSession(ws.path);
-    box.append(btn);
+    el("p", "", projects.length ? "选一个工作区新建会话，或从左侧继续之前的会话。" : "先在左上角打开一个项目，agent 会在那个目录里读写文件、运行命令。"));
+  for (const p of projects) {
+    for (const w of p.workspaces.filter((x) => !x.missing)) {
+      const btn = el("button");
+      btn.type = "button";
+      btn.append(el("span", "name", w.main ? p.name : `${p.name} / ${w.name}`), el("span", "path", [w.branch, w.path].filter(Boolean).join(" · ")));
+      btn.onclick = () => createSession(w.path);
+      box.append(btn);
+    }
   }
   const keys = el("div", "keys");
   keys.innerHTML = "<kbd>Enter</kbd> 发送　<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行　<kbd>Esc</kbd> 停止 agent";
@@ -437,7 +616,7 @@ async function createSession(workspace) {
   try {
     const approvalMode = $("new-auto").checked ? "auto" : "ask";
     const meta = await api("/api/sessions", { workspace, approvalMode });
-    collapsed.delete(meta.workspace);
+    collapsed.delete("w:" + meta.workspace);
     location.hash = meta.id;
   } catch (e) { alert(e.message); }
 }
@@ -447,10 +626,10 @@ async function openWorkspace() {
   const path = $("ws-path").value.trim();
   if (!path) return pickWorkspace();
   try {
-    const ws = await api("/api/workspaces", { path });
+    const p = await api("/api/projects", { path });
     $("ws-path").value = "";
     $("ws-open").textContent = "选择…";
-    collapsed.delete(ws.path);
+    collapsed.delete("p:" + p.path);
     refreshSessions();
   } catch (e) { alert(e.message); }
 }
@@ -463,9 +642,9 @@ async function pickWorkspace() {
   button.disabled = true;
   button.textContent = "等待选择…";
   try {
-    const ws = await api("/api/workspaces/pick", {});
-    if (ws.cancelled) return;
-    collapsed.delete(ws.path);
+    const p = await api("/api/projects/pick", {});
+    if (p.cancelled) return;
+    collapsed.delete("p:" + p.path);
     refreshSessions();
   } catch (e) {
     alert(e.message);
@@ -735,7 +914,11 @@ function openSession(id) {
     fork.type = "button";
     fork.id = "fork";
     fork.title = "复制这个会话的历史，在新会话里继续（原会话不受影响）";
-    fork.onclick = () => forkSession(info.id);
+    fork.onclick = (ev) => {
+      ev.stopPropagation();
+      const r = fork.getBoundingClientRect();
+      sessionMenu({ preventDefault() {}, clientX: r.left, clientY: r.bottom + 4 }, { ...info, workspace: currentWorkspace });
+    };
     links.replaceChildren(fork, link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("·"),
       link(rawUrl(current, "events.jsonl"), "原始事件", true));
     showMode(info.approvalMode);
