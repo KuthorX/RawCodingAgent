@@ -14,6 +14,8 @@
   #sessions { flex: 1; overflow-y: auto; }
   .open-row { display: flex; gap: 6px; }
   .open-row input { flex: 1; min-width: 0; }
+  .open-row + .open-row { margin-top: 6px; }
+  .open-row .pick { flex: 1; }
   .ws-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 8px; background: var(--soft); border-bottom: 1px solid var(--line);
              font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
   .ws-head .caret { width: 12px; color: var(--muted); font-weight: 400; }
@@ -82,6 +84,9 @@
       <div class="open-row">
         <input id="ws-path" placeholder="工作区路径，如 ~/code/my-repo">
         <button id="ws-open" type="button">打开</button>
+      </div>
+      <div class="open-row">
+        <button id="ws-pick" type="button" class="pick">选择文件夹…</button>
       </div>
       <label><input type="checkbox" id="new-auto"> 新会话自动批准 bash（不再逐个询问）</label>
     </div>
@@ -228,7 +233,7 @@ async function refreshSessions() {
   currentWorkspace = list.find((s) => s.id === current)?.workspace ?? currentWorkspace;
   const box = $("sessions");
   box.replaceChildren();
-  if (workspaces.length === 0) box.append(el("div", "empty", "在上方输入路径，打开第一个工作区"));
+  if (workspaces.length === 0) box.append(el("div", "empty", "点"选择文件夹…"或输入路径，打开第一个工作区"));
   const known = new Set(workspaces.map((w) => w.path));
   for (const ws of workspaces) box.append(workspaceGroup(ws.path, ws, list.filter((s) => s.workspace === ws.path)));
   const others = list.filter((s) => !known.has(s.workspace));
@@ -255,6 +260,25 @@ async function openWorkspace() {
   } catch (e) { alert(e.message); }
 }
 $("ws-open").onclick = openWorkspace;
+
+// The server shows the OS folder chooser (a web page can't read absolute paths itself).
+async function pickWorkspace() {
+  const button = $("ws-pick");
+  button.disabled = true;
+  button.textContent = "等待选择…";
+  try {
+    const ws = await api("/api/workspaces/pick", {});
+    if (ws.cancelled) return;
+    collapsed.delete(ws.path);
+    refreshSessions();
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "选择文件夹…";
+  }
+}
+$("ws-pick").onclick = pickWorkspace;
 $("ws-path").addEventListener("keydown", (ev) => { if (ev.key === "Enter") openWorkspace(); });
 
 // ---------- transcript rendering ----------

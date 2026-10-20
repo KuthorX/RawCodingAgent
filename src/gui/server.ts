@@ -5,6 +5,7 @@ import { isApprovalMode } from "../agent/permissions.ts";
 import { isSessionFile, isSessionId } from "../session/store.ts";
 import { HttpError, readJson, sendJson, sendText, tokenMatches } from "./http.ts";
 import type { SessionManager } from "./manager.ts";
+import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.ts";
 import { revealInFileManager } from "./reveal.ts";
 
 const HOST = "127.0.0.1";
@@ -42,9 +43,38 @@ function streamEvents(req: IncomingMessage, res: ServerResponse, manager: Sessio
   });
 }
 
-// Routes: /api/workspaces[/remove]
-async function handleWorkspaces(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager): Promise<void> {
+export interface GuiOptions {
+  pickFolder?: PickFolder;
+}
+
+// One native dialog at a time: a second click while it is open would stack dialogs.
+function folderPicker(pick: PickFolder): () => Promise<string | null> {
+  let open = false;
+  return async () => {
+    if (open) throw new HttpError(409, "文件夹选择框已经打开");
+    open = true;
+    try {
+      return await pick();
+    } finally {
+      open = false;
+    }
+  };
+}
+
+// Routes: /api/workspaces[/remove|/pick]
+async function handleWorkspaces(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  manager: SessionManager,
+  pick: () => Promise<string | null>,
+): Promise<void> {
   const route = `${req.method} ${url.pathname}`;
+  // Opens the OS folder chooser, then opens the chosen folder as a workspace.
+  if (route === "POST /api/workspaces/pick") {
+    const path = await pick();
+    return path === null ? sendJson(res, 200, { cancelled: true }) : sendJson(res, 201, manager.openWorkspace(path));
+  }
   if (route === "GET /api/workspaces") {
     const sessions = manager.store.list();
     return sendJson(
@@ -124,7 +154,13 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
   }
 }
 
-function route(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager, token: string): Promise<void> | void {
+interface Context {
+  manager: SessionManager;
+  token: string;
+  pick: () => Promise<string | null>;
+}
+
+function route(req: IncomingMessage, res: ServerResponse, url: URL, { manager, token, pick }: Context): Promise<void> | void {
   const asset = req.method === "GET" ? PAGES[url.pathname] : undefined;
   if (asset) return sendText(res, asset[0], asset[1]);
 
@@ -135,11 +171,12 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, manager: Ses
   const events = url.pathname.match(/^\/events\/([^/]+)$/);
   if (req.method === "GET" && events) return streamEvents(req, res, manager, sessionId(events[1]));
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager);
-  if (url.pathname.startsWith("/api/workspaces")) return handleWorkspaces(req, res, url, manager);
+  if (url.pathname.startsWith("/api/workspaces")) return handleWorkspaces(req, res, url, manager, pick);
   return sendJson(res, 404, { error: "not found" });
 }
 
-export function createGuiServer(manager: SessionManager, token: string): Server {
+export function createGuiServer(manager: SessionManager, token: string, options: GuiOptions = {}): Server {
+  const context: Context = { manager, token, pick: folderPicker(options.pickFolder ?? nativePickFolder) };
   const server = createServer((req, res) => {
     const port = (server.address() as AddressInfo).port;
     // Host check blocks DNS rebinding; the token blocks cross-site requests from other pages.
@@ -152,7 +189,7 @@ export function createGuiServer(manager: SessionManager, token: string): Server 
       if (!res.headersSent) sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
     };
     try {
-      Promise.resolve(route(req, res, url, manager, token)).catch(fail);
+      Promise.resolve(route(req, res, url, context)).catch(fail);
     } catch (err) {
       fail(err);
     }

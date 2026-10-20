@@ -9,11 +9,13 @@ const TOKEN = "test-token";
 let port = 0;
 let close: () => void = () => {};
 let workspace = "";
+// Stands in for the native dialog: each test sets what the next "user choice" is.
+let nextPick: () => Promise<string | null> = async () => null;
 
 before(async () => {
   const runtime = testRuntime(new ScriptedProvider([reply("hello")]));
   workspace = runtime.store.root;
-  const server = createGuiServer(new SessionManager(runtime), TOKEN);
+  const server = createGuiServer(new SessionManager(runtime), TOKEN, { pickFolder: () => nextPick() });
   port = await listen(server, 0);
   close = () => server.close();
 });
@@ -123,4 +125,30 @@ test("workspaces are opened, listed with session counts, and removed without tou
   assert.deepEqual(JSON.parse(removed.body), { ok: true, removed: true });
   assert.equal((JSON.parse((await call("GET", "/api/sessions")).body) as unknown[]).length, before);
   assert.equal((JSON.parse((await call("GET", "/api/workspaces")).body) as unknown[]).length, 0);
+});
+
+test("picking a folder opens it as a workspace; cancel and a missing folder are handled", async () => {
+  nextPick = async () => workspace;
+  const picked = await call("POST", "/api/workspaces/pick", { body: {} });
+  assert.equal(picked.status, 201);
+  assert.equal((JSON.parse(picked.body) as { path: string }).path, workspace);
+
+  nextPick = async () => null;
+  assert.deepEqual(JSON.parse((await call("POST", "/api/workspaces/pick", { body: {} })).body), { cancelled: true });
+
+  nextPick = async () => "/definitely/not/here";
+  assert.equal((await call("POST", "/api/workspaces/pick", { body: {} })).status, 400);
+
+  assert.equal((await call("POST", "/api/workspaces/pick", { body: {}, token: null })).status, 401);
+  await call("POST", "/api/workspaces/remove", { body: { path: workspace } });
+});
+
+test("only one folder dialog at a time", async () => {
+  let release: (path: string | null) => void = () => {};
+  nextPick = () => new Promise((resolve) => (release = resolve));
+  const first = call("POST", "/api/workspaces/pick", { body: {} });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal((await call("POST", "/api/workspaces/pick", { body: {} })).status, 409);
+  release(null);
+  assert.equal((await first).status, 200);
 });
