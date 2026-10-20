@@ -47,6 +47,15 @@ export class SessionManager {
     return meta;
   }
 
+  // A turn running here hasn't saved its messages yet; forking now would silently drop it.
+  fork(id: string): SessionMeta {
+    if (!this.store.exists(id)) throw new HttpError(404, `session "${id}" not found`);
+    if (this.runners.get(id)?.isBusy) throw new HttpError(409, "这个会话正在运行，等这一轮结束后再 fork");
+    const meta = this.store.fork(id);
+    this.get(meta.id);
+    return meta;
+  }
+
   list(): (SessionMeta & { busy: boolean; totals: Totals })[] {
     return this.store.list().map((meta) => ({
       ...meta,

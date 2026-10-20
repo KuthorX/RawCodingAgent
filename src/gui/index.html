@@ -124,6 +124,14 @@
   .start .keys { margin-top: 16px; font-size: 12px; color: var(--muted); }
   kbd { font: 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel); }
   .no-session .chat-head, .no-session footer { display: none; }
+  .menu { position: fixed; z-index: 10; min-width: 180px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+          box-shadow: 0 4px 16px rgb(0 0 0 / .12); display: flex; flex-direction: column; }
+  .menu button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 4px; font-size: 13px; }
+  .menu button:hover:not(:disabled) { background: var(--soft); }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+  .toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 11; padding: 6px 14px; border-radius: 6px;
+           background: var(--ink); color: var(--panel); font-size: 13px; pointer-events: none; }
+  #head-links button { font-size: 12px; padding: 1px 8px; }
   footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 18px; }
   form { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
   form button { height: 40px; border-radius: 6px; padding: 0 16px; }
@@ -210,6 +218,7 @@ function setBusy(value) {
   $("root").classList.toggle("no-session", !current);
   sendBtn.textContent = value ? "插话" : "发送";
   $("stop").hidden = !value;
+  if ($("fork")) $("fork").disabled = value; // the running turn isn't saved yet
   $("stop").disabled = false;
   input.placeholder = value
     ? "agent 正在工作：输入内容会在它下一步之前送达（插话），Esc 停止"
@@ -254,14 +263,83 @@ function sessionItem(s) {
   const title = el("div", "title");
   if (s.busy) title.append(el("span", "dot busy"));
   title.append(el("span", "name", s.title || "（未命名）"));
+  if (s.forkedFrom) {
+    const badge = el("span", "badge", "fork");
+    badge.title = `fork 自 ${s.forkedFrom.id}（前 ${s.forkedFrom.turns} 轮）`;
+    title.append(badge);
+  }
   if (s.approvalMode === "auto") title.append(el("span", "badge", "自动"));
   const sub = el("div", "sub", `${shortTime(s.updatedAt)} · ${s.turns} 轮 · ${fmt.usd(s.totals.costUsd)}`);
   if (s.totals.contextTokens > CONTEXT_WARN_TOKENS) sub.append(" · ", el("span", "ctx-warn", `上下文 ${fmt.k(s.totals.contextTokens)}`));
   item.append(title, sub);
+  item.addEventListener("contextmenu", (ev) => sessionMenu(ev, s));
   item.title = [s.title || "（未命名）",
     `${fmt.time(s.updatedAt)} · ${s.turns} 轮 · 上下文 ${fmt.k(s.totals.contextTokens)} · ${fmt.usd(s.totals.costUsd)} · ${s.totals.toolCalls} 次工具调用`,
     s.approvalMode === "auto" ? "自动批准 bash" : "bash 每次询问", s.workspace, s.id].join("\n");
   return item;
+}
+
+// ---------- context menu, clipboard ----------
+function toast(text) {
+  document.querySelector(".toast")?.remove();
+  const box = el("div", "toast", text);
+  document.body.append(box);
+  setTimeout(() => box.remove(), 1600);
+}
+
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Clipboard API refused (no focus, old browser): fall back to a hidden textarea.
+    const area = el("textarea");
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  toast(`已复制${label}`);
+}
+
+function closeMenu() { document.querySelector(".menu")?.remove(); }
+// items: [label, action] pairs, or null for a separator.
+function showMenu(ev, items) {
+  ev.preventDefault();
+  closeMenu();
+  const menu = el("div", "menu");
+  for (const item of items) {
+    if (!item) { menu.append(el("hr")); continue; }
+    const btn = el("button", "", item[0]);
+    btn.type = "button";
+    btn.onclick = () => { closeMenu(); item[1](); };
+    menu.append(btn);
+  }
+  document.body.append(menu);
+  // Keep the menu inside the window.
+  const { width, height } = menu.getBoundingClientRect();
+  menu.style.left = Math.min(ev.clientX, innerWidth - width - 4) + "px";
+  menu.style.top = Math.min(ev.clientY, innerHeight - height - 4) + "px";
+}
+document.addEventListener("click", closeMenu);
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeMenu(); });
+window.addEventListener("blur", closeMenu);
+
+async function forkSession(id) {
+  try {
+    const meta = await api(`/api/sessions/${id}/fork`, {});
+    location.hash = meta.id;
+    toast("已 fork 为新会话");
+  } catch (e) { alert(e.message); }
+}
+
+function sessionMenu(ev, s) {
+  showMenu(ev, [
+    ["复制 session id", () => copyText(s.id, " session id")],
+    ["复制工作区路径", () => copyText(s.workspace, "工作区路径")],
+    null,
+    ["Fork 会话", () => forkSession(s.id)],
+  ]);
 }
 
 function toggleGroup(key) {
@@ -524,6 +602,11 @@ const handlers = {
       card.open = false;
     }
   },
+  forked(e) {
+    const note = el("div", "note", `↳ 从「${e.fromTitle || e.from}」fork 而来（包含它的前 ${e.turns} 轮），之后的对话只属于这个会话 · `);
+    note.append(link("#" + e.from, "打开原会话"));
+    append(note);
+  },
   approval_mode(e) {
     showMode(e.mode);
     append(el("div", "note", e.mode === "auto" ? "权限已切换为：自动批准（之后的 bash 不再询问）" : "权限已切换为：每次询问"));
@@ -621,7 +704,12 @@ function openSession(id) {
     $("meta").textContent = `${info.model} · ${info.workspace}`;
     currentWorkspace = info.workspace;
     const links = $("head-links");
-    links.replaceChildren(link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("·"),
+    const fork = el("button", "", "Fork");
+    fork.type = "button";
+    fork.id = "fork";
+    fork.title = "复制这个会话的历史，在新会话里继续（原会话不受影响）";
+    fork.onclick = () => forkSession(info.id);
+    links.replaceChildren(fork, link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("·"),
       link(rawUrl(current, "events.jsonl"), "原始事件", true));
     showMode(info.approvalMode);
     setBusy(info.busy);

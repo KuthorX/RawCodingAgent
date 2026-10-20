@@ -104,6 +104,17 @@ test("approval mode can be set at creation and changed per session", async () =>
   assert.equal((await call("POST", `/api/sessions/${plain.id}/settings`, { token: null, body: { approvalMode: "auto" } })).status, 401);
 });
 
+test("fork creates a new session; 404 for an unknown one", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  const res = await call("POST", `/api/sessions/${id}/fork`, { body: {} });
+  assert.equal(res.status, 201);
+  const fork = JSON.parse(res.body) as { id: string; forkedFrom: { id: string } };
+  assert.notEqual(fork.id, id);
+  assert.equal(fork.forkedFrom.id, id);
+  assert.equal((await call("GET", `/api/sessions/${fork.id}`)).status, 200);
+  assert.equal((await call("POST", "/api/sessions/20260101-000000-abcdef/fork", { body: {} })).status, 404);
+});
+
 test("stop is a no-op when idle", async () => {
   const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
   const res = await call("POST", `/api/sessions/${id}/stop`, { body: {} });

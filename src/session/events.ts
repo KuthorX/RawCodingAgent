@@ -13,4 +13,6 @@ export type SessionEvent =
   | { type: "approval_mode"; mode: ApprovalMode }
   // continues: queued interjections start the next turn right away, so the session stays busy.
   | { type: "turn_end"; finishReason: FinishReason; steps: number; continues?: boolean }
-  | { type: "error"; message: string; continues?: boolean };
+  | { type: "error"; message: string; continues?: boolean }
+  // First event of a forked session, right after the events copied from the source.
+  | { type: "forked"; from: string; fromTitle: string; turns: number };

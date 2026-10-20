@@ -91,7 +91,7 @@ async function handleWorkspaces(
   throw new HttpError(404, "not found");
 }
 
-// Routes: /api/sessions[/:id[/message|approve|settings|stop|stats|reveal|file]]
+// Routes: /api/sessions[/:id[/message|approve|settings|stop|fork|stats|reveal|file]]
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager): Promise<void> {
   const [, , , rawId, action] = url.pathname.split("/");
   const method = req.method ?? "GET";
@@ -125,6 +125,8 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       done.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
       return sendJson(res, 202, { ok: true, queued });
     }
+    case "POST fork":
+      return sendJson(res, 201, manager.fork(id));
     case "POST stop": {
       return sendJson(res, 200, { ok: true, stopped: manager.get(id).stop() });
     }

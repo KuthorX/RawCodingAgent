@@ -161,3 +161,26 @@ test("sessions stored before approval modes existed default to ask", () => {
   writeFileSync(path, JSON.stringify(legacy));
   assert.equal(runtime.store.getMeta(meta.id).approvalMode, "ask");
 });
+
+test("fork copies history up to the last finished turn and continues independently", async () => {
+  const provider = new ScriptedProvider([reply("first"), reply("from the fork"), reply("from the source")]);
+  const runtime = testRuntime(provider);
+  const { store } = runtime;
+  const source = store.create("/tmp", "m", "auto");
+  await new SessionRunner({ store, meta: source, makeDeps: runtime.makeDeps }).send("one").done;
+  // A turn that started (e.g. in another process) but hasn't ended is not part of the fork.
+  store.appendEvent(source.id, { type: "user", text: "still running" });
+
+  const fork = store.fork(source.id);
+  assert.notEqual(fork.id, source.id);
+  assert.deepEqual(fork.forkedFrom, { id: source.id, turns: 1 });
+  assert.equal(fork.title, "one");
+  assert.equal(fork.approvalMode, "auto");
+  assert.deepEqual(store.loadEvents(fork.id).map((e) => e.type), ["user", "assistant_text", "turn_end", "forked"]);
+  assert.equal(store.readFile(fork.id, "trace.jsonl"), "");
+
+  await new SessionRunner({ store, meta: store.getMeta(fork.id), makeDeps: runtime.makeDeps }).send("two").done;
+  assert.deepEqual(provider.requests[1]!.messages.map((m) => m.role), ["user", "assistant", "user"]);
+  assert.equal(store.loadMessages(fork.id).length, 4);
+  assert.equal(store.loadMessages(source.id).length, 2);
+});
