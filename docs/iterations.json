@@ -1,0 +1,177 @@
+{
+  "modules": {
+    "agent": "Agent 循环与护栏",
+    "tools": "工具",
+    "prompt": "提示词",
+    "model": "模型接入",
+    "session": "会话",
+    "workspace": "项目与工作区",
+    "cost": "成本与额度",
+    "observability": "Trace 与统计",
+    "eval": "评测",
+    "gui": "界面与交互"
+  },
+  "entries": [
+    {
+      "module": "agent",
+      "title": "从零搭建 coding agent",
+      "problem": "想看清楚 coding agent 内部到底怎么工作：主循环、工具调用、停止条件、上下文，而不是隐藏在框架后面。",
+      "change": "只用 openai SDK 发请求，自己写主循环（兼容任何 OpenAI Chat Completions 服务，默认 DeepSeek）；工具 read_file / write_file / edit_file / bash；会话持久化，可以继续、停止、在运行中插话；每个会话有自己的审批模式。DECISIONS.md 列出了可以做实验的设计决策点。",
+      "commits": ["c87b721"]
+    },
+    {
+      "module": "gui",
+      "title": "本地网页界面",
+      "problem": "终端里看不清一轮里发生了什么，也不方便管理多个会话。",
+      "change": "多工作区侧栏、对话页（bash 调用在页面上审批）、统计页（token、成本、每轮的 span 瀑布图）、原文件查看器；只监听 127.0.0.1，所有接口要 token。",
+      "commits": ["c87b721"]
+    },
+    {
+      "module": "eval",
+      "title": "评测：10 个练习任务",
+      "problem": "改了 agent 之后没法知道是变好还是变坏。",
+      "change": "每个任务有初始仓库、隐藏的验收测试和参考答案；PASS = 检查通过 + 自己结束 + 步数和成本都在预算内。工作区放在系统临时目录并各自 git init，运行前删掉环境变量里的凭据。",
+      "commits": ["c87b721"]
+    },
+    {
+      "module": "gui",
+      "title": "用系统对话框选择文件夹",
+      "problem": "打开工作区要手敲绝对路径，容易出错。",
+      "change": "侧栏的“选择文件夹…”弹出系统的文件夹选择框（macOS osascript、Windows PowerShell、Linux zenity）。",
+      "commits": ["9d56db2"]
+    },
+    {
+      "module": "agent",
+      "title": "按成本和重复调用截停失控的一轮，停之前先总结",
+      "problem": "只有步数上限：一轮可能在步数用完前就烧掉很多钱，或者反复做同一个调用；被截停时也没有任何交接，用户不知道做到哪了。",
+      "change": "新增单轮成本上限（默认 $0.5）和连续重复调用上限（默认 3 次），步数上限改为 100 只作兜底。碰到任何上限都追加一条说明再请求一次模型，让它总结已完成、剩余和下一步（保持同样的请求前缀，提示缓存仍然命中）。",
+      "commits": ["e2782cf"]
+    },
+    {
+      "module": "gui",
+      "title": "页面脚本语法错误导致整个页面失效",
+      "problem": "一处字符串里的 ASCII 引号让页面脚本解析失败：会话列表全空、文件夹选择按钮失效，而 HTTP 测试发现不了。",
+      "change": "修正引号；新增测试：编译每个页面的内联脚本和公共 JS。",
+      "commits": ["e2782cf"]
+    },
+    {
+      "module": "eval",
+      "title": "expert 难度任务与提示词规则实验",
+      "problem": "通过率约 95%，区分不出改动的好坏；也不知道往 system prompt 里加规则到底有没有用。",
+      "change": "新增 5 个 expert 任务；AGENT_PROMPT_RULES 可以 A/B 不同规则；npm run eval -- --report 并排比较多次运行（只比内容没变的任务，带置信区间）；实验后默认开启 spec 规则。统计页和侧栏显示当前上下文大小。",
+      "commits": ["1e8fe17"]
+    },
+    {
+      "module": "tools",
+      "title": "Windows 上可用的 bash，新增 glob / grep",
+      "problem": "Windows 上 bash 可能是 WSL 的、输出乱码（GBK）、停止时杀不掉子进程、后台任务让会话永远卡住。",
+      "change": "用 Git Bash（找不到时退回 PowerShell）并在工具描述里说明；整组杀进程；shell 退出就返回；非 UTF-8 的行按系统代码页解码。新增只读、免审批、限制在工作区内的 glob 和 grep。",
+      "commits": ["85aecfb"]
+    },
+    {
+      "module": "model",
+      "title": "连接中途断开时重试模型调用",
+      "problem": "DeepSeek 偶尔在返回途中断开连接，SDK 不重试，一轮直接以“错误：terminated”结束。",
+      "change": "对这类断连（以及 ECONNRESET 等）在 1 秒、3 秒后重试，每次尝试是单独的 llm span；等待期间点停止会正常结束这一轮。",
+      "commits": ["7e3481a"]
+    },
+    {
+      "module": "gui",
+      "title": "助手消息按 Markdown 渲染",
+      "problem": "只渲染了代码块，标题、加粗、表格、列表都显示成原始语法。",
+      "change": "一个不依赖第三方库的小渲染器，先解析成数据（在 Node 里测试），再只用 textContent 构建 DOM，模型输出无法注入 HTML；只有 http(s) 链接可点。",
+      "commits": ["f2f3dc9"]
+    },
+    {
+      "module": "tools",
+      "title": "edit_file / write_file 保留 CRLF",
+      "problem": "Windows 上签出的文件是 CRLF，模型给的 \\n 文本匹配不到。一个真实会话里，一次失败让模型此后 600 多次工具调用都不再用 edit_file，改写了 163 个 Python 替换脚本；write_file 还把 README 的换行全改了。",
+      "change": "精确匹配不到时按 CRLF 再匹配并用 CRLF 写回；覆盖 CRLF 文件时保持 CRLF。评测的检查命令也改用 agent 的 shell，Windows 上能整组超时杀掉。",
+      "commits": ["3581c93"]
+    },
+    {
+      "module": "tools",
+      "title": "bash 输出和退出码之间不再多一个空行",
+      "problem": "模型用 sed -n 读代码时，把这个多出来的空行当成文件里的空行抄进 edit_file 的 old_string，编辑因此失败。",
+      "change": "去掉输出末尾和 [exit code] 之间多余的换行。",
+      "commits": ["34f47bc"]
+    },
+    {
+      "module": "tools",
+      "title": "read_file 分段读取、edit_file 一次改多处",
+      "problem": "一个 GUI 会话里约 3/4 的 bash 调用在做专用工具该做的事：43 次用 Python 脚本改文件、23 次 sed -n / cat 读片段。原因之一是 read_file 只能读整个文件、edit_file 一次只能改一处。",
+      "change": "read_file 支持 offset / limit（默认最多 2000 行并提示从哪继续）；edit_file 支持 edits 数组，按顺序执行，任何一处失败整个文件不动。",
+      "commits": ["56a8207"]
+    },
+    {
+      "module": "prompt",
+      "title": "提示词规则 tools：文件操作用专用工具",
+      "problem": "即使有了专用工具，DeepSeek 仍然习惯用 bash 读、搜、改文件。",
+      "change": "新增规则 tools（默认开启）：读、搜、改文件用专用工具，bash 只跑程序、测试和 git。AGENT_PROMPT_RULES=spec 可以关掉做对比。",
+      "commits": ["56a8207"]
+    },
+    {
+      "module": "gui",
+      "title": "对话页交互重做",
+      "problem": "会话被另一个进程占用时页面一片空白；中断后工具卡片一直显示“运行中”；审批结果的横条一直留着；层级扁平，每个工具调用都是一张带色边的卡片。",
+      "change": "用 ai-design-quality skill 的独立评审循环（只看截图打分，4 → 5 分）：连续的工具调用合成一条时间线，3 次以上自动折叠；危险命令的审批标红；侧栏每个会话两行；没选会话时列出工作区；显示打不开会话的原因。",
+      "commits": ["3a62e16"]
+    },
+    {
+      "module": "observability",
+      "title": "trace 里记录每个会话实际用的 system prompt",
+      "problem": "提示词规则在进程启动时确定，事后无法确认某个会话到底有没有启用 tools 规则。",
+      "change": "每次加载会话，trace 的 session 事件都记录启用的规则、工具列表和完整 system prompt。",
+      "commits": ["569b080"]
+    },
+    {
+      "module": "eval",
+      "title": "度量 bash 偏好：bash file ops 指标",
+      "problem": "感觉模型偏爱 bash，但没有数字，也就没法判断 tools 规则这类改动有没有效果。",
+      "change": "按命令文本把 bash 调用分成读 / 搜 / 改文件、工作区外、其他；eval 结果和 --report 显示“工作区内经 bash 的文件操作 / 全部文件操作”。一个真实会话里这个比例是 69%，另有 51 次在工作区外。",
+      "commits": ["569b080"]
+    },
+    {
+      "module": "tools",
+      "title": "web_search：联网查资料",
+      "problem": "遇到文档、报错信息、库版本这类工作区里没有的信息，agent 只能猜。",
+      "change": "配了 TAVILY_API_KEY 就注册 web_search（只读、免审批，默认 5 条结果）；key 从 bash 能看到的环境变量里删掉；评测不启用，保证结果可比。",
+      "commits": ["569b080"]
+    },
+    {
+      "module": "session",
+      "title": "复制 session id、fork 会话",
+      "problem": "想在另一个终端里 --resume 或在别处引用会话时，拿不到 session id；想从某个会话的当前进度分出去试另一种做法时，只能重新开始。",
+      "change": "会话右键：复制 session id、复制工作区路径、fork。fork 复制到最后一轮结束为止的历史和审批模式，之后两边互不影响；统计只算 fork 之后的花费。",
+      "commits": ["4c176b1"]
+    },
+    {
+      "module": "session",
+      "title": "粘贴图片作为附件",
+      "problem": "截图、报错画面没法直接发给 agent。",
+      "change": "输入框可以粘贴或拖入最多 8 张图片，逐张可删；图片存在会话的 attachments/，消息里只记路径。模型支持图片时（OPENAI_VISION=true）作为图片发送，不支持时（如 deepseek-chat）告诉模型图片保存在哪里。",
+      "commits": ["bdfc920"]
+    },
+    {
+      "module": "workspace",
+      "title": "项目与 git worktree 工作区（参考 Orca）",
+      "problem": "一个目录只能有一个人在改：fork 出来的会话、并行的几个任务都在同一份代码上互相踩。",
+      "change": "原来的“工作区”改叫项目；项目下的工作区就是仓库的 git worktree，各自有分支和目录。新建时可开新分支 agent/<名字> 或检出已有分支，放在 <仓库>.worktrees/ 下，按 .worktreeinclude 复制 .env 等文件；删除时检查未提交的改动，合并过的分支一起删。会话可以 fork 到新工作区。",
+      "commits": ["fad1ffd"]
+    },
+    {
+      "module": "cost",
+      "title": "项目 / 工作区 / 会话的额度，以及每个会话的单轮上限",
+      "problem": "只有全局的单轮步数和成本上限：没法给某个项目定总预算，也没法对某个会话说“步数不限，但每轮别超过 $1”。",
+      "change": "会话可以单独设置每轮步数、每轮花费（默认 / 不限 / 自定义）和累计花费；项目和工作区可以设累计花费上限，侧栏显示“已花 / 上限”。一轮中途碰到上限会停下总结，用完后新消息被拒绝并说明是哪一层。",
+      "commits": ["e51e0fb"]
+    },
+    {
+      "module": "gui",
+      "title": "迭代记录页",
+      "problem": "改动越来越多，只看 git log 不容易知道每次迭代解决了什么问题，也不方便按模块回顾。",
+      "change": "新增 /iterations 页面：按时间线或按模块查看每次迭代的问题和改动，点击提交可以直接看完整的改动内容（git show），也能跳到 GitHub。数据在 docs/iterations.json，没被任何记录引用的提交会单独列出来，避免漏记。",
+      "commits": []
+    }
+  ]
+}

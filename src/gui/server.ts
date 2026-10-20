@@ -1,21 +1,25 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { fileURLToPath } from "node:url";
 import { isApprovalMode } from "../agent/permissions.ts";
 import { SendRejected } from "../session/runner.ts";
 import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId, type TurnLimits } from "../session/store.ts";
 import { HttpError, readJson, sendBytes, sendJson, sendText, tokenMatches } from "./http.ts";
 import type { SessionManager } from "./manager.ts";
 import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.ts";
+import { commitDetail, loadIterations } from "./iterations.ts";
 import { revealInFileManager } from "./reveal.ts";
 
 const HOST = "127.0.0.1";
+const APP_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HEARTBEAT_MS = 15_000;
 const page = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
 const PAGES: Record<string, [string, string]> = {
   "/": ["text/html", page("index.html")],
   "/stats": ["text/html", page("stats.html")],
   "/raw": ["text/html", page("raw.html")],
+  "/iterations": ["text/html", page("iterations.html")],
   "/common.css": ["text/css", page("common.css")],
   "/common.js": ["text/javascript", page("common.js")],
   "/markdown.js": ["text/javascript", page("markdown.js")],
@@ -265,6 +269,11 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, { manager, t
   if (req.method === "GET" && events) return streamEvents(req, res, manager, sessionId(events[1]));
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager);
   if (url.pathname.startsWith("/api/projects")) return handleProjects(req, res, url, manager, pick);
+  // The iteration log reads this project's own git history (src/gui -> project root).
+  if (req.method === "GET" && url.pathname === "/api/iterations") return loadIterations(APP_ROOT).then((d) => sendJson(res, 200, d));
+  if (req.method === "GET" && url.pathname === "/api/iterations/commit") {
+    return commitDetail(APP_ROOT, url.searchParams.get("sha") ?? "").then((d) => sendJson(res, 200, d));
+  }
   return sendJson(res, 404, { error: "not found" });
 }
 

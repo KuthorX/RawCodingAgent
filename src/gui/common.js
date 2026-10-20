@@ -67,6 +67,9 @@ const fmt = {
   time: (iso) => (iso ? new Date(iso).toLocaleString("zh-CN", { hour12: false }) : ""),
 };
 
+// Links to token-only pages, e.g. <a data-page="/iterations">.
+for (const a of document.querySelectorAll("a[data-page]")) a.href = withToken(a.dataset.page);
+
 function requireToken(target) {
   if (TOKEN) return true;
   target.replaceChildren(el("div", "banner", "缺少 token：请使用终端里打印的完整地址打开。"));
