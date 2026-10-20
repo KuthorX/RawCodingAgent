@@ -248,7 +248,11 @@ export const bashTool: Tool = {
       r.timedOut && `[killed after ${TIMEOUT_MS / 1000}s timeout]`,
       r.stopped && "[killed: stopped by the user]",
       r.leftRunning && "[a background process is still running; its further output is not captured]",
+      `[exit code: ${r.exitCode ?? "killed"}]`,
     ].filter(Boolean);
-    return `${r.output}${notes.map((n) => `\n${n}`).join("")}\n[exit code: ${r.exitCode ?? "killed"}]`;
+    // No blank line between the output and the notes: one looks like part of the output, and the model
+    // copied such a phantom trailing blank line from `sed -n` output into an edit_file old_string.
+    const output = r.output && !r.output.endsWith("\n") ? `${r.output}\n` : r.output;
+    return output + notes.join("\n");
   },
 };

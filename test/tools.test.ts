@@ -155,6 +155,14 @@ test("bash returns when the shell exits, even if a background process keeps runn
   }
 });
 
+test("bash adds no blank line between the output and the exit code", async () => {
+  const workspace = tempWorkspace();
+  assert.equal(await bashTool.run({ command: "printf 'a\\n'" }, { workspace }), "a\n[exit code: 0]");
+  assert.equal(await bashTool.run({ command: "printf 'a'" }, { workspace }), "a\n[exit code: 0]");
+  assert.equal(await bashTool.run({ command: "printf 'a\\n\\n'" }, { workspace }), "a\n\n[exit code: 0]");
+  assert.equal(await bashTool.run({ command: "true" }, { workspace }), "[exit code: 0]");
+});
+
 test("bash runs in the workspace", async () => {
   const workspace = tempWorkspace();
   const out = await bashTool.run({ command: "pwd -P" }, { workspace });
