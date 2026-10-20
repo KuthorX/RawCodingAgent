@@ -1,7 +1,8 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { runShell } from "../tools/bash.ts";
 
 export type Difficulty = "easy" | "medium" | "hard" | "expert";
 
@@ -139,35 +140,10 @@ function checkEnv(): NodeJS.ProcessEnv {
   return { ...env, PYTHONDONTWRITEBYTECODE: "1" };
 }
 
-export function runCheck(task: EvalTask, cwd: string, timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
-  return new Promise((resolve) => {
-    // Own process group, so a hung test and its children are killed together on timeout.
-    const child = spawn(task.check, { cwd, shell: true, detached: true, env: checkEnv() });
-    let output = "";
-    let timedOut = false;
-    let settled = false;
-    const settle = (result: CheckResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    child.stdout.on("data", (d: Buffer) => (output += d.toString()));
-    child.stderr.on("data", (d: Buffer) => (output += d.toString()));
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-child.pid!, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }, timeoutMs);
-    child.on("error", (err) => settle({ passed: false, exitCode: null, output: err.message, timedOut }));
-    // "close" waits for stdout/stderr to end; after a timeout a process that left the group may still hold
-    // them open, so settle on "exit" instead.
-    child.on("exit", (code) => {
-      if (timedOut) settle({ passed: false, exitCode: code, output: clip(output), timedOut });
-    });
-    child.on("close", (code) => settle({ passed: code === 0 && !timedOut, exitCode: code, output: clip(output), timedOut }));
-  });
+// Runs in the agent's own shell, so a check behaves the same as when the agent runs it (Git Bash on Windows),
+// and a hung test is killed together with its children on timeout.
+export async function runCheck(task: EvalTask, cwd: string, timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
+  const r = await runShell(task.check, { cwd, timeoutMs, env: checkEnv() });
+  const output = r.startError ?? clip(r.output);
+  return { passed: r.exitCode === 0 && !r.timedOut, exitCode: r.exitCode, output, timedOut: r.timedOut };
 }

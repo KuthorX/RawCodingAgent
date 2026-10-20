@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { toCrlf, usesCrlf } from "./eol.ts";
 import { requireString, ToolError, type Tool } from "./types.ts";
 import { resolveInWorkspace } from "./workspace.ts";
 
@@ -34,11 +35,14 @@ export const editFileTool: Tool = {
 
     const abs = resolveInWorkspace(ctx.workspace, path);
     const text = await readFile(abs, "utf8");
-    const count = countOccurrences(text, oldString);
+    let [from, to] = [oldString, newString];
+    // A CRLF file: match the model's \n text as \r\n, and keep the file's line endings in the replacement.
+    if (usesCrlf(text) && countOccurrences(text, from) === 0) [from, to] = [toCrlf(from), toCrlf(to)];
+    const count = countOccurrences(text, from);
     if (count === 0) throw new ToolError(`old_string not found in ${path}. Re-read the file and copy the text exactly.`);
     if (count > 1) throw new ToolError(`old_string matches ${count} places in ${path}. Include more context to make it unique.`);
 
-    await writeFile(abs, text.replace(oldString, () => newString), "utf8");
+    await writeFile(abs, text.replace(from, () => to), "utf8");
     return `Edited ${path}`;
   },
 };

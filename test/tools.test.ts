@@ -53,6 +53,26 @@ test("edit_file rejects zero, multiple and empty matches", async () => {
   assert.equal(readFileSync(join(workspace, "f.ts"), "utf8"), "x\nx\n");
 });
 
+test("edit_file matches \\n text in CRLF files and keeps CRLF", async () => {
+  const workspace = tempWorkspace();
+  writeFileSync(join(workspace, "f.py"), "def a():\r\n    return 1\r\n\r\ndef b():\r\n    return 2\r\n");
+  await editFileTool.run({ path: "f.py", old_string: "def b():\n    return 2", new_string: "def b():\n    x = 2\n    return x" }, { workspace });
+  assert.equal(readFileSync(join(workspace, "f.py"), "utf8"), "def a():\r\n    return 1\r\n\r\ndef b():\r\n    x = 2\r\n    return x\r\n");
+  // An exact match (here: within one line) is used as-is.
+  await editFileTool.run({ path: "f.py", old_string: "return 1", new_string: "return 10" }, { workspace });
+  assert.match(readFileSync(join(workspace, "f.py"), "utf8"), /return 10\r\n/);
+});
+
+test("write_file keeps the line endings of the CRLF file it overwrites", async () => {
+  const workspace = tempWorkspace();
+  writeFileSync(join(workspace, "crlf.md"), "a\r\nb\r\n");
+  writeFileSync(join(workspace, "lf.md"), "a\nb\n");
+  await writeFileTool.run({ path: "crlf.md", content: "x\ny\n" }, { workspace });
+  await writeFileTool.run({ path: "lf.md", content: "x\ny\n" }, { workspace });
+  assert.equal(readFileSync(join(workspace, "crlf.md"), "utf8"), "x\r\ny\r\n");
+  assert.equal(readFileSync(join(workspace, "lf.md"), "utf8"), "x\ny\n");
+});
+
 // A small tree, including files the search tools must skip.
 function searchWorkspace(): string {
   const workspace = tempWorkspace();

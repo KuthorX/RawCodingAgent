@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { PROJECT_ROOT } from "../src/app.ts";
 import { compare, experimentTable, formatTable, summarize, wilson, type RunInfo } from "../src/eval/report.ts";
@@ -59,7 +59,7 @@ test("runTask: agent fixes the repo within budget -> PASS, and edits to tests ar
   assert.equal(existsSync(join(outcome.workspace, "tests", "test_extra.py")), false);
   // The workspace is its own git repo, so the agent's git commands can't reach anything outside it.
   const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: outcome.workspace, encoding: "utf8" }).trim();
-  assert.equal(top, realpathSync(outcome.workspace));
+  assert.equal(resolve(top), realpathSync(outcome.workspace));
   assert.equal(outcome.finishReason, "end_turn");
   assert.notEqual(readFileSync(join(outcome.workspace, "tests", "test_paginate.py"), "utf8"), "");
   assert.match(runtime.store.getMeta(outcome.sessionId).title, /\[eval\] py-paginate/);
