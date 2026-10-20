@@ -19,6 +19,7 @@ button { font: inherit; border: 1px solid var(--line); background: var(--panel);
 button:hover:not(:disabled) { border-color: var(--muted); }
 button:disabled { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:disabled { background: var(--soft); border-color: var(--line); color: var(--muted); opacity: 1; }
 button.small { font-size: 12px; padding: 1px 8px; }
 .topbar { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .topbar h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }

@@ -9,48 +9,57 @@
   body { height: 100vh; display: flex; flex-direction: column; }
   .layout { flex: 1; display: flex; min-height: 0; }
   aside { width: 280px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
-  .new { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
-  .new input { font: 12px var(--mono); padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
-  #sessions { flex: 1; overflow-y: auto; }
+  .new { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  .new input[type=text] { flex: 1; min-width: 0; font: 12px var(--mono); padding: 0 8px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  .new input[type=text]:focus { outline: none; border-color: var(--accent); }
   .open-row { display: flex; gap: 6px; }
-  .open-row input { flex: 1; min-width: 0; }
-  .open-row + .open-row { margin-top: 6px; }
-  .ctx-warn { color: #b26b00; }
-  .open-row .pick { flex: 1; }
-  .ws-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 8px; background: var(--soft); border-bottom: 1px solid var(--line);
-             font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
-  .ws-head .caret { width: 12px; color: var(--muted); font-weight: 400; }
+  .open-row[hidden] { display: none; }
+  .open-row button { height: 30px; flex: none; }
+  .side-foot label { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; }
+  #sessions { flex: 1; overflow-y: auto; }
+  .new > button { text-align: left; border-style: dashed; color: var(--muted); height: 30px; }
+  .new > button:hover { color: var(--ink); }
+  .side-foot { padding: 10px 12px; border-top: 1px solid var(--line); }
+  .ctx-warn { color: var(--warn); }
+  .ws-head { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: 34px; background: var(--soft); border-block: 1px solid var(--line); margin-top: -1px;
+             font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
+  .ws-head .caret { width: 12px; color: var(--muted); font-weight: 400; font-size: 12px; }
   .ws-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ws-head .count { color: var(--muted); font-weight: 400; font-size: 11.5px; }
-  .ws-head button { font-size: 11.5px; padding: 0 7px; font-weight: 400; }
-  .ws-head button.x { border: 0; background: none; color: var(--muted); padding: 0 4px; }
-  .ws-head.current { box-shadow: inset 3px 0 0 var(--accent); }
-  .ws-empty { padding: 8px 12px 10px 28px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
-  .item { padding-left: 26px !important; }
-  .item { display: block; padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--ink); cursor: pointer; }
+  .ws-head .count { color: var(--muted); font-weight: 400; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ws-head button { font-size: 12px; padding: 0 8px; font-weight: 400; height: 22px; }
+  .ws-head button.x { border: 0; background: none; color: var(--muted); padding: 0 4px; visibility: hidden; }
+  .ws-head:hover button.x { visibility: visible; }
+  .ws-head.current .name { color: var(--accent); }
+  .ws-empty { padding: 8px 12px 10px 26px; font-size: 12px; color: var(--muted); }
+  .item { display: block; padding: 8px 12px 8px 26px; color: var(--ink); cursor: pointer; }
   .item:hover { background: var(--soft); text-decoration: none; }
   .item.active { background: var(--soft); box-shadow: inset 3px 0 0 var(--accent); }
   .item .title { display: flex; gap: 6px; align-items: center; font-size: 13px; }
-  .item .title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .item .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; display: flex; justify-content: space-between; gap: 8px; }
+  .item .title .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .badge { font-size: 12px; color: var(--muted); flex: none; }
   .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .chat-head { padding: 8px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; font-size: 13px; }
-  .new label, .mode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
-  .mode { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+  .chat-head { padding: 0 18px; height: 44px; flex: none; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; font-size: 13px; }
+  .chat-head .dot.none { visibility: hidden; }
+  .chat-head .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+  #head-links { display: flex; gap: 6px; font-size: 13px; white-space: nowrap; color: var(--muted); }
+  #head-links a { color: var(--muted); }
+  #head-links a:hover { color: var(--ink); }
+  .mode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap;
+          border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
   .mode.auto { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
   .mode[hidden] { display: none; }
-  .badge { font-size: 10.5px; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 0 4px; flex: none; }
-  .note { color: var(--muted); font-size: 12px; text-align: center; }
-  main { flex: 1; overflow-y: auto; padding: 20px 0; }
-  #log { max-width: 860px; margin: 0 auto; padding: 0 18px; display: flex; flex-direction: column; gap: 10px; }
+  .note { color: var(--muted); font-size: 12px; }
+  main { flex: 1; overflow-y: auto; padding: 24px 0; }
+  #log { max-width: 760px; margin: 0 auto; padding: 0 18px; display: flex; flex-direction: column; gap: 12px; }
   .msg { white-space: pre-wrap; word-break: break-word; }
-  .user .tag { display: block; font-size: 11px; opacity: .8; margin-top: 4px; text-align: right; }
-  .user.queued { opacity: .75; border: 1px dashed #fff; }
-  .user.dropped { background: var(--muted); text-decoration: line-through; }
+  .user { align-self: flex-end; max-width: 80%; background: var(--soft); border: 1px solid transparent; padding: 8px 12px; border-radius: 10px; }
+  .user .tag { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; text-align: right; }
+  .user.queued { border-style: dashed; border-color: var(--muted); }
+  .user.dropped { color: var(--muted); text-decoration: line-through; }
   button.stop { border-color: var(--err); color: var(--err); }
   button.stop[hidden] { display: none; }
-  .user { align-self: flex-end; max-width: 80%; background: var(--accent); color: #fff; padding: 8px 12px; border-radius: 12px 12px 2px 12px; }
-  .md { white-space: normal; }
+  .md { white-space: normal; line-height: 1.7; }
   .md > :first-child { margin-top: 0; }
   .md > :last-child { margin-bottom: 0; }
   .md p, .md ul, .md ol, .md blockquote, .md pre, .md .table-wrap { margin: 0 0 10px; }
@@ -61,34 +70,66 @@
   .md li > ul, .md li > ol, .md li > p { margin: 4px 0; }
   .md blockquote { padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
   .md hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
-  .md code { font: 0.9em var(--mono); background: var(--soft); border-radius: 4px; padding: 1px 5px; }
-  .md pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; font: 12.5px/1.5 var(--mono); white-space: pre; }
+  .md code { font: 0.85em var(--mono); background: var(--soft); border-radius: 4px; padding: 0 4px; }
+  .md pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; font: 12px/1.5 var(--mono); white-space: pre; }
   .md pre code { font: inherit; background: none; padding: 0; }
   .md .table-wrap { overflow-x: auto; }
   .md table { border-collapse: collapse; font-size: 13px; }
   .md th, .md td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; vertical-align: top; }
   .md th { background: var(--soft); font-weight: 600; }
-  .tool { border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 6px; background: var(--panel); font-size: 13px; }
-  .tool.ok { border-left-color: var(--ok); }
-  .tool.error { border-left-color: var(--err); }
-  .tool.waiting { border-left-color: var(--warn); }
-  .tool summary { cursor: pointer; padding: 6px 10px; font-family: var(--mono); font-size: 12.5px; list-style: none; display: flex; gap: 8px; }
+  /* Consecutive tool calls form one timeline: a thin rail, one line per call, details on click. */
+  .tools > .list { display: flex; flex-direction: column; border-left: 1px solid var(--line); margin-left: 4px; padding-left: 6px; }
+  .tools > summary { cursor: pointer; list-style: none; font-size: 12px; color: var(--muted); padding: 2px 8px; border-radius: 6px; width: fit-content; }
+  .tools > summary::-webkit-details-marker { display: none; }
+  .tools > summary::before { content: "▸ "; }
+  .tools[open] > summary { margin-bottom: 2px; }
+  .tools[open] > summary::before { content: "▾ "; }
+  .tools > summary:hover { background: var(--soft); color: var(--ink); }
+  .tools > summary .fails { color: var(--err); }
+  .tool summary { cursor: pointer; padding: 2px 8px; border-radius: 6px; font: 12px/1.7 var(--mono); color: var(--muted); list-style: none; display: flex; gap: 8px; }
   .tool summary::-webkit-details-marker { display: none; }
+  .tool summary::before { content: "▸"; width: 10px; flex: none; }
+  .tool[open] summary::before { content: "▾"; }
+  .tool summary:hover { background: var(--soft); color: var(--ink); }
   .tool summary .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tool summary .state { color: var(--muted); }
-  .tool.error summary .state { color: var(--err); }
-  .tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); max-height: 360px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+  .tool summary .state { flex: none; }
+  .tool.running summary, .tool.waiting summary { color: var(--ink); }
+  .tool.running summary .state, .tool.waiting summary .state { color: var(--warn); }
+  .tool.error summary, .tool.error summary .state { color: var(--err); }
+  .tool .body { margin: 2px 0 8px 18px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; }
+  .tool pre { margin: 0; padding: 8px 10px; max-height: 360px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+  .tool pre + pre { border-top: 1px solid var(--line); }
   .tool .input { color: var(--muted); }
-  .approval { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); background: var(--warn-bg); color: var(--warn); }
+  /* A call waiting for approval is the one thing on the page that needs you: give it room. */
+  .tool.waiting { margin: 6px 0; }
+  .tool.waiting .body { border-color: var(--warn); }
+  .tool.waiting .input { color: var(--ink); font-size: 13px; padding: 12px; }
+  .approval { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--warn-bg); color: var(--warn); font-size: 13px; }
   .approval span { flex: 1; }
-  .end { color: var(--muted); font-size: 12px; text-align: center; padding: 4px 0 10px; }
-  .end.bad, .err { color: var(--err); }
-  .err { white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; }
+  .tool.danger .body { border-color: var(--err); }
+  .tool.danger .approval { color: var(--err); }
+  .tool.danger button.primary { background: var(--err); border-color: var(--err); }
+  button.link { border: 0; background: none; color: var(--muted); padding: 4px 6px; }
+  button.link:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
+  .end { color: var(--muted); font-size: 12px; padding: 0 0 8px; }
+  .end.bad { color: var(--err); }
+  .err { color: var(--err); white-space: pre-wrap; font: 12px/1.5 var(--mono); border-left: 2px solid var(--err); padding: 2px 0 2px 10px; }
   .empty { color: var(--muted); text-align: center; margin-top: 18vh; }
+  .start { margin: 18vh auto 0; width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 8px; }
+  .start h2 { font-size: 20px; font-weight: 600; margin: 0; }
+  .start p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  .start button { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 12px 16px; }
+  .start button .name { font-size: 16px; font-weight: 600; }
+  .start button .path { color: var(--muted); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .start .keys { margin-top: 16px; font-size: 12px; color: var(--muted); }
+  kbd { font: 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel); }
+  .no-session .chat-head, .no-session footer { display: none; }
   footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 18px; }
   form { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
-  textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 40px; max-height: 200px; }
+  form button { height: 40px; border-radius: 6px; padding: 0 16px; }
+  textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-height: 40px; max-height: 200px; }
   textarea:focus { outline: none; border-color: var(--accent); }
+  textarea:disabled { opacity: .6; }
 </style>
 </head>
 <body>
@@ -99,21 +140,22 @@
 <div class="layout" id="root">
   <aside>
     <div class="new">
-      <div class="open-row">
-        <input id="ws-path" placeholder="工作区路径，如 ~/code/my-repo">
-        <button id="ws-open" type="button">打开</button>
+      <button id="ws-add" type="button">+ 打开工作区</button>
+      <div class="open-row" id="ws-form" hidden>
+        <input type="text" id="ws-path" placeholder="工作区路径，或点右边选择">
+        <button id="ws-open" type="button" title="弹出系统的文件夹选择框">选择…</button>
       </div>
-      <div class="open-row">
-        <button id="ws-pick" type="button" class="pick">选择文件夹…</button>
-      </div>
-      <label><input type="checkbox" id="new-auto"> 新会话自动批准 bash（不再逐个询问）</label>
     </div>
     <div id="sessions"></div>
+    <div class="side-foot">
+      <label title="之后用 “+ 新会话” 建的会话默认不再逐个询问 bash；每个会话可以在顶部单独切换"><input type="checkbox" id="new-auto"> 新会话自动批准 bash</label>
+    </div>
   </aside>
   <section class="chat">
     <div class="chat-head">
       <span class="dot" id="dot"></span>
-      <span class="meta grow" id="meta">选择或新建一个会话</span>
+      <span class="title" id="head-title"></span>
+      <span class="meta grow" id="meta"></span>
       <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
         <input type="checkbox" id="mode-auto"> <span id="mode-text">每次询问</span>
       </label>
@@ -141,28 +183,31 @@ let busy = false;
 let replaying = false;   // true while the server replays stored events after (re)connect
 const toolCards = new Map();
 
-// Approval buttons left over from a turn that ended (e.g. interrupted by a restart) can't be answered anymore.
-function closeStaleApprovals() {
+// Cards still running or waiting when a turn ends (stopped, or interrupted by a restart) will never get a result.
+function closeStaleCards() {
   for (const card of toolCards.values()) {
-    if (!card.classList.contains("waiting")) continue;
-    card.classList.remove("waiting");
-    card._approval?.replaceChildren(el("span", "", "已失效（这一轮已结束）"));
+    if (card.classList.contains("ok") || card.classList.contains("error")) continue;
+    card.classList.remove("waiting", "running");
+    card._state.textContent = "未完成";
+    card._approval?.remove();
   }
 }
 
-function append(node) {
+function append(node, parent = logBox) {
   const scroller = $("scroller");
   const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   logBox.querySelector(".empty")?.remove();
-  logBox.append(node);
+  if (parent === logBox) foldTools();
+  parent.append(node);
   if (atBottom) scroller.scrollTop = scroller.scrollHeight;
 }
 
 // While busy the input stays open: what you send is an interjection the agent sees at its next step.
 function setBusy(value) {
   busy = value;
-  $("dot").className = "dot " + (value ? "busy" : "idle");
-  sendBtn.disabled = !current;
+  $("dot").className = "dot " + (!current ? "none" : value ? "busy" : "idle");
+  sendBtn.disabled = input.disabled = !current;
+  $("root").classList.toggle("no-session", !current);
   sendBtn.textContent = value ? "插话" : "发送";
   $("stop").hidden = !value;
   $("stop").disabled = false;
@@ -194,18 +239,28 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") stopTurn
 const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '["__other__"]'));
 let currentWorkspace = null;
 
+// "22:59" today, "10/18" before that.
+function shortTime(iso) {
+  const d = new Date(iso), now = new Date();
+  return d.toDateString() === now.toDateString()
+    ? d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })
+    : `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// Two lines per session; the full numbers are in the tooltip.
 function sessionItem(s) {
   const item = el("a", "item" + (s.id === current ? " active" : ""));
   item.href = "#" + s.id;
   const title = el("div", "title");
-  title.append(el("span", "dot " + (s.busy ? "busy" : "")), el("span", "", s.title || "（未命名）"));
-  if (s.approvalMode === "auto") title.append(el("span", "badge", "自动批准"));
-  const sub = el("div", "sub");
-  sub.append(el("span", "", fmt.time(s.updatedAt)),
-    el("span", s.totals.contextTokens > CONTEXT_WARN_TOKENS ? "ctx-warn" : "",
-      `${s.turns} 轮 · 上下文 ${fmt.k(s.totals.contextTokens)} · ${fmt.usd(s.totals.costUsd)} · ${s.totals.toolCalls} 工具`));
+  if (s.busy) title.append(el("span", "dot busy"));
+  title.append(el("span", "name", s.title || "（未命名）"));
+  if (s.approvalMode === "auto") title.append(el("span", "badge", "自动"));
+  const sub = el("div", "sub", `${shortTime(s.updatedAt)} · ${s.turns} 轮 · ${fmt.usd(s.totals.costUsd)}`);
+  if (s.totals.contextTokens > CONTEXT_WARN_TOKENS) sub.append(" · ", el("span", "ctx-warn", `上下文 ${fmt.k(s.totals.contextTokens)}`));
   item.append(title, sub);
-  item.title = `${s.id}\n${s.workspace}`;
+  item.title = [s.title || "（未命名）",
+    `${fmt.time(s.updatedAt)} · ${s.turns} 轮 · 上下文 ${fmt.k(s.totals.contextTokens)} · ${fmt.usd(s.totals.costUsd)} · ${s.totals.toolCalls} 次工具调用`,
+    s.approvalMode === "auto" ? "自动批准 bash" : "bash 每次询问", s.workspace, s.id].join("\n");
   return item;
 }
 
@@ -253,11 +308,39 @@ async function refreshSessions() {
   currentWorkspace = list.find((s) => s.id === current)?.workspace ?? currentWorkspace;
   const box = $("sessions");
   box.replaceChildren();
-  if (workspaces.length === 0) box.append(el("div", "empty", "点「选择文件夹…」或输入路径，打开第一个工作区"));
+  if (workspaces.length === 0) box.append(el("div", "ws-empty", "点上方「选择…」或输入路径，打开第一个工作区"));
   const known = new Set(workspaces.map((w) => w.path));
   for (const ws of workspaces) box.append(workspaceGroup(ws.path, ws, list.filter((s) => s.workspace === ws.path)));
   const others = list.filter((s) => !known.has(s.workspace));
   if (others.length) box.append(workspaceGroup("__other__", null, others));
+  $("ws-form").hidden = workspaces.length > 0 && !wsFormOpen;
+  $("ws-add").hidden = workspaces.length === 0;
+  if (!current) renderStart(workspaces);
+}
+
+let wsFormOpen = false;
+$("ws-add").onclick = () => {
+  wsFormOpen = !wsFormOpen;
+  $("ws-form").hidden = !wsFormOpen;
+  if (wsFormOpen) $("ws-path").focus();
+};
+
+// What the chat pane shows when no session is open.
+function renderStart(workspaces) {
+  const box = el("div", "start");
+  box.append(el("h2", "", "在哪个目录工作？"),
+    el("p", "", workspaces.length ? "选一个工作区新建会话，或从左侧继续之前的会话。" : "先在左上角打开一个工作区，agent 会在那个目录里读写文件、运行命令。"));
+  for (const ws of workspaces) {
+    const btn = el("button");
+    btn.type = "button";
+    btn.append(el("span", "name", ws.name), el("span", "path", ws.path));
+    btn.onclick = () => createSession(ws.path);
+    box.append(btn);
+  }
+  const keys = el("div", "keys");
+  keys.innerHTML = "<kbd>Enter</kbd> 发送　<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行　<kbd>Esc</kbd> 停止 agent";
+  box.append(keys);
+  logBox.replaceChildren(box);
 }
 
 async function createSession(workspace) {
@@ -269,21 +352,24 @@ async function createSession(workspace) {
   } catch (e) { alert(e.message); }
 }
 
+// One button: opens the typed path, or shows the OS folder chooser when the field is empty.
 async function openWorkspace() {
   const path = $("ws-path").value.trim();
-  if (!path) return;
+  if (!path) return pickWorkspace();
   try {
     const ws = await api("/api/workspaces", { path });
     $("ws-path").value = "";
+    $("ws-open").textContent = "选择…";
     collapsed.delete(ws.path);
     refreshSessions();
   } catch (e) { alert(e.message); }
 }
 $("ws-open").onclick = openWorkspace;
+$("ws-path").addEventListener("input", () => { $("ws-open").textContent = $("ws-path").value.trim() ? "打开" : "选择…"; });
 
 // The server shows the OS folder chooser (a web page can't read absolute paths itself).
 async function pickWorkspace() {
-  const button = $("ws-pick");
+  const button = $("ws-open");
   button.disabled = true;
   button.textContent = "等待选择…";
   try {
@@ -295,10 +381,9 @@ async function pickWorkspace() {
     alert(e.message);
   } finally {
     button.disabled = false;
-    button.textContent = "选择文件夹…";
+    button.textContent = "选择…";
   }
 }
-$("ws-pick").onclick = pickWorkspace;
 $("ws-path").addEventListener("keydown", (ev) => { if (ev.key === "Enter") openWorkspace(); });
 
 // ---------- transcript rendering ----------
@@ -308,12 +393,61 @@ function renderAssistant(text) {
   return box;
 }
 
+// Models often prefix every command with "cd <workspace> &&", which is where bash already runs.
+function stripCd(command) {
+  if (!currentWorkspace) return command;
+  const ws = currentWorkspace.replace(/\\/g, "/").replace(/\/$/, "");
+  const forms = [currentWorkspace, ws, ws.replace(/^([a-z]):/i, (_, d) => "/" + d.toLowerCase()), ws.replace(/^([a-z]):/i, (_, d) => "/mnt/" + d.toLowerCase())];
+  const quoted = forms.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return command.replace(new RegExp(`^cd\\s+["']?(${quoted})/?["']?\\s*(&&|;)\\s*`, "i"), "");
+}
+
 function describe(call) {
   const a = call.input || {};
-  if (typeof a.command === "string") return `${call.name}: ${a.command}`;
+  if (typeof a.command === "string") return `${call.name}: ${stripCd(a.command)}`;
   if (typeof a.path === "string") return `${call.name} ${a.path}`;
   return `${call.name} ${JSON.stringify(a)}`;
 }
+
+// A bash call is shown as the command itself; anything else as JSON.
+function inputText(input) {
+  const keys = Object.keys(input || {});
+  if (keys.length === 1 && typeof input.command === "string") return input.command;
+  return JSON.stringify(input, null, 2);
+}
+
+// Consecutive tool calls share one timeline. Once something else follows, a run of FOLD_AT or more folds
+// into a single "N 次工具调用" line, unless one of them still needs attention.
+const FOLD_AT = 3;
+function toolGroup() {
+  const last = logBox.lastElementChild;
+  if (last?.classList.contains("tools")) return last;
+  const group = el("details", "tools");
+  group.open = true;
+  group._summary = el("summary");
+  group._list = el("div", "list");
+  group.append(group._summary, group._list);
+  append(group);
+  return group;
+}
+
+function updateGroup(group) {
+  const cards = group._list.children.length;
+  const fails = group._list.querySelectorAll(".tool.error").length;
+  group._summary.hidden = cards < FOLD_AT;
+  group._summary.replaceChildren(`${cards} 次工具调用`);
+  if (fails) group._summary.append(" · ", el("span", "fails", `${fails} 次失败`));
+}
+
+function foldTools() {
+  const group = logBox.lastElementChild;
+  if (!group?.classList.contains("tools") || group._list.children.length < FOLD_AT) return;
+  if (group._list.querySelector(".tool.waiting, .tool.running")) return;
+  group.open = false;
+}
+
+// Only a hint for the approval card, not a safety check: flags commands that delete, overwrite or force things.
+const DANGEROUS = /\brm\s+-\w*[rf]|\brmdir\b|\bdel\s|Remove-Item|\bgit\s+(push\b.*(-f\b|--force)|reset\s+--hard|clean\s+-\w*f|checkout\s+--?\s)|\bsudo\b|\bmkfs|\bdd\s+if=|\bchmod\s+-R|\bchown\s+-R|>\s*\/dev\/sd/i;
 
 const handlers = {
   user(e) {
@@ -333,23 +467,35 @@ const handlers = {
   interjection_dropped(e) { settleQueued(e.count, "插话 · 未送达（已停止）", "dropped"); },
   assistant_text(e) { append(renderAssistant(e.text)); },
   tool_call(e) {
-    const card = el("details", "tool");
+    const card = el("details", "tool running");
     const summary = el("summary");
     card._state = el("span", "state", "运行中…");
-    summary.append(el("span", "label", "▸ " + describe(e.call)), card._state);
-    card.append(summary, el("pre", "input", JSON.stringify(e.call.input, null, 2)));
+    summary.append(el("span", "label", describe(e.call)), card._state);
+    card._body = el("div", "body");
+    // A short one-line command is already readable in the summary.
+    const cmd = e.call.input?.command;
+    card._input = el("pre", "input", inputText(e.call.input));
+    if (!(typeof cmd === "string" && Object.keys(e.call.input).length === 1 && !cmd.includes("\n") && cmd.length <= 100)) card._body.append(card._input);
+    card.append(summary, card._body);
     toolCards.set(e.call.id, card);
-    append(card);
+    const group = toolGroup();
+    append(card, group._list);
+    updateGroup(group);
   },
   approval_request(e) {
     const card = toolCards.get(e.call.id);
     if (!card) return;
     card.classList.add("waiting");
+    const danger = DANGEROUS.test(e.call.input?.command ?? "");
+    card.classList.toggle("danger", danger);
+    if (!card._input.isConnected) card._body.prepend(card._input);
+    card.closest(".tools").open = true;
     card.open = true;
     card._state.textContent = "等待批准";
     const bar = el("div", "approval");
     const allow = el("button", "primary", "允许"), deny = el("button", "", "拒绝");
-    const always = el("button", "", "允许，本会话不再询问");
+    const always = el("button", "link", "本会话不再询问");
+    always.title = "允许这次调用，并把本会话切换为自动批准";
     allow.type = deny.type = always.type = "button";
     const session = current;
     const disable = () => { allow.disabled = deny.disabled = always.disabled = true; };
@@ -361,16 +507,20 @@ const handlers = {
     deny.onclick = () => answer(false);
     // Switching the session to auto also approves this pending call (server side).
     always.onclick = () => { disable(); setApprovalMode("auto"); };
-    bar.append(el("span", "", "这个调用需要你的批准"), deny, always, allow);
-    card.append(bar);
+    bar.append(el("span", "", danger ? "可能删除或覆盖文件，确认后再允许" : "这个调用需要你的批准"), always, deny, allow);
+    card._body.append(bar);
     card._approval = bar;
     card._approvalId = e.id;
+    if (!replaying) card.scrollIntoView({ block: "nearest" });
   },
   approval_resolved(e) {
     for (const card of toolCards.values()) {
       if (card._approvalId !== e.id) continue;
       card.classList.remove("waiting");
-      card._approval.replaceChildren(el("span", "", e.allow ? "已允许" : "已拒绝"));
+      card._approval.remove();
+      card._approval = null;
+      card._state.textContent = e.allow ? "已允许，运行中…" : "已拒绝";
+      card.open = false;
     }
   },
   approval_mode(e) {
@@ -380,10 +530,12 @@ const handlers = {
   tool_result(e) {
     const card = toolCards.get(e.call.id);
     if (!card) return;
-    card.classList.remove("waiting");
+    card.classList.remove("waiting", "running");
     card.classList.add(e.result.isError ? "error" : "ok");
-    card._state.textContent = e.result.isError ? "失败" : "完成";
-    card.append(el("pre", "", e.result.content));
+    // Success is the normal case and stays quiet; only failures say so.
+    card._state.textContent = e.result.isError ? "失败" : "";
+    card._body.append(el("pre", "", e.result.content));
+    updateGroup(card.closest(".tools"));
   },
   turn_end(e) {
     const ok = e.finishReason === "end_turn";
@@ -399,7 +551,8 @@ const handlers = {
 
 // A turn ended; if queued interjections arrived too late, they run as the next turn.
 function endTurn(continues) {
-  closeStaleApprovals();
+  closeStaleCards();
+  foldTools();
   if (continues) {
     settleQueued(undefined, "插话 · 作为下一轮发送");
     append(el("div", "note", "继续处理插话内容…"));
@@ -449,23 +602,25 @@ function openSession(id) {
   $("mode").hidden = true;
   $("nav-stats").href = withToken("/stats") + (current ? "#" + current : "");
   if (!current) {
-    logBox.replaceChildren(el("div", "empty", "从左侧选择一个历史会话，或在某个工作区下点 “+ 新会话”。"));
-    $("meta").textContent = "选择或新建一个会话";
+    logBox.replaceChildren();
+    $("head-title").textContent = "";
+    $("meta").textContent = "";
     setBusy(false);
     refreshSessions();
     return;
   }
-  events = new EventSource(withToken(`/events/${current}`));
+  const source = events = new EventSource(withToken(`/events/${current}`));
   // The server replays the whole transcript on every (re)connect, so start from a clean slate.
   events.addEventListener("hello", (msg) => {
     const info = JSON.parse(msg.data);
     toolCards.clear();
     queuedBubbles = [];
     logBox.replaceChildren(el("div", "empty", "给 agent 一个任务开始吧。"));
-    $("meta").textContent = `${info.title || "（未命名）"} · ${info.model} · ${info.workspace}`;
+    $("head-title").textContent = info.title || "（未命名）";
+    $("meta").textContent = `${info.model} · ${info.workspace}`;
     currentWorkspace = info.workspace;
     const links = $("head-links");
-    links.replaceChildren(link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("  "),
+    links.replaceChildren(link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("·"),
       link(rawUrl(current, "events.jsonl"), "原始事件", true));
     showMode(info.approvalMode);
     setBusy(info.busy);
@@ -479,7 +634,19 @@ function openSession(id) {
     const event = JSON.parse(msg.data);
     handlers[event.type]?.(event);
   };
-  events.onerror = () => { $("dot").className = "dot"; };
+  // EventSource reconnects on its own after a network blip, but gives up (CLOSED) when the server refuses the
+  // session, e.g. because another process has it open. Fetch the same URL once to show why.
+  events.onerror = async () => {
+    $("dot").className = "dot";
+    if (source.readyState !== EventSource.CLOSED) return;
+    const res = await fetch(withToken(`/events/${id}`)).catch(() => null);
+    const data = await res?.json().catch(() => ({}));
+    if (current !== id) return;
+    logBox.replaceChildren(el("div", "err", "无法打开这个会话：" + (data?.error || "连接失败，请确认服务仍在运行")));
+    $("head-title").textContent = id;
+    $("meta").textContent = "";
+    input.disabled = sendBtn.disabled = true;
+  };
   refreshSessions();
 }
 
