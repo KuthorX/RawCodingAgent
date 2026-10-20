@@ -1,7 +1,9 @@
 import { performance } from "node:perf_hooks";
+import { costUsd, DEFAULT_PRICING, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { Tool } from "../tools/index.ts";
 import { ToolError } from "../tools/index.ts";
 import type { CompletionResponse, Message, Provider, StopReason, ToolCall, ToolResult } from "../types.ts";
+import { callSignature, isRepeating, limitDetail, limitNotice, type LimitHit } from "./limits.ts";
 import { needsApproval, type ApprovalMode, type ApprovalOutcome, type Confirm } from "./permissions.ts";
 import type { Tracer } from "./trace.ts";
 import { truncateOutput } from "./truncate.ts";
@@ -12,6 +14,10 @@ export interface AgentDeps {
   system: string;
   workspace: string;
   maxSteps: number;
+  // D1 guards besides maxSteps. Per turn; null/undefined cost = no cost limit, maxRepeats defaults to 3.
+  maxTurnCostUsd?: number | null;
+  maxRepeats?: number;
+  pricing?: Pricing;
   // Read before every tool call, so a mode switched mid-turn applies to the next call.
   approvalMode: () => ApprovalMode;
   confirm: Confirm;
@@ -25,7 +31,7 @@ export type AgentEvent =
   | { type: "tool_result"; call: ToolCall; result: ToolResult }
   | { type: "interjection_delivered"; count: number };
 
-export type FinishReason = Exclude<StopReason, "tool_use"> | "max_steps" | "interrupted";
+export type FinishReason = Exclude<StopReason, "tool_use"> | LimitHit | "interrupted";
 
 // Live controls for a running turn.
 export interface TurnControl {
@@ -36,6 +42,8 @@ export interface TurnControl {
 }
 
 const INTERRUPTED_RESULT = "not executed: the user stopped the turn";
+const REPEATED_RESULT = "not executed: the same call was already made several times in a row without progress";
+const DEFAULT_MAX_REPEATS = 3;
 
 export interface TurnResult {
   messages: Message[];
@@ -121,9 +129,13 @@ async function callModel(
   deps: AgentDeps,
   parentId: string,
   signal?: AbortSignal,
+  summary = false,
 ): Promise<CompletionResponse> {
-  const span = deps.tracer.startSpan("llm", deps.provider.model, parentId, { step, messages: messages.length });
+  const attrs = { step, messages: messages.length, ...(summary ? { summary: true } : {}) };
+  const span = deps.tracer.startSpan("llm", deps.provider.model, parentId, attrs);
   try {
+    // The summary request keeps the same tools as every other request: it only differs by the appended notice,
+    // so the prompt cache still hits. (tool_choice "none" would make DeepSeek drop the tools and miss the cache.)
     const request = { system: deps.system, messages, tools: deps.tools.map((t) => t.spec) };
     const response = await deps.provider.complete(request, signal);
     span.end({
@@ -152,6 +164,17 @@ async function loop(
   const { signal } = control;
   let messages: Message[] = [...history, { role: "user", content: userInput }];
   const interrupted = (steps: number): TurnResult => ({ messages, finishReason: "interrupted", steps });
+  const maxRepeats = deps.maxRepeats ?? DEFAULT_MAX_REPEATS;
+  const maxCost = deps.maxTurnCostUsd ?? null;
+  const pricing = deps.pricing ?? DEFAULT_PRICING;
+  let usage: TokenUsage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+  let signatures: string[] = [];
+  const stopAt = async (hit: LimitHit, steps: number): Promise<TurnResult> => {
+    const detail = limitDetail(hit, { maxSteps: deps.maxSteps, maxCostUsd: maxCost, maxRepeats });
+    deps.tracer.log("limit", { hit, steps, costUsd: costUsd(usage, pricing) });
+    messages = await summarize(messages, detail, steps + 1, deps, turnId, signal);
+    return { messages, finishReason: hit, steps };
+  };
 
   for (let step = 1; step <= deps.maxSteps; step++) {
     if (signal?.aborted) return interrupted(step - 1);
@@ -170,6 +193,12 @@ async function loop(
       throw new TurnAbortedError(err, messages);
     }
     messages = [...messages, response.message];
+    const u = response.usage;
+    usage = {
+      inputTokens: usage.inputTokens + u.inputTokens,
+      cachedInputTokens: usage.cachedInputTokens + u.cachedInputTokens,
+      outputTokens: usage.outputTokens + u.outputTokens,
+    };
     if (response.message.text) deps.onEvent?.({ type: "assistant_text", text: response.message.text });
 
     if (response.message.toolCalls.length === 0) {
@@ -190,9 +219,16 @@ async function loop(
     // D2: tool calls run sequentially, results returned together in one message.
     // After a stop, every remaining call still gets a result so the history stays valid.
     const results: ToolResult[] = [];
+    let repeated = false;
     for (const call of response.message.toolCalls) {
-      if (signal?.aborted) {
-        results.push({ callId: call.id, content: INTERRUPTED_RESULT, isError: true });
+      if (signal?.aborted || repeated) {
+        results.push({ callId: call.id, content: repeated ? REPEATED_RESULT : INTERRUPTED_RESULT, isError: true });
+        continue;
+      }
+      signatures = [...signatures, callSignature(call)];
+      if (isRepeating(signatures, maxRepeats)) {
+        repeated = true;
+        results.push({ callId: call.id, content: REPEATED_RESULT, isError: true });
         continue;
       }
       deps.onEvent?.({ type: "tool_call", call });
@@ -202,8 +238,33 @@ async function loop(
     }
     messages = [...messages, { role: "tool_results", results }];
     if (signal?.aborted) return interrupted(step);
+    if (repeated) return stopAt("repeated", step);
+    if (maxCost !== null && costUsd(usage, pricing) > maxCost) return stopAt("max_cost", step);
   }
-  return { messages, finishReason: "max_steps", steps: deps.maxSteps };
+  return stopAt("max_steps", deps.maxSteps);
+}
+
+// One extra model call, told not to use tools, so a stopped turn ends with a summary the user can act on.
+// If it fails, the turn still ends cleanly without the notice (history stays valid either way).
+async function summarize(
+  messages: Message[],
+  detail: string,
+  step: number,
+  deps: AgentDeps,
+  turnId: string,
+  signal?: AbortSignal,
+): Promise<Message[]> {
+  if (signal?.aborted) return messages;
+  const withNotice: Message[] = [...messages, { role: "user", content: limitNotice(detail) }];
+  try {
+    const response = await callModel(withNotice, step, deps, turnId, signal, true);
+    // Tool calls are not allowed here; drop any the model still makes so no call is left unanswered.
+    const text = response.message.text || `(stopped: ${detail})`;
+    deps.onEvent?.({ type: "assistant_text", text });
+    return [...withNotice, { role: "assistant", text, toolCalls: [] }];
+  } catch {
+    return messages;
+  }
 }
 
 export async function runTurn(

@@ -150,7 +150,9 @@ export async function runTask(runtime: Runtime, task: EvalTask, options: RunTask
   const end = final as FinalEvent | null;
   const finishReason = end?.type === "turn_end" ? end.finishReason : null;
   const error = end === null ? "turn produced no result" : end.type === "error" ? end.message : null;
-  const reasons = judge({ finishReason, error, steps: t.llmCalls, costUsd: t.costUsd, budget: task.budget, checkPassed: check.passed });
+  // Steps the turn actually took; the extra summary call after a limit is not a step.
+  const steps = end?.type === "turn_end" ? end.steps : t.llmCalls;
+  const reasons = judge({ finishReason, error, steps, costUsd: t.costUsd, budget: task.budget, checkPassed: check.passed });
 
   return {
     taskId: task.id,
@@ -161,7 +163,7 @@ export async function runTask(runtime: Runtime, task: EvalTask, options: RunTask
     reasons,
     finishReason,
     error,
-    steps: t.llmCalls,
+    steps,
     toolCalls: t.toolCalls,
     toolErrors: t.toolErrors,
     inputTokens: t.inputTokens,

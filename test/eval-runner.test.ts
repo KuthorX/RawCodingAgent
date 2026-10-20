@@ -76,8 +76,9 @@ test("runTask: cost guard stops the turn and the attempt fails as over_cost", as
 });
 
 test("runTask: hitting maxSteps fails as over_steps", async () => {
-  const read = (id: string) => reply("", [{ id, name: "read_file", input: { path: "paginate.py" } }]);
-  const provider = new ScriptedProvider(Array.from({ length: 30 }, (_, i) => read(String(i))));
+  // Different commands each time, so this hits the step limit rather than the repeat guard.
+  const run = (id: string) => reply("", [{ id, name: "bash", input: { command: `echo ${id}` } }]);
+  const provider = new ScriptedProvider([...Array.from({ length: task.budget.maxSteps }, (_, i) => run(String(i))), reply("summary")]);
   const outcome = await runTask(testRuntime(provider), task, { workspace: join(tempWorkspace(), "w"), attempt: 1 });
   assert.equal(outcome.steps, task.budget.maxSteps);
   assert.deepEqual(outcome.reasons, ["over_steps", "check_failed"]);

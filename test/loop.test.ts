@@ -68,12 +68,57 @@ test("denied calls are reported to the model", async () => {
   assert.match(msg.results[0]!.content, /denied/);
 });
 
-test("stops at maxSteps", async () => {
-  const loopCall = () => reply("", [{ id: "a", name: "bash", input: { command: "true" } }]);
-  const provider = new ScriptedProvider([loopCall(), loopCall(), loopCall()]);
-  const result = await runTurn([], "go", makeDeps(provider, { maxSteps: 2 }));
+test("stops at maxSteps, then asks the model for a summary", async () => {
+  const call = (n: number) => reply("", [{ id: `a${n}`, name: "bash", input: { command: `echo ${n}` } }]);
+  const provider = new ScriptedProvider([call(1), call(2), reply("done A, B is left")]);
+  const events: string[] = [];
+  const deps = makeDeps(provider, { maxSteps: 2, onEvent: (e) => e.type === "assistant_text" && events.push(e.text) });
+  const result = await runTurn([], "go", deps);
   assert.equal(result.finishReason, "max_steps");
-  assert.equal(provider.requests.length, 2);
+  assert.equal(result.steps, 2);
+  assert.equal(provider.requests.length, 3);
+  const summaryReq = provider.requests[2]!;
+  // Same tools as the earlier requests: only the notice is appended, so the prompt cache still hits.
+  assert.deepEqual(summaryReq.tools, provider.requests[1]!.tools);
+  const notice = summaryReq.messages.at(-1)!;
+  assert.match(notice.role === "user" ? notice.content : "", /step limit \(2/);
+  assert.deepEqual(events, ["done A, B is left"]);
+  assert.deepEqual(result.messages.map((m) => m.role), ["user", "assistant", "tool_results", "assistant", "tool_results", "user", "assistant"]);
+});
+
+test("a summary that still calls tools is kept as text only, and a failed summary keeps history valid", async () => {
+  const call = reply("", [{ id: "a", name: "bash", input: { command: "echo 1" } }]);
+  const sneaky = reply("summary", [{ id: "b", name: "bash", input: { command: "rm -rf /" } }]);
+  const kept = await runTurn([], "go", makeDeps(new ScriptedProvider([call, sneaky]), { maxSteps: 1 }));
+  const last = kept.messages.at(-1)!;
+  assert.deepEqual(last.role === "assistant" && [last.text, last.toolCalls.length], ["summary", 0]);
+
+  // Script exhausted -> summary call throws -> no dangling notice.
+  const failed = await runTurn([], "go", makeDeps(new ScriptedProvider([reply("", [{ id: "a", name: "bash", input: { command: "echo 1" } }])]), { maxSteps: 1 }));
+  assert.equal(failed.finishReason, "max_steps");
+  assert.equal(failed.messages.at(-1)!.role, "tool_results");
+});
+
+test("stops when the same call is made several times in a row; different calls in between reset it", async () => {
+  const same = (id: string) => reply("", [{ id, name: "bash", input: { command: "cat x" } }]);
+  const other = reply("", [{ id: "o", name: "bash", input: { command: "ls" } }]);
+  const provider = new ScriptedProvider([same("1"), same("2"), other, same("3"), same("4"), same("5"), reply("stuck on x")]);
+  const result = await runTurn([], "go", makeDeps(provider, { maxRepeats: 3 }));
+  assert.equal(result.finishReason, "repeated");
+  assert.equal(result.steps, 6);
+  // The third identical call in a row was not executed.
+  const lastResults = result.messages.findLast((m) => m.role === "tool_results")!;
+  assert.match(lastResults.role === "tool_results" ? lastResults.results[0]!.content : "", /not executed: the same call/);
+});
+
+test("stops when the turn's cost passes the limit", async () => {
+  // $0.3/MTok input: 1M tokens = $0.30 per call; limit $0.5 is crossed after the second call.
+  const big = (n: number) => reply("", [{ id: `c${n}`, name: "bash", input: { command: `echo ${n}` } }], undefined, { inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 0 });
+  const provider = new ScriptedProvider([big(1), big(2), big(3), reply("spent too much")]);
+  const result = await runTurn([], "go", makeDeps(provider, { maxTurnCostUsd: 0.5 }));
+  assert.equal(result.finishReason, "max_cost");
+  assert.equal(result.steps, 2);
+  assert.equal(provider.requests.length, 3);
 });
 
 test("does not execute tool calls from a truncated response but keeps history valid", async () => {

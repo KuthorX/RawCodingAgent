@@ -90,10 +90,14 @@ export class OpenAIProvider implements Provider {
       model: this.model,
       max_tokens: MAX_TOKENS,
       messages: toOpenAIMessages(req.system, req.messages),
-      tools: req.tools.map((t) => ({
-        type: "function" as const,
-        function: { name: t.name, description: t.description, parameters: t.inputSchema },
-      })),
+      ...(req.tools.length > 0
+        ? {
+            tools: req.tools.map((t) => ({
+              type: "function" as const,
+              function: { name: t.name, description: t.description, parameters: t.inputSchema },
+            })),
+          }
+        : {}),
       },
       { signal },
     );

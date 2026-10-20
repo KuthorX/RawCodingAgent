@@ -233,7 +233,7 @@ async function refreshSessions() {
   currentWorkspace = list.find((s) => s.id === current)?.workspace ?? currentWorkspace;
   const box = $("sessions");
   box.replaceChildren();
-  if (workspaces.length === 0) box.append(el("div", "empty", "点"选择文件夹…"或输入路径，打开第一个工作区"));
+  if (workspaces.length === 0) box.append(el("div", "empty", "点「选择文件夹…」或输入路径，打开第一个工作区"));
   const known = new Set(workspaces.map((w) => w.path));
   for (const ws of workspaces) box.append(workspaceGroup(ws.path, ws, list.filter((s) => s.workspace === ws.path)));
   const others = list.filter((s) => !known.has(s.workspace));
@@ -369,7 +369,7 @@ const handlers = {
   },
   turn_end(e) {
     const ok = e.finishReason === "end_turn";
-    const label = { interrupted: "已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
+    const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", repeated: "重复调用同一工具，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
     append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
     endTurn(e.continues);
   },

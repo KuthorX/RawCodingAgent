@@ -29,12 +29,13 @@ export function createRuntime(defaultApprovalMode: ApprovalMode): Runtime {
   const config = loadConfig();
   const provider = new OpenAIProvider(config.llm);
   const store = new SessionStore(resolve(PROJECT_ROOT, ".sessions"));
+  const pricing = loadPricing();
 
   return {
     store,
     workspaces: new WorkspaceStore(resolve(PROJECT_ROOT, ".workspaces.json")),
     model: provider.model,
-    pricing: loadPricing(),
+    pricing,
     defaultApprovalMode,
     makeDeps: (meta, hooks) => {
       const tracer = createTracer(store.tracePath(meta.id));
@@ -45,6 +46,9 @@ export function createRuntime(defaultApprovalMode: ApprovalMode): Runtime {
         system: buildSystemPrompt(meta.workspace),
         workspace: meta.workspace,
         maxSteps: config.maxSteps,
+        maxTurnCostUsd: config.maxTurnCostUsd,
+        maxRepeats: config.maxRepeats,
+        pricing,
         tracer,
         ...hooks,
       } satisfies AgentDeps;

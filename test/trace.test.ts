@@ -78,7 +78,7 @@ test("totals, toolStats and turns aggregate spans", () => {
 test("tool spans record how each call was permitted, using the mode at call time", async () => {
   const tracer = createMemoryTracer();
   let mode: "ask" | "auto" = "ask";
-  const bash = (id: string) => ({ id, name: "bash", input: { command: "true" } });
+  const bash = (id: string) => ({ id, name: "bash", input: { command: `echo ${id}` } });
   const provider = new ScriptedProvider([
     reply("", [{ id: "r", name: "read_file", input: { path: "nope" } }, bash("b1"), bash("b2"), bash("b3")]),
     reply("ok"),
