@@ -138,3 +138,17 @@ test("experimentTable only counts tasks unchanged in every run and shows per-tas
   assert.doesNotMatch(table, /^t1 /m);
   assert.match(table, /not compared \(missing or changed in some run\): t3/);
 });
+
+test("report: bash file ops pooled over attempts; '-' for results saved before the metric existed", () => {
+  const out = (toolMix?: { fileTools: number; bash: { read: number; search: number; edit: number; outside: number; other: number } }) => ({
+    taskId: "py-paginate", attempt: 1, sessionId: "s", workspace: "w", passed: true, reasons: [], finishReason: "end_turn" as const,
+    error: null, steps: 2, toolCalls: 1, toolErrors: 0, toolMix, inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, costUsd: 0.001,
+    durationMs: 1, budget, check: { passed: true, exitCode: 0, output: "", timedOut: false },
+  });
+  const mix = (fileTools: number, read: number, outside = 0) => ({ fileTools, bash: { read, search: 0, edit: 0, outside, other: 5 } });
+  assert.match(formatTable([task], [out(mix(3, 1, 4))]), /0\.0s\s+1\/4 25%\s+s/);
+  assert.match(formatTable([task], [out()]), /0\.0s\s+-\s+s/);
+  const info: RunInfo = { runId: "A", model: "m", pricing: DEFAULT_PRICING, promptRules: [], startedAt: "t", hashes: { "py-paginate": "h" } };
+  const outcomes = [out(mix(3, 1)), out(mix(1, 3))];
+  assert.match(experimentTable([{ summary: summarize(info, outcomes), outcomes }], {}), /\$0\.0010\s+4\/8 50%/);
+});

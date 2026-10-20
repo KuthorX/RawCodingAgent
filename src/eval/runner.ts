@@ -6,6 +6,7 @@ import { costUsd, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { SessionEvent } from "../session/events.ts";
 import { SessionRunner } from "../session/runner.ts";
 import { parseTrace, totals } from "../trace/analyze.ts";
+import { toolMix, type ToolMix } from "../trace/bash-usage.ts";
 import type { CompletionRequest, CompletionResponse, Provider } from "../types.ts";
 import { copyRepo, initGit, overlay, runCheck, type Budget, type CheckResult, type EvalTask } from "./tasks.ts";
 
@@ -25,6 +26,8 @@ export interface TaskOutcome {
   steps: number;
   toolCalls: number;
   toolErrors: number;
+  // D4: file work through bash vs the dedicated tools. Missing in results saved before it was added.
+  toolMix?: ToolMix;
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
@@ -146,7 +149,8 @@ export async function runTask(runtime: Runtime, task: EvalTask, options: RunTask
 
   overlay(task, "check", options.workspace);
   const check = await runCheck(task, options.workspace);
-  const t = totals(parseTrace(runtime.store.readFile(meta.id, "trace.jsonl")), runtime.pricing);
+  const spans = parseTrace(runtime.store.readFile(meta.id, "trace.jsonl"));
+  const t = totals(spans, runtime.pricing);
   const end = final as FinalEvent | null;
   const finishReason = end?.type === "turn_end" ? end.finishReason : null;
   const error = end === null ? "turn produced no result" : end.type === "error" ? end.message : null;
@@ -166,6 +170,7 @@ export async function runTask(runtime: Runtime, task: EvalTask, options: RunTask
     steps,
     toolCalls: t.toolCalls,
     toolErrors: t.toolErrors,
+    toolMix: toolMix(spans, options.workspace),
     inputTokens: t.inputTokens,
     cachedInputTokens: t.cachedInputTokens,
     outputTokens: t.outputTokens,

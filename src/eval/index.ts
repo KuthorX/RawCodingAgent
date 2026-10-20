@@ -145,7 +145,7 @@ async function main(): Promise<number> {
   const runDir = join(RUNS_DIR, id);
   // Eval sessions live with the run's results, not in the GUI's session list.
   // Created before the run directory, so a config error doesn't leave an empty one behind.
-  const runtime = createRuntime("auto", { sessionsDir: join(runDir, "sessions") });
+  const runtime = createRuntime("auto", { sessionsDir: join(runDir, "sessions"), webSearch: false });
   mkdirSync(runDir, { recursive: true });
   scrubSecrets();
   // Outside this project and outside any git repo, so the agent can't reach hidden tests, solutions or .env.

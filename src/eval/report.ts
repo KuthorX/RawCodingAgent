@@ -2,6 +2,7 @@ import type { TaskOutcome } from "./runner.ts";
 import type { EvalTask } from "./tasks.ts";
 
 import type { Pricing } from "../pricing.ts";
+import { bashFileOps, type ToolMix } from "../trace/bash-usage.ts";
 
 export interface TaskTally {
   hash: string; // task directory content hash; tallies are only compared when it matches
@@ -59,11 +60,20 @@ export function summarize(info: RunInfo, outcomes: readonly TaskOutcome[]): RunS
 }
 
 const usd = (n: number): string => `$${n.toFixed(4)}`;
+
+// "3/10": file operations done through bash, out of all file operations (bash + dedicated tools).
+function fileOpsCell(mixes: readonly (ToolMix | undefined)[]): string {
+  const known = mixes.filter((m): m is ToolMix => m !== undefined);
+  if (known.length === 0) return "-";
+  const viaBash = known.reduce((n, m) => n + bashFileOps(m), 0);
+  const total = viaBash + known.reduce((n, m) => n + m.fileTools, 0);
+  return total === 0 ? "0/0" : `${viaBash}/${total} ${Math.round((viaBash / total) * 100)}%`;
+}
 const pad = (s: string, n: number): string => s + " ".repeat(Math.max(0, n - s.length));
 
 // Plain-text table for the terminal: one row per attempt, values shown against their budget.
 export function formatTable(tasks: readonly EvalTask[], outcomes: readonly TaskOutcome[]): string {
-  const rows = [["task", "diff", "result", "steps", "cost", "time", "session", "reasons"]];
+  const rows = [["task", "diff", "result", "steps", "cost", "time", "bash file ops", "session", "reasons"]];
   for (const task of tasks) {
     for (const o of outcomes.filter((x) => x.taskId === task.id)) {
       rows.push([
@@ -73,6 +83,7 @@ export function formatTable(tasks: readonly EvalTask[], outcomes: readonly TaskO
         `${o.steps}/${o.budget.maxSteps}`,
         `${usd(o.costUsd)}/${usd(o.budget.maxCostUsd)}`,
         `${(o.durationMs / 1000).toFixed(1)}s`,
+        fileOpsCell([o.toolMix]),
         o.sessionId,
         o.reasons.join(","),
       ]);
@@ -137,7 +148,7 @@ function comparableTasks(runs: readonly RunFile[]): { shared: string[]; excluded
 export function experimentTable(runs: readonly RunFile[], difficulties: Record<string, string>): string {
   const { shared, excluded } = comparableTasks(runs);
   const graded = (r: RunFile) => r.outcomes.filter((o) => !isError(o) && shared.includes(o.taskId));
-  const rows = [["run", "model", "prompt rules", "pass", "naive 95% CI", "expert pass", "avg steps", "avg cost"]];
+  const rows = [["run", "model", "prompt rules", "pass", "naive 95% CI", "expert pass", "avg steps", "avg cost", "bash file ops"]];
   for (const run of runs) {
     const outcomes = graded(run);
     const passed = outcomes.filter((o) => o.passed).length;
@@ -152,6 +163,7 @@ export function experimentTable(runs: readonly RunFile[], difficulties: Record<s
       `${expert.filter((o) => o.passed).length}/${expert.length}`,
       mean(outcomes.map((o) => o.steps)).toFixed(1),
       `$${mean(outcomes.map((o) => o.costUsd)).toFixed(4)}`,
+      fileOpsCell(outcomes.map((o) => o.toolMix)),
     ]);
   }
 

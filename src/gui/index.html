@@ -406,6 +406,7 @@ function describe(call) {
   const a = call.input || {};
   if (typeof a.command === "string") return `${call.name}: ${stripCd(a.command)}`;
   if (typeof a.path === "string") return `${call.name} ${a.path}`;
+  if (typeof a.query === "string") return `${call.name}: ${a.query}`;
   return `${call.name} ${JSON.stringify(a)}`;
 }
 

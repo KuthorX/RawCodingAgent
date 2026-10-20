@@ -10,6 +10,7 @@ import type { RunnerOptions } from "./session/runner.ts";
 import { SessionStore } from "./session/store.ts";
 import { WorkspaceStore } from "./workspace/store.ts";
 import { defaultTools } from "./tools/index.ts";
+import { searchBackendFromEnv, webSearchTool } from "./tools/web-search.ts";
 
 export const PROJECT_ROOT = resolve(import.meta.dirname, "..");
 
@@ -28,6 +29,8 @@ export interface Runtime {
 export interface RuntimeOptions {
   // Where sessions are stored; the eval keeps its sessions next to each run's results instead of in the GUI list.
   sessionsDir?: string;
+  // web_search is added when a search key is configured; the eval turns it off so runs stay offline and comparable.
+  webSearch?: boolean;
 }
 
 export function createRuntime(defaultApprovalMode: ApprovalMode, options: RuntimeOptions = {}): Runtime {
@@ -36,6 +39,10 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
   const provider = new OpenAIProvider(config.llm);
   const store = new SessionStore(options.sessionsDir ?? resolve(PROJECT_ROOT, ".sessions"));
   const pricing = loadPricing();
+  const backend = options.webSearch === false ? null : searchBackendFromEnv(process.env);
+  const webSearch = backend ? webSearchTool(backend) : null;
+  // The tool holds the key from here on. bash inherits process.env, so don't leave it there.
+  delete process.env.TAVILY_API_KEY;
 
   return {
     store,
@@ -46,11 +53,22 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     defaultApprovalMode,
     makeDeps: (meta, hooks) => {
       const tracer = createTracer(store.tracePath(meta.id));
-      tracer.log("session", { id: meta.id, model: provider.model, workspace: meta.workspace });
+      const system = buildSystemPrompt(meta.workspace, config.promptRules);
+      const tools = webSearch ? [...defaultTools, webSearch] : defaultTools;
+      // Logged every time a session is (re)loaded: a process started before a prompt change keeps the old prompt,
+      // so this is the only reliable record of what the model was actually told.
+      tracer.log("session", {
+        id: meta.id,
+        model: provider.model,
+        workspace: meta.workspace,
+        promptRules: config.promptRules,
+        tools: tools.map((t) => t.spec.name),
+        system,
+      });
       return {
         provider,
-        tools: defaultTools,
-        system: buildSystemPrompt(meta.workspace, config.promptRules),
+        tools,
+        system,
         workspace: meta.workspace,
         maxSteps: config.maxSteps,
         maxTurnCostUsd: config.maxTurnCostUsd,

@@ -11,6 +11,8 @@ cp .env.example .env        # 填入凭证
 
 需要 Node 24+（原生运行 `.ts`，无需编译）。
 
+`.env` 里填了 `TAVILY_API_KEY`（[Tavily](https://tavily.com)，每月 1000 次免费）就会多一个 `web_search` 工具，用来查文档、报错信息等工作区里没有的资料。它只读、不需要审批，但查询内容会发到 Tavily；key 会从 agent 的 bash 能看到的环境变量里删掉。
+
 ### 网页界面
 
 ```bash
@@ -61,6 +63,8 @@ AGENT_PROMPT_RULES= npm run eval -- --repeat 3   # 换一组 system prompt 规�
 
 **PASS = 检查通过 + agent 自己结束 + 步数 ≤ 预算 + 成本 ≤ 预算。** 成本超了会立即停止这一轮。API 报错、评测程序异常记为 ERROR，单独统计，不计入通过率。结果写入 `.eval-runs/<运行编号>/results.json`；和上一次运行对比时，只比较内容没变过的任务（按任务目录的哈希判断），模型或单价不同会给出提示。
 
+结果表里的 **bash file ops** 一栏是"通过 bash 读、搜、改工作区内文件的次数 / 全部文件操作次数（bash + 专用工具）"，用来看 `tools` 这类提示词规则有没有让模型改用专用工具；访问工作区外路径的 bash 调用不计入（专用工具到不了那里）。分类是按命令文本的启发式（`src/trace/bash-usage.ts`），只适合比较两次运行，不适合判断单次调用。评测时不启用 web_search，结果不受网络影响。
+
 新增任务：在 `eval/tasks/` 下建目录，放 `task.json`、`repo/`、`check/`、`solution/`，然后跑 `--validate`。
 
 ## 会话数据
@@ -73,6 +77,8 @@ AGENT_PROMPT_RULES= npm run eval -- --repeat 3   # 换一组 system prompt 规�
 | `messages.json` | 完整对话历史（每轮结束时写入） | 继续会话时恢复上下文 |
 | `events.jsonl` | 界面事件（用户输入、工具调用、审批、结果） | 重新打开会话时回放 |
 | `trace.jsonl` | span 记录 + 模型原始返回 | 统计页面、调试 |
+
+trace 的第一条是 `session` 事件，记录模型、工作区、启用的提示词规则、工具列表和完整的 system prompt（每次加载会话都会记一条：进程启动后才改的提示词不会生效，以这里为准）。
 
 trace 里的 span 结构：`turn`（一次用户输入）→ `llm`（一次模型调用，含 token 用量、stop reason）和 `tool`（一次工具调用，含参数、是否失败、审批结果 `approval`：`not_required` / `auto` / `allowed` / `denied`，以及审批等待时长）。span 在结束时写入，所以进行中的 turn 只有子 span。
 
@@ -99,12 +105,13 @@ src/
     permissions.ts      ★ 审批策略
     trace.ts            span / 事件写入
   providers/openai.ts   内部格式 ↔ OpenAI Chat Completions
-  tools/                read_file / write_file / edit_file / glob / grep / bash
+  tools/                read_file / write_file / edit_file / glob / grep / bash / web_search
   session/
     store.ts            会话目录读写
     runner.ts           单个会话：历史、事件回放、审批、运行中的 turn
     events.ts           界面事件类型
   trace/analyze.ts      从 trace.jsonl 计算统计（含成本）、按 turn 组织 span
+  trace/bash-usage.ts   bash 命令分类：读/搜/改文件、工作区外、其他（eval 的 bash file ops 指标）
   eval/
     tasks.ts            加载任务、复制仓库、运行检查命令
     runner.ts           跑一次尝试：成本守卫、判定 PASS/FAIL
