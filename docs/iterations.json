@@ -171,7 +171,7 @@
       "title": "迭代记录页",
       "problem": "改动越来越多，只看 git log 不容易知道每次迭代解决了什么问题，也不方便按模块回顾。",
       "change": "新增 /iterations 页面：按时间线或按模块查看每次迭代的问题和改动，点击提交可以直接看完整的改动内容（git show），也能跳到 GitHub。数据在 docs/iterations.json，没被任何记录引用的提交会单独列出来，避免漏记。",
-      "commits": []
+      "commits": ["15f2bc2"]
     }
   ]
 }
