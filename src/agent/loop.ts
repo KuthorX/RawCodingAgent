@@ -1,8 +1,9 @@
 import { performance } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
 import { costUsd, DEFAULT_PRICING, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { Tool } from "../tools/index.ts";
 import { ToolError } from "../tools/index.ts";
-import type { CompletionResponse, Message, Provider, StopReason, ToolCall, ToolResult } from "../types.ts";
+import type { CompletionRequest, CompletionResponse, Message, Provider, StopReason, ToolCall, ToolResult } from "../types.ts";
 import { callSignature, isRepeating, limitDetail, limitNotice, type LimitHit } from "./limits.ts";
 import { needsApproval, type ApprovalMode, type ApprovalOutcome, type Confirm } from "./permissions.ts";
 import type { Tracer } from "./trace.ts";
@@ -23,6 +24,8 @@ export interface AgentDeps {
   confirm: Confirm;
   tracer: Tracer;
   onEvent?: (event: AgentEvent) => void;
+  // Waits before each retry of a model call whose connection dropped; its length is the number of retries.
+  retryDelaysMs?: readonly number[];
 }
 
 export type AgentEvent =
@@ -66,6 +69,20 @@ export class TurnAbortedError extends Error {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+}
+
+const DEFAULT_RETRY_DELAYS_MS = [1_000, 3_000];
+const DROPPED_CONNECTION_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "UND_ERR_SOCKET"]);
+
+// The connection dropped while the response was being read: fetch rejects with TypeError("terminated"),
+// which the SDK doesn't retry since the response had already started. Safe to resend: a chat request has no side effects.
+export function isDroppedConnection(err: unknown): boolean {
+  for (let e = err; e instanceof Error; e = e.cause) {
+    if (e instanceof TypeError && (e.message === "terminated" || e.message === "fetch failed")) return true;
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === "string" && DROPPED_CONNECTION_CODES.has(code)) return true;
+  }
+  return false;
 }
 
 interface ToolRun {
@@ -131,12 +148,33 @@ async function callModel(
   signal?: AbortSignal,
   summary = false,
 ): Promise<CompletionResponse> {
-  const attrs = { step, messages: messages.length, ...(summary ? { summary: true } : {}) };
+  // The summary request keeps the same tools as every other request: it only differs by the appended notice,
+  // so the prompt cache still hits. (tool_choice "none" would make DeepSeek drop the tools and miss the cache.)
+  const request = { system: deps.system, messages, tools: deps.tools.map((t) => t.spec) };
+  const delays = deps.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callModelOnce(request, step, deps, parentId, attempt, signal, summary);
+    } catch (err) {
+      if (signal?.aborted || attempt >= delays.length || !isDroppedConnection(err)) throw err;
+      // Rejects if the user stops the turn while waiting; the caller then sees the abort.
+      await sleep(delays[attempt], undefined, { signal });
+    }
+  }
+}
+
+async function callModelOnce(
+  request: CompletionRequest,
+  step: number,
+  deps: AgentDeps,
+  parentId: string,
+  attempt: number,
+  signal: AbortSignal | undefined,
+  summary: boolean,
+): Promise<CompletionResponse> {
+  const attrs = { step, messages: request.messages.length, ...(summary ? { summary: true } : {}), ...(attempt > 0 ? { retry: attempt } : {}) };
   const span = deps.tracer.startSpan("llm", deps.provider.model, parentId, attrs);
   try {
-    // The summary request keeps the same tools as every other request: it only differs by the appended notice,
-    // so the prompt cache still hits. (tool_choice "none" would make DeepSeek drop the tools and miss the cache.)
-    const request = { system: deps.system, messages, tools: deps.tools.map((t) => t.spec) };
     const response = await deps.provider.complete(request, signal);
     span.end({
       inputTokens: response.usage.inputTokens,

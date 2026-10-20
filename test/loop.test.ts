@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runTurn } from "../src/agent/loop.ts";
+import { createMemoryTracer } from "../src/agent/trace.ts";
 import { makeDeps, reply, ScriptedProvider } from "./helpers.ts";
 
 test("returns immediately when the model makes no tool calls", async () => {
@@ -151,4 +152,47 @@ test("system prompt rules are appended in order and unknown rules are rejected",
   assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k" }).promptRules, ["spec"]);
   assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: "" }).promptRules, []);
   assert.throws(() => loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: "debug,nope" }), /unknown rule\(s\) nope/);
+});
+
+// Fails with the given errors first, then answers.
+function flakyProvider(errors: Error[]) {
+  const provider = new ScriptedProvider([reply("ok")]);
+  return {
+    name: provider.name,
+    model: provider.model,
+    calls: 0,
+    async complete(req: Parameters<ScriptedProvider["complete"]>[0]) {
+      this.calls++;
+      const err = errors.shift();
+      if (err) throw err;
+      return provider.complete(req);
+    },
+  };
+}
+
+test("a model call whose connection dropped is retried, each attempt traced", async () => {
+  const tracer = createMemoryTracer();
+  const provider = flakyProvider([new TypeError("terminated"), new Error("socket", { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) })]);
+  const result = await runTurn([], "go", makeDeps(provider, { tracer, retryDelaysMs: [0, 0] }));
+  assert.equal(result.finishReason, "end_turn");
+  assert.equal(provider.calls, 3);
+  assert.deepEqual(tracer.spans.filter((s) => s.kind === "llm").map((s) => [s.status, s.attrs.retry]), [["error", undefined], ["error", 1], ["ok", 2]]);
+});
+
+test("model calls give up after the last retry, and other errors are not retried", async () => {
+  const dropped = flakyProvider([new TypeError("terminated"), new TypeError("terminated"), new TypeError("terminated")]);
+  await assert.rejects(runTurn([], "go", makeDeps(dropped, { retryDelaysMs: [0, 0] })), /terminated/);
+  assert.equal(dropped.calls, 3);
+  const badRequest = flakyProvider([new Error("400 invalid request")]);
+  await assert.rejects(runTurn([], "go", makeDeps(badRequest, { retryDelaysMs: [0, 0] })), /400/);
+  assert.equal(badRequest.calls, 1);
+});
+
+test("stopping the turn while waiting to retry ends it as interrupted", async () => {
+  const controller = new AbortController();
+  const provider = flakyProvider([new TypeError("terminated")]);
+  setTimeout(() => controller.abort(), 20);
+  const result = await runTurn([], "go", makeDeps(provider, { retryDelaysMs: [10_000] }), { signal: controller.signal });
+  assert.equal(result.finishReason, "interrupted");
+  assert.equal(provider.calls, 1);
 });
