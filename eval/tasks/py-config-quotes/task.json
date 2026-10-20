@@ -1,0 +1,11 @@
+{
+  "title": "配置解析的引号与注释",
+  "difficulty": "medium",
+  "skill": "边界条件",
+  "prompt": "config.py 的 parse_config 在值里有 # 时解析错误，tests/test_config.py 失败。按 docstring 修复，并确保 docstring 里的每条规则都成立。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 12,
+    "maxCostUsd": 0.006
+  }
+}

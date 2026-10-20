@@ -1,0 +1,11 @@
+{
+  "title": "报表的去重与多键排序",
+  "difficulty": "hard",
+  "skill": "多条规则同时满足",
+  "prompt": "report.py 的 department_report 输出不对：有重复员工时人数和总额算错，排序也不符合 docstring。按 docstring 修复。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 18,
+    "maxCostUsd": 0.008
+  }
+}

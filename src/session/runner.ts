@@ -1,0 +1,197 @@
+import { randomUUID } from "node:crypto";
+import type { AgentDeps } from "../agent/loop.ts";
+import { runTurn, TurnAbortedError } from "../agent/loop.ts";
+import type { ApprovalMode, Confirm } from "../agent/permissions.ts";
+import type { Message } from "../types.ts";
+import type { SessionEvent } from "./events.ts";
+import { titleFrom, type SessionMeta, type SessionStore } from "./store.ts";
+
+type Listener = (event: SessionEvent) => void;
+
+export interface RunnerOptions {
+  store: SessionStore;
+  meta: SessionMeta;
+  makeDeps: (meta: SessionMeta, hooks: Pick<AgentDeps, "confirm" | "onEvent" | "approvalMode">) => AgentDeps;
+  // When omitted, approvals are surfaced as approval_request events and answered via approve().
+  confirm?: Confirm;
+}
+
+const INTERRUPTED = "上次运行在这一轮结束前中断（进程退出），这一轮的改动可能不完整。";
+
+// A turn that started but never ended means the process died mid-turn.
+function isInterrupted(events: SessionEvent[]): boolean {
+  const lastUser = events.findLastIndex((e) => e.type === "user");
+  return lastUser !== -1 && !events.slice(lastUser).some((e) => e.type === "turn_end" || e.type === "error");
+}
+
+// Owns one persisted conversation: history, replayable event log, approvals, and the running turn.
+export class SessionRunner {
+  readonly deps: AgentDeps;
+  private meta: SessionMeta;
+  private history: Message[];
+  private log: SessionEvent[];
+  private running: Promise<void> | null = null;
+  private controller: AbortController | null = null;
+  private queue: string[] = [];
+  private readonly store: SessionStore;
+  private readonly listeners = new Set<Listener>();
+  private readonly pending = new Map<string, (allow: boolean) => void>();
+
+  constructor(options: RunnerOptions) {
+    this.store = options.store;
+    this.meta = options.meta;
+    this.store.acquireLock(this.meta.id);
+    this.history = this.store.loadMessages(this.meta.id);
+    this.log = this.store.loadEvents(this.meta.id);
+    // Persist the marker so the interrupted turn stays closed after later turns are appended.
+    if (isInterrupted(this.log)) this.emit({ type: "error", message: INTERRUPTED });
+    this.deps = options.makeDeps(this.meta, {
+      onEvent: (event) => this.emit(event),
+      confirm: options.confirm ?? ((call) => this.requestApproval(call)),
+      approvalMode: () => this.meta.approvalMode,
+    });
+  }
+
+  get id(): string {
+    return this.meta.id;
+  }
+
+  get info(): SessionMeta & { busy: boolean } {
+    return { ...this.meta, busy: this.isBusy };
+  }
+
+  get isBusy(): boolean {
+    return this.running !== null;
+  }
+
+  subscribe(listener: Listener): () => void {
+    for (const event of this.log) listener(event);
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  // Idle: starts a turn. Busy: queues the text as an interjection, delivered before the next model call
+  // (or as the next turn if the current one ends first). `done` resolves when the session is idle again.
+  send(text: string): { queued: boolean; done: Promise<void> } {
+    if (this.running) {
+      this.queue = [...this.queue, text];
+      this.emit({ type: "user", text, queued: true });
+      return { queued: true, done: this.running };
+    }
+    if (!this.meta.title) this.meta = this.store.updateMeta(this.id, { title: titleFrom(text) });
+    this.emit({ type: "user", text });
+    const done = this.drain(text).finally(() => {
+      // Always leave the busy state, even if persistence fails, so the session never gets stuck.
+      this.running = null;
+      this.controller = null;
+    });
+    this.running = done;
+    return { queued: false, done };
+  }
+
+  // Stops the running turn: aborts the model request and running bash, denies waiting approvals,
+  // and drops interjections that were not delivered yet. Returns false when idle.
+  stop(): boolean {
+    if (!this.running || !this.controller || this.controller.signal.aborted) return false;
+    this.controller.abort();
+    this.deps.tracer.log("stop", { pendingApprovals: this.pending.size, droppedInterjections: this.queue.length });
+    for (const id of [...this.pending.keys()]) this.approve(id, false);
+    if (this.queue.length > 0) {
+      this.emit({ type: "interjection_dropped", count: this.queue.length });
+      this.queue = [];
+    }
+    return true;
+  }
+
+  whenIdle(): Promise<void> {
+    return this.running ?? Promise.resolve();
+  }
+
+  approve(id: string, allow: boolean): boolean {
+    const resolve = this.pending.get(id);
+    if (!resolve) return false;
+    this.pending.delete(id);
+    this.emit({ type: "approval_resolved", id, allow });
+    resolve(allow);
+    return true;
+  }
+
+  // Session-level permission switch; persisted, and effective from the next tool call.
+  // Switching to "auto" also lets through calls that are already waiting.
+  setApprovalMode(mode: ApprovalMode): void {
+    if (mode === this.meta.approvalMode) return;
+    this.meta = this.store.updateMeta(this.id, { approvalMode: mode });
+    this.deps.tracer.log("approval_mode", { mode });
+    this.emit({ type: "approval_mode", mode });
+    if (mode === "auto") for (const id of [...this.pending.keys()]) this.approve(id, true);
+  }
+
+  private requestApproval(call: Parameters<Confirm>[0]): Promise<boolean> {
+    return new Promise((resolve) => {
+      const id = randomUUID();
+      this.pending.set(id, resolve);
+      this.emit({ type: "approval_request", id, call });
+    });
+  }
+
+  // Runs a turn, then keeps going while interjections arrived too late to join it.
+  private async drain(first: string): Promise<void> {
+    let text: string | null = first;
+    while (text !== null) {
+      this.controller = new AbortController();
+      const final = await this.run(text, this.controller.signal);
+      const stopped = this.controller.signal.aborted;
+      text = !stopped && this.queue.length > 0 ? this.queue.join("\n\n") : null;
+      this.queue = [];
+      // Clear busy before announcing the end, so a client reacting to it can send immediately.
+      if (text === null) {
+        this.running = null;
+        this.controller = null;
+      }
+      this.safely(() => this.emit(text === null ? final : { ...final, continues: true }));
+    }
+  }
+
+  private async run(text: string, signal: AbortSignal): Promise<Extract<SessionEvent, { type: "turn_end" | "error" }>> {
+    const control = {
+      signal,
+      takeInterjections: () => {
+        const taken = this.queue;
+        this.queue = [];
+        return taken;
+      },
+    };
+    try {
+      const result = await runTurn(this.history, text, this.deps, control);
+      this.commit(result.messages);
+      return { type: "turn_end", finishReason: result.finishReason, steps: result.steps };
+    } catch (err) {
+      // Keep the completed steps of a failed turn: their tool calls already changed the workspace.
+      if (err instanceof TurnAbortedError) this.safely(() => this.commit(err.messages));
+      const message = err instanceof Error ? err.message : String(err);
+      this.safely(() => this.deps.tracer.log("error", { message }));
+      return { type: "error", message };
+    }
+  }
+
+  // Saved at step boundaries only, so the stored history is always a valid conversation to resume from.
+  private commit(messages: Message[]): void {
+    this.history = messages;
+    this.store.saveMessages(this.id, messages);
+    this.meta = this.store.updateMeta(this.id, { updatedAt: new Date().toISOString(), turns: this.meta.turns + 1 });
+  }
+
+  private safely(fn: () => void): void {
+    try {
+      fn();
+    } catch (err) {
+      process.stderr.write(`session ${this.id}: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+
+  private emit(event: SessionEvent): void {
+    this.log = [...this.log, event];
+    for (const listener of this.listeners) listener(event);
+    this.store.appendEvent(this.id, event);
+  }
+}

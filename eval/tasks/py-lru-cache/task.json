@@ -1,0 +1,11 @@
+{
+  "title": "按规格补全 LRU 缓存",
+  "difficulty": "hard",
+  "skill": "完整实现规格的每一条",
+  "prompt": "fetcher.py 里的 Fetcher 只实现了一部分。按 SPEC.md 把它补全，规格里的每一条都要满足。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 18,
+    "maxCostUsd": 0.008
+  }
+}

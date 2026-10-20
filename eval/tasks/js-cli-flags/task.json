@@ -1,0 +1,11 @@
+{
+  "title": "按 README 给 CLI 加参数",
+  "difficulty": "medium",
+  "skill": "读文档实现功能",
+  "prompt": "按 README.md 的说明，给 bin/wordfreq.js 实现 --reverse 和 --top N 两个参数，以及未知参数的报错。",
+  "check": "node --test",
+  "budget": {
+    "maxSteps": 12,
+    "maxCostUsd": 0.006
+  }
+}

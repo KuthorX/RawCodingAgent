@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>raw-coding-agent</title>
+<link rel="stylesheet" href="/common.css">
+<style>
+  body { height: 100vh; display: flex; flex-direction: column; }
+  .layout { flex: 1; display: flex; min-height: 0; }
+  aside { width: 280px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+  .new { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+  .new input { font: 12px var(--mono); padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  #sessions { flex: 1; overflow-y: auto; }
+  .open-row { display: flex; gap: 6px; }
+  .open-row input { flex: 1; min-width: 0; }
+  .ws-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 8px; background: var(--soft); border-bottom: 1px solid var(--line);
+             font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
+  .ws-head .caret { width: 12px; color: var(--muted); font-weight: 400; }
+  .ws-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-head .count { color: var(--muted); font-weight: 400; font-size: 11.5px; }
+  .ws-head button { font-size: 11.5px; padding: 0 7px; font-weight: 400; }
+  .ws-head button.x { border: 0; background: none; color: var(--muted); padding: 0 4px; }
+  .ws-head.current { box-shadow: inset 3px 0 0 var(--accent); }
+  .ws-empty { padding: 8px 12px 10px 28px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .item { padding-left: 26px !important; }
+  .item { display: block; padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--ink); cursor: pointer; }
+  .item:hover { background: var(--soft); text-decoration: none; }
+  .item.active { background: var(--soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .item .title { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  .item .title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; display: flex; justify-content: space-between; gap: 8px; }
+  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .chat-head { padding: 8px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; font-size: 13px; }
+  .new label, .mode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .mode { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+  .mode.auto { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+  .mode[hidden] { display: none; }
+  .badge { font-size: 10.5px; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 0 4px; flex: none; }
+  .note { color: var(--muted); font-size: 12px; text-align: center; }
+  main { flex: 1; overflow-y: auto; padding: 20px 0; }
+  #log { max-width: 860px; margin: 0 auto; padding: 0 18px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { white-space: pre-wrap; word-break: break-word; }
+  .user .tag { display: block; font-size: 11px; opacity: .8; margin-top: 4px; text-align: right; }
+  .user.queued { opacity: .75; border: 1px dashed #fff; }
+  .user.dropped { background: var(--muted); text-decoration: line-through; }
+  button.stop { border-color: var(--err); color: var(--err); }
+  button.stop[hidden] { display: none; }
+  .user { align-self: flex-end; max-width: 80%; background: var(--accent); color: #fff; padding: 8px 12px; border-radius: 12px 12px 2px 12px; }
+  .assistant pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; font: 12.5px/1.5 var(--mono); }
+  .tool { border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 6px; background: var(--panel); font-size: 13px; }
+  .tool.ok { border-left-color: var(--ok); }
+  .tool.error { border-left-color: var(--err); }
+  .tool.waiting { border-left-color: var(--warn); }
+  .tool summary { cursor: pointer; padding: 6px 10px; font-family: var(--mono); font-size: 12.5px; list-style: none; display: flex; gap: 8px; }
+  .tool summary::-webkit-details-marker { display: none; }
+  .tool summary .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool summary .state { color: var(--muted); }
+  .tool.error summary .state { color: var(--err); }
+  .tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); max-height: 360px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+  .tool .input { color: var(--muted); }
+  .approval { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); background: var(--warn-bg); color: var(--warn); }
+  .approval span { flex: 1; }
+  .end { color: var(--muted); font-size: 12px; text-align: center; padding: 4px 0 10px; }
+  .end.bad, .err { color: var(--err); }
+  .err { white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; }
+  .empty { color: var(--muted); text-align: center; margin-top: 18vh; }
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 18px; }
+  form { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 40px; max-height: 200px; }
+  textarea:focus { outline: none; border-color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>raw-coding-agent</h1>
+  <nav><a id="nav-stats" href="#">统计</a></nav>
+</div>
+<div class="layout" id="root">
+  <aside>
+    <div class="new">
+      <div class="open-row">
+        <input id="ws-path" placeholder="工作区路径，如 ~/code/my-repo">
+        <button id="ws-open" type="button">打开</button>
+      </div>
+      <label><input type="checkbox" id="new-auto"> 新会话自动批准 bash（不再逐个询问）</label>
+    </div>
+    <div id="sessions"></div>
+  </aside>
+  <section class="chat">
+    <div class="chat-head">
+      <span class="dot" id="dot"></span>
+      <span class="meta grow" id="meta">选择或新建一个会话</span>
+      <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
+        <input type="checkbox" id="mode-auto"> <span id="mode-text">每次询问</span>
+      </label>
+      <span id="head-links"></span>
+    </div>
+    <main id="scroller"><div id="log"></div></main>
+    <footer>
+      <form id="form">
+        <textarea id="input" rows="1" placeholder="描述任务，Enter 发送，Shift+Enter 换行"></textarea>
+        <button class="stop" id="stop" type="button" hidden title="中断模型请求和正在运行的命令（Esc）">停止</button>
+        <button class="primary" id="send" type="submit">发送</button>
+      </form>
+    </footer>
+  </section>
+</div>
+<script src="/common.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const logBox = $("log"), input = $("input"), sendBtn = $("send");
+let current = null;      // session id
+let events = null;       // EventSource for current session
+let busy = false;
+let replaying = false;   // true while the server replays stored events after (re)connect
+const toolCards = new Map();
+
+// Approval buttons left over from a turn that ended (e.g. interrupted by a restart) can't be answered anymore.
+function closeStaleApprovals() {
+  for (const card of toolCards.values()) {
+    if (!card.classList.contains("waiting")) continue;
+    card.classList.remove("waiting");
+    card._approval?.replaceChildren(el("span", "", "已失效（这一轮已结束）"));
+  }
+}
+
+function append(node) {
+  const scroller = $("scroller");
+  const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+  logBox.querySelector(".empty")?.remove();
+  logBox.append(node);
+  if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+}
+
+// While busy the input stays open: what you send is an interjection the agent sees at its next step.
+function setBusy(value) {
+  busy = value;
+  $("dot").className = "dot " + (value ? "busy" : "idle");
+  sendBtn.disabled = !current;
+  sendBtn.textContent = value ? "插话" : "发送";
+  $("stop").hidden = !value;
+  $("stop").disabled = false;
+  input.placeholder = value
+    ? "agent 正在工作：输入内容会在它下一步之前送达（插话），Esc 停止"
+    : "描述任务，Enter 发送，Shift+Enter 换行";
+}
+
+// Queued interjection bubbles, oldest first, waiting for delivery.
+let queuedBubbles = [];
+function settleQueued(count, label, className) {
+  const settled = queuedBubbles.splice(0, count ?? queuedBubbles.length);
+  for (const bubble of settled) {
+    bubble.classList.remove("queued");
+    if (className) bubble.classList.add(className);
+    bubble._tag.textContent = label;
+  }
+}
+
+async function stopTurn() {
+  if (!busy || !current) return;
+  $("stop").disabled = true;
+  try { await api(`/api/sessions/${current}/stop`, {}); } catch (e) { alert(e.message); }
+}
+$("stop").onclick = stopTurn;
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") stopTurn(); });
+
+// ---------- session list ----------
+const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '["__other__"]'));
+let currentWorkspace = null;
+
+function sessionItem(s) {
+  const item = el("a", "item" + (s.id === current ? " active" : ""));
+  item.href = "#" + s.id;
+  const title = el("div", "title");
+  title.append(el("span", "dot " + (s.busy ? "busy" : "")), el("span", "", s.title || "（未命名）"));
+  if (s.approvalMode === "auto") title.append(el("span", "badge", "自动批准"));
+  const sub = el("div", "sub");
+  sub.append(el("span", "", fmt.time(s.updatedAt)),
+    el("span", "", `${s.turns} 轮 · ${fmt.int(s.totals.inputTokens + s.totals.outputTokens)} tok · ${s.totals.toolCalls} 工具`));
+  item.append(title, sub);
+  item.title = `${s.id}\n${s.workspace}`;
+  return item;
+}
+
+function toggleGroup(key) {
+  if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+  localStorage.setItem("rca.collapsed", JSON.stringify([...collapsed]));
+  refreshSessions();
+}
+
+// One collapsible group per workspace; ws is null for the "other" group.
+function workspaceGroup(key, ws, sessions) {
+  const frag = document.createDocumentFragment();
+  const head = el("div", "ws-head" + (ws && ws.path === currentWorkspace ? " current" : ""));
+  head.title = ws ? ws.path : "不在工作区列表里的会话（可在上方打开对应路径）";
+  head.append(el("span", "caret", collapsed.has(key) ? "▸" : "▾"), el("span", "name", ws ? ws.name : "其他"),
+    el("span", "count", String(sessions.length)));
+  head.onclick = () => toggleGroup(key);
+  if (ws) {
+    const add = el("button", "", "+ 新会话");
+    add.type = "button";
+    add.title = `在 ${ws.path} 新建会话`;
+    add.onclick = (ev) => { ev.stopPropagation(); createSession(ws.path); };
+    const remove = el("button", "x", "×");
+    remove.type = "button";
+    remove.title = "从列表移除（不删除文件和会话）";
+    remove.onclick = async (ev) => {
+      ev.stopPropagation();
+      if (!confirm(`从列表移除工作区 ${ws.path}？\n不会删除任何文件，它的会话会归到“其他”。`)) return;
+      await api("/api/workspaces/remove", { path: ws.path }).catch((e) => alert(e.message));
+      refreshSessions();
+    };
+    head.append(add, remove);
+  }
+  frag.append(head);
+  if (!collapsed.has(key)) {
+    if (sessions.length === 0) frag.append(el("div", "ws-empty", "还没有会话，点 “+ 新会话” 开始"));
+    for (const s of sessions) frag.append(sessionItem(s));
+  }
+  return frag;
+}
+
+async function refreshSessions() {
+  let list, workspaces;
+  try { [list, workspaces] = await Promise.all([api("/api/sessions"), api("/api/workspaces")]); } catch (e) { return; }
+  currentWorkspace = list.find((s) => s.id === current)?.workspace ?? currentWorkspace;
+  const box = $("sessions");
+  box.replaceChildren();
+  if (workspaces.length === 0) box.append(el("div", "empty", "在上方输入路径，打开第一个工作区"));
+  const known = new Set(workspaces.map((w) => w.path));
+  for (const ws of workspaces) box.append(workspaceGroup(ws.path, ws, list.filter((s) => s.workspace === ws.path)));
+  const others = list.filter((s) => !known.has(s.workspace));
+  if (others.length) box.append(workspaceGroup("__other__", null, others));
+}
+
+async function createSession(workspace) {
+  try {
+    const approvalMode = $("new-auto").checked ? "auto" : "ask";
+    const meta = await api("/api/sessions", { workspace, approvalMode });
+    collapsed.delete(meta.workspace);
+    location.hash = meta.id;
+  } catch (e) { alert(e.message); }
+}
+
+async function openWorkspace() {
+  const path = $("ws-path").value.trim();
+  if (!path) return;
+  try {
+    const ws = await api("/api/workspaces", { path });
+    $("ws-path").value = "";
+    collapsed.delete(ws.path);
+    refreshSessions();
+  } catch (e) { alert(e.message); }
+}
+$("ws-open").onclick = openWorkspace;
+$("ws-path").addEventListener("keydown", (ev) => { if (ev.key === "Enter") openWorkspace(); });
+
+// ---------- transcript rendering ----------
+function renderAssistant(text) {
+  const box = el("div", "msg assistant");
+  text.split(/```[^\n]*\n?/).forEach((part, i) => {
+    if (part) box.append(i % 2 === 1 ? el("pre", "", part.replace(/\n$/, "")) : document.createTextNode(part));
+  });
+  return box;
+}
+
+function describe(call) {
+  const a = call.input || {};
+  if (typeof a.command === "string") return `${call.name}: ${a.command}`;
+  if (typeof a.path === "string") return `${call.name} ${a.path}`;
+  return `${call.name} ${JSON.stringify(a)}`;
+}
+
+const handlers = {
+  user(e) {
+    const bubble = el("div", "msg user" + (e.queued ? " queued" : ""), e.text);
+    if (e.queued) {
+      bubble._tag = el("span", "tag", "插话 · 等待送达");
+      bubble.append(bubble._tag);
+      queuedBubbles.push(bubble);
+    }
+    append(bubble);
+    setBusy(true);
+  },
+  interjection_delivered(e) {
+    settleQueued(e.count, "插话 · 已送达");
+    append(el("div", "note", `agent 已收到 ${e.count} 条插话`));
+  },
+  interjection_dropped(e) { settleQueued(e.count, "插话 · 未送达（已停止）", "dropped"); },
+  assistant_text(e) { append(renderAssistant(e.text)); },
+  tool_call(e) {
+    const card = el("details", "tool");
+    const summary = el("summary");
+    card._state = el("span", "state", "运行中…");
+    summary.append(el("span", "label", "▸ " + describe(e.call)), card._state);
+    card.append(summary, el("pre", "input", JSON.stringify(e.call.input, null, 2)));
+    toolCards.set(e.call.id, card);
+    append(card);
+  },
+  approval_request(e) {
+    const card = toolCards.get(e.call.id);
+    if (!card) return;
+    card.classList.add("waiting");
+    card.open = true;
+    card._state.textContent = "等待批准";
+    const bar = el("div", "approval");
+    const allow = el("button", "primary", "允许"), deny = el("button", "", "拒绝");
+    const always = el("button", "", "允许，本会话不再询问");
+    allow.type = deny.type = always.type = "button";
+    const session = current;
+    const disable = () => { allow.disabled = deny.disabled = always.disabled = true; };
+    const answer = (value) => {
+      disable();
+      api(`/api/sessions/${session}/approve`, { id: e.id, allow: value }).catch((err) => alert(err.message));
+    };
+    allow.onclick = () => answer(true);
+    deny.onclick = () => answer(false);
+    // Switching the session to auto also approves this pending call (server side).
+    always.onclick = () => { disable(); setApprovalMode("auto"); };
+    bar.append(el("span", "", "这个调用需要你的批准"), deny, always, allow);
+    card.append(bar);
+    card._approval = bar;
+    card._approvalId = e.id;
+  },
+  approval_resolved(e) {
+    for (const card of toolCards.values()) {
+      if (card._approvalId !== e.id) continue;
+      card.classList.remove("waiting");
+      card._approval.replaceChildren(el("span", "", e.allow ? "已允许" : "已拒绝"));
+    }
+  },
+  approval_mode(e) {
+    showMode(e.mode);
+    append(el("div", "note", e.mode === "auto" ? "权限已切换为：自动批准（之后的 bash 不再询问）" : "权限已切换为：每次询问"));
+  },
+  tool_result(e) {
+    const card = toolCards.get(e.call.id);
+    if (!card) return;
+    card.classList.remove("waiting");
+    card.classList.add(e.result.isError ? "error" : "ok");
+    card._state.textContent = e.result.isError ? "失败" : "完成";
+    card.append(el("pre", "", e.result.content));
+  },
+  turn_end(e) {
+    const ok = e.finishReason === "end_turn";
+    const label = { interrupted: "已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
+    append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
+    endTurn(e.continues);
+  },
+  error(e) {
+    append(el("div", "err", "错误：" + e.message));
+    endTurn(e.continues);
+  },
+};
+
+// A turn ended; if queued interjections arrived too late, they run as the next turn.
+function endTurn(continues) {
+  closeStaleApprovals();
+  if (continues) {
+    settleQueued(undefined, "插话 · 作为下一轮发送");
+    append(el("div", "note", "继续处理插话内容…"));
+  } else {
+    settleQueued(undefined, "插话 · 未送达", "dropped");
+    setBusy(false);
+  }
+  if (!replaying) refreshSessions();
+}
+
+// ---------- session permission ----------
+function showMode(mode) {
+  const box = $("mode");
+  box.hidden = false;
+  box.classList.toggle("auto", mode === "auto");
+  $("mode-auto").checked = mode === "auto";
+  $("mode-text").textContent = mode === "auto" ? "自动批准" : "每次询问";
+}
+
+async function setApprovalMode(mode) {
+  try {
+    await api(`/api/sessions/${current}/settings`, { approvalMode: mode });
+    refreshSessions();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+$("mode-auto").addEventListener("change", (ev) => {
+  const auto = ev.target.checked;
+  if (auto && !confirm("开启后，本会话里 agent 的 bash 命令将直接执行，不再询问。确定吗？")) {
+    ev.target.checked = false;
+    return;
+  }
+  // The checkbox snaps back until the server confirms via the approval_mode event.
+  ev.target.checked = !auto;
+  setApprovalMode(auto ? "auto" : "ask");
+});
+
+// ---------- open a session ----------
+function openSession(id) {
+  events?.close();
+  queuedBubbles = [];
+  current = id || null;
+  toolCards.clear();
+  $("head-links").replaceChildren();
+  $("mode").hidden = true;
+  $("nav-stats").href = withToken("/stats") + (current ? "#" + current : "");
+  if (!current) {
+    logBox.replaceChildren(el("div", "empty", "从左侧选择一个历史会话，或在某个工作区下点 “+ 新会话”。"));
+    $("meta").textContent = "选择或新建一个会话";
+    setBusy(false);
+    refreshSessions();
+    return;
+  }
+  events = new EventSource(withToken(`/events/${current}`));
+  // The server replays the whole transcript on every (re)connect, so start from a clean slate.
+  events.addEventListener("hello", (msg) => {
+    const info = JSON.parse(msg.data);
+    toolCards.clear();
+    queuedBubbles = [];
+    logBox.replaceChildren(el("div", "empty", "给 agent 一个任务开始吧。"));
+    $("meta").textContent = `${info.title || "（未命名）"} · ${info.model} · ${info.workspace}`;
+    currentWorkspace = info.workspace;
+    const links = $("head-links");
+    links.replaceChildren(link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("  "),
+      link(rawUrl(current, "events.jsonl"), "原始事件", true));
+    showMode(info.approvalMode);
+    setBusy(info.busy);
+    replaying = true;
+  });
+  events.addEventListener("replay_done", () => {
+    replaying = false;
+    setBusy(busy);
+  });
+  events.onmessage = (msg) => {
+    const event = JSON.parse(msg.data);
+    handlers[event.type]?.(event);
+  };
+  events.onerror = () => { $("dot").className = "dot"; };
+  refreshSessions();
+}
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const text = input.value.trim();
+  if (!text || !current) return;
+  try {
+    await api(`/api/sessions/${current}/message`, { text });
+    input.value = "";
+    input.style.height = "";
+    refreshSessions();
+  } catch (e) { append(el("div", "err", "发送失败：" + e.message)); }
+});
+input.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $("form").requestSubmit(); }
+});
+input.addEventListener("input", () => { input.style.height = ""; input.style.height = input.scrollHeight + "px"; });
+
+if (requireToken($("root"))) {
+  window.addEventListener("hashchange", () => openSession(location.hash.slice(1)));
+  openSession(location.hash.slice(1));
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "raw-coding-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A coding agent built from scratch for learning: own loop, own tools, no agent framework.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "gui": "node src/index.ts --gui",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc",
+    "eval": "node src/eval/index.ts"
+  },
+  "dependencies": {
+    "openai": "^7.39.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

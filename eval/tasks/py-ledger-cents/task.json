@@ -1,0 +1,11 @@
+{
+  "title": "浮点数金额",
+  "difficulty": "medium",
+  "skill": "理解精度问题而非打补丁",
+  "prompt": "tests/test_ledger.py 失败了。修复 ledger.py，使所有金额计算精确到分（不要用四舍五入掩盖浮点误差）。不要修改测试。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 12,
+    "maxCostUsd": 0.006
+  }
+}

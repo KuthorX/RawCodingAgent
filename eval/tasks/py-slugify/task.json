@@ -1,0 +1,11 @@
+{
+  "title": "按 docstring 实现函数",
+  "difficulty": "easy",
+  "skill": "按规格实现",
+  "prompt": "text_utils.py 里的 slugify 还没实现。按 docstring 的规格实现它。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 10,
+    "maxCostUsd": 0.003
+  }
+}

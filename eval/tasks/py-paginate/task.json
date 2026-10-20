@@ -1,0 +1,11 @@
+{
+  "title": "分页 off-by-one",
+  "difficulty": "easy",
+  "skill": "读测试定位简单 bug",
+  "prompt": "tests/test_paginate.py 里的测试失败了。修复 paginate.py，让它符合函数 docstring 的描述，测试全部通过。不要修改测试。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 10,
+    "maxCostUsd": 0.003
+  }
+}

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原文件 · raw-coding-agent</title>
+<link rel="stylesheet" href="/common.css">
+<style>
+  .bar2 { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs a { padding: 2px 10px; border-radius: 5px; font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .tabs a.active { background: var(--accent); color: #fff; }
+  label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
+  body { height: 100vh; display: flex; flex-direction: column; }
+  #view { flex: 1; overflow: auto; font: 12px/1.6 var(--mono); padding: 8px 0 40px; }
+  .line { display: grid; grid-template-columns: 64px 1fr; }
+  .line:hover { background: var(--soft); }
+  .line.target { background: var(--hl); }
+  .no { color: var(--muted); text-align: right; padding-right: 14px; user-select: none; }
+  .no a { color: inherit; }
+  .text { white-space: pre-wrap; word-break: break-all; padding-right: 18px; }
+  .text.clip { white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>原文件</h1>
+  <span class="meta grow" id="path"></span>
+  <nav><a id="nav-stats" href="#">本会话统计</a></nav>
+</div>
+<div class="bar2">
+  <div class="tabs" id="tabs"></div>
+  <label><input type="checkbox" id="pretty"> 格式化每行 JSON</label>
+  <label><input type="checkbox" id="wrap" checked> 自动换行</label>
+  <span class="grow"></span>
+  <span id="reveal"></span>
+  <span class="muted" id="count"></span>
+</div>
+<div id="view"></div>
+<script src="/common.js"></script>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+const session = params.get("session");
+const file = params.get("file") || "trace.jsonl";
+const view = document.getElementById("view");
+let lines = [];
+
+function targetLine() {
+  const m = location.hash.match(/^#L(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
+function prettyLine(text) {
+  try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+}
+
+function render() {
+  const pretty = document.getElementById("pretty").checked;
+  const wrap = document.getElementById("wrap").checked;
+  const target = targetLine();
+  const frag = document.createDocumentFragment();
+  lines.forEach((text, i) => {
+    const n = i + 1;
+    const row = el("div", "line" + (n === target ? " target" : ""));
+    row.id = `L${n}`;
+    const no = el("div", "no");
+    const a = link(`#L${n}`, n);
+    no.append(a);
+    const body = el("div", "text" + (wrap || pretty ? "" : " clip"), pretty ? prettyLine(text) : text);
+    // Click a clipped line to expand just that one.
+    body.onclick = () => body.classList.remove("clip");
+    row.append(no, body);
+    frag.append(row);
+  });
+  view.replaceChildren(frag);
+  if (target) document.getElementById(`L${target}`)?.scrollIntoView({ block: "center" });
+}
+
+async function load() {
+  document.title = `${file} · ${session}`;
+  document.getElementById("nav-stats").href = withToken("/stats") + "#" + session;
+  const tabs = document.getElementById("tabs");
+  for (const f of FILES) {
+    const a = link(rawUrl(session, f), f);
+    if (f === file) a.className = "active";
+    tabs.append(a);
+  }
+  document.getElementById("reveal").append(revealButton(session, file));
+  document.getElementById("pretty").checked = file.endsWith(".jsonl") && targetLine() !== null;
+
+  const res = await fetch(withToken(`/api/sessions/${session}/file`, { name: file }));
+  if (!res.ok) throw new Error(`${res.status} ${(await res.json().catch(() => ({}))).error || res.statusText}`);
+  const text = await res.text();
+  lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
+  if (text === "") lines = [];
+  document.getElementById("count").textContent = `${lines.length} 行 · ${fmt.int(text.length)} 字符`;
+  const info = await api(`/api/sessions/${session}/stats`).catch(() => null);
+  if (info) document.getElementById("path").textContent = info.dir + file;
+  if (lines.length === 0) view.replaceChildren(el("div", "banner", "文件为空或尚未创建。"));
+  else render();
+}
+
+if (requireToken(view)) {
+  document.getElementById("pretty").onchange = render;
+  document.getElementById("wrap").onchange = render;
+  window.addEventListener("hashchange", render);
+  load().catch((e) => view.replaceChildren(el("div", "banner", "加载失败：" + e.message)));
+}
+</script>
+</body>
+</html>

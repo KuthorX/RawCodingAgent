@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>统计 · raw-coding-agent</title>
+<link rel="stylesheet" href="/common.css">
+<style>
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 18px; display: flex; flex-direction: column; gap: 18px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  section h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  section h2 .files { font-weight: 400; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .card .v { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .card .k { color: var(--muted); font-size: 12px; }
+  .badge-mode { font-weight: 400; font-size: 12px; color: var(--muted); }
+  .turn { border-top: 1px solid var(--line); padding: 10px 0; }
+  .turn:first-of-type { border-top: 0; }
+  .turn-head { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+  .turn-head .input { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .span { display: grid; grid-template-columns: 240px 1fr 220px; gap: 10px; align-items: center; padding: 3px 0; font-size: 12px; cursor: pointer; }
+  .span:hover { background: var(--soft); }
+  .span .name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .span .name b { font-weight: 500; display: inline-block; width: 34px; }
+  .track { position: relative; height: 12px; background: var(--soft); border-radius: 3px; }
+  .bar { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 2px; }
+  .bar.llm { background: var(--llm); }
+  .bar.tool { background: var(--tool); }
+  .bar.error { background: var(--err); }
+  .bar.wait { background: repeating-linear-gradient(45deg, var(--warn) 0 3px, transparent 3px 6px); opacity: .6; }
+  .span .info { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .raw { grid-column: 1 / -1; margin: 4px 0 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: auto; }
+  .raw pre { margin: 6px 0 0; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: var(--soft); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>raw-coding-agent · 统计</h1>
+  <nav><a id="nav-chat" href="#">对话</a><a id="nav-all" href="#">全部会话</a></nav>
+</div>
+<div class="wrap" id="root"></div>
+<script src="/common.js"></script>
+<script>
+"use strict";
+const root = document.getElementById("root");
+
+function section(title, extra) {
+  const box = el("section");
+  const h = el("h2");
+  h.append(el("span", "", title));
+  if (extra) h.append(extra);
+  box.append(h);
+  return box;
+}
+
+function card(k, v) {
+  const c = el("div", "card");
+  c.append(el("div", "v", v), el("div", "k", k));
+  return c;
+}
+
+function table(headers, rows) {
+  const t = el("table");
+  const head = el("tr");
+  for (const [label, num] of headers) head.append(el("th", num ? "num" : "", label));
+  t.append(head);
+  for (const row of rows) t.append(row);
+  return t;
+}
+
+function td(value, className) {
+  const cell = el("td", className || "");
+  if (value instanceof Node) cell.append(value); else cell.textContent = value;
+  return cell;
+}
+
+// ---------- overview: all sessions ----------
+async function renderOverview() {
+  document.getElementById("nav-chat").href = withToken("/");
+  const list = await api("/api/sessions");
+  const sum = (k) => list.reduce((n, s) => n + s.totals[k], 0);
+  const top = section("全部会话");
+  const cards = el("div", "cards");
+  cards.append(card("会话", list.length), card("输入 tokens", fmt.int(sum("inputTokens"))),
+    card("输出 tokens", fmt.int(sum("outputTokens"))), card("估算成本", fmt.usd(sum("costUsd"))), card("模型调用", fmt.int(sum("llmCalls"))),
+    card("工具调用", fmt.int(sum("toolCalls"))), card("工具失败", fmt.int(sum("toolErrors"))));
+  top.append(cards);
+
+  const rows = list.map((s) => {
+    const tr = el("tr", "row");
+    tr.onclick = (ev) => { if (!ev.target.closest("a,button")) location.hash = s.id; };
+    const t = s.totals;
+    const files = el("span", "files");
+    files.append(link(rawUrl(s.id, "trace.jsonl"), "trace", true), link(rawUrl(s.id, "events.jsonl"), "events", true),
+      link(rawUrl(s.id, "messages.json"), "messages", true), revealButton(s.id, "meta.json"));
+    tr.append(td(s.title || "（未命名）"), td(fmt.time(s.updatedAt), "mono"), td(fmt.int(s.turns), "num"),
+      td(fmt.int(t.llmCalls), "num"), td(fmt.int(t.inputTokens), "num"), td(fmt.int(t.outputTokens), "num"),
+      td(fmt.usd(t.costUsd), "num"), td(fmt.int(t.toolCalls), "num"), td(fmt.int(t.toolErrors), "num" + (t.toolErrors ? " err-text" : "")), td(files));
+    return tr;
+  });
+  const listBox = section("会话列表");
+  listBox.append(list.length ? table([["标题"], ["更新时间"], ["轮数", 1], ["模型调用", 1], ["输入 tok", 1],
+    ["输出 tok", 1], ["成本", 1], ["工具调用", 1], ["失败", 1], ["原文件"]], rows) : el("div", "muted", "还没有会话。"));
+  root.replaceChildren(top, listBox);
+}
+
+// ---------- detail: one session ----------
+function spanInfo(s) {
+  if (s.kind === "llm") {
+    const a = s.attrs;
+    return `${fmt.ms(s.durationMs)} · ${fmt.int(a.inputTokens)}↑ ${fmt.int(a.outputTokens)}↓ · ${a.stopReason ?? a.error ?? ""}`;
+  }
+  const a = s.attrs;
+  const approval = { auto: " · 自动批准", allowed: " · 人工允许", denied: " · 被拒绝" }[a.approval] || "";
+  const wait = a.approvalMs ? ` · 审批 ${fmt.ms(a.approvalMs)}` : "";
+  return `${fmt.ms(s.durationMs)}${approval}${wait} · ${s.status === "error" ? "失败" : fmt.int(a.outputChars) + " 字符"}`;
+}
+
+function spanLabel(s) {
+  if (s.kind === "llm") return `第 ${s.attrs.step} 步 · ${s.name}`;
+  const input = s.attrs.input || {};
+  return `${s.name} ${input.command ?? input.path ?? ""}`;
+}
+
+// Expanded view: the span's own line from trace.jsonl, with a link to it in the raw file viewer.
+function rawBox(session, s) {
+  const box = el("div", "raw");
+  const head = el("div", "files");
+  const { line, ...record } = s;
+  head.append(el("span", "muted", `trace.jsonl 第 ${line} 行`), link(rawUrl(session, "trace.jsonl", line), "在原文件中查看", true),
+    revealButton(session, "trace.jsonl"));
+  box.append(head, el("pre", "", JSON.stringify(record, null, 2)));
+  box.onclick = (ev) => ev.stopPropagation();
+  return box;
+}
+
+function renderTurn(session, view, index) {
+  const box = el("div", "turn");
+  const t = view.turn;
+  const children = view.children;
+  const t0 = Date.parse(t?.start ?? children[0]?.start ?? new Date().toISOString());
+  const end = Math.max(t ? t0 + t.durationMs : 0, ...children.map((c) => Date.parse(c.start) + c.durationMs));
+  const total = Math.max(end - t0, 1);
+  const tokens = children.filter((c) => c.kind === "llm").reduce((n, c) => n + (c.attrs.inputTokens || 0) + (c.attrs.outputTokens || 0), 0);
+
+  const head = el("div", "turn-head");
+  head.append(el("b", "", `#${index + 1}`), el("span", "input", t ? t.attrs.input : "（进行中 / 未正常结束）"),
+    el("span", "muted", `${fmt.ms(total)} · ${fmt.int(tokens)} tok · ${t ? t.attrs.finishReason ?? t.attrs.error : "?"}`));
+  if (t) head.append(link(rawUrl(session, "trace.jsonl", t.line), `L${t.line}`, true));
+  box.append(head);
+
+  for (const s of children) {
+    const row = el("div", "span");
+    const name = el("div", "name");
+    name.append(el("b", "", s.kind), document.createTextNode(spanLabel(s)));
+    name.title = spanLabel(s);
+    // Tool spans start with the approval wait (striped), followed by execution.
+    const track = el("div", "track");
+    const wait = s.kind === "tool" ? Math.min(s.attrs.approvalMs || 0, s.durationMs) : 0;
+    const pct = (ms) => `${(ms / total) * 100}%`;
+    const offset = Date.parse(s.start) - t0;
+    if (wait) {
+      const waitBar = el("div", "bar wait");
+      waitBar.style.left = pct(offset);
+      waitBar.style.width = pct(wait);
+      waitBar.title = `等待审批 ${fmt.ms(wait)}`;
+      track.append(waitBar);
+    }
+    const bar = el("div", `bar ${s.status === "error" ? "error" : s.kind}`);
+    bar.style.left = pct(offset + wait);
+    bar.style.width = pct(s.durationMs - wait);
+    track.append(bar);
+    row.append(name, track, el("div", "info", spanInfo(s)));
+    row.onclick = () => {
+      const open = row.nextSibling?.classList?.contains("raw");
+      if (open) row.nextSibling.remove(); else row.after(rawBox(session, s));
+    };
+    box.append(row);
+  }
+  return box;
+}
+
+async function renderSession(id) {
+  document.getElementById("nav-chat").href = withToken("/") + "#" + id;
+  const data = await api(`/api/sessions/${id}/stats`);
+  const { meta, totals: t } = data;
+
+  const top = section(meta.title || "（未命名）");
+  top.append(el("div", "meta", `${meta.id} · ${meta.model} · ${meta.workspace} · 创建于 ${fmt.time(meta.createdAt)}`));
+  const cards = el("div", "cards");
+  cards.style.marginTop = "10px";
+  cards.append(card("轮数", t.turns), card("模型调用", t.llmCalls), card("输入 tokens", fmt.int(t.inputTokens)),
+    card("其中缓存命中", fmt.int(t.cachedInputTokens)), card("输出 tokens", fmt.int(t.outputTokens)),
+    card("估算成本", fmt.usd(t.costUsd)), card("工具调用", t.toolCalls), card("工具失败", t.toolErrors),
+    card("模型耗时", fmt.ms(t.llmMs)), card("工具执行耗时", fmt.ms(t.toolMs)), card("等待审批", fmt.ms(t.approvalMs)),
+    card("审批：人工允许 / 拒绝 / 自动", `${t.approvals.allowed} / ${t.approvals.denied} / ${t.approvals.auto}`));
+  top.firstChild.append(el("span", "badge-mode", meta.approvalMode === "auto" ? "当前：自动批准" : "当前：每次询问"));
+  top.append(cards);
+  const p = data.pricing;
+  top.append(el("div", "meta", `成本按每百万 token 输入 $${p.inputPerMTok} / 缓存命中 $${p.cachedInputPerMTok} / 输出 $${p.outputPerMTok} 估算（.env 中 PRICE_* 可改）`));
+
+  const files = section("原文件");
+  files.append(el("div", "meta", data.dir), fileLinks(id));
+  files.lastChild.style.marginTop = "8px";
+
+  const tools = section("工具统计", fileLinks(id, ["trace.jsonl"]));
+  tools.append(data.tools.length ? table([["工具"], ["调用", 1], ["失败", 1], ["总执行耗时", 1], ["平均执行耗时", 1]],
+    data.tools.map((x) => {
+      const tr = el("tr");
+      tr.append(td(x.name, "mono"), td(fmt.int(x.calls), "num"), td(fmt.int(x.errors), "num" + (x.errors ? " err-text" : "")),
+        td(fmt.ms(x.totalMs), "num"), td(fmt.ms(x.avgMs), "num"));
+      return tr;
+    })) : el("div", "muted", "没有工具调用。"));
+
+  const legend = el("span", "legend");
+  legend.innerHTML = '<span><i style="background:var(--llm)"></i>llm</span><span><i style="background:var(--tool)"></i>tool</span><span><i style="background:var(--err)"></i>失败</span><span><i style="background:var(--warn);opacity:.6"></i>等待审批</span><span>点击某行查看原始 span</span>';
+  const waterfall = section("每轮 span", legend);
+  if (data.turns.length === 0) waterfall.append(el("div", "muted", "还没有 trace 数据。"));
+  data.turns.forEach((view, i) => waterfall.append(renderTurn(id, view, i)));
+
+  root.replaceChildren(top, files, tools, waterfall);
+}
+
+async function render() {
+  document.getElementById("nav-all").href = withToken("/stats");
+  const id = location.hash.slice(1);
+  try {
+    await (id ? renderSession(id) : renderOverview());
+  } catch (e) {
+    root.replaceChildren(el("div", "banner", "加载失败：" + e.message));
+  }
+}
+
+if (requireToken(root)) {
+  window.addEventListener("hashchange", render);
+  render();
+}
+</script>
+</body>
+</html>

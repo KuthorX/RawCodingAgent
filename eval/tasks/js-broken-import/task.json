@@ -1,0 +1,11 @@
+{
+  "title": "JS 导入名错误",
+  "difficulty": "easy",
+  "skill": "读报错信息",
+  "prompt": "运行 `node --test` 会失败。找出原因并修复。不要修改 test/ 下的文件；src/math.js 是其他模块也在用的公共 API，不要改它的导出。",
+  "check": "node --test",
+  "budget": {
+    "maxSteps": 10,
+    "maxCostUsd": 0.003
+  }
+}

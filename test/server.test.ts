@@ -1,0 +1,126 @@
+import assert from "node:assert/strict";
+import { request } from "node:http";
+import { after, before, test } from "node:test";
+import { SessionManager } from "../src/gui/manager.ts";
+import { createGuiServer, listen } from "../src/gui/server.ts";
+import { reply, ScriptedProvider, testRuntime } from "./helpers.ts";
+
+const TOKEN = "test-token";
+let port = 0;
+let close: () => void = () => {};
+let workspace = "";
+
+before(async () => {
+  const runtime = testRuntime(new ScriptedProvider([reply("hello")]));
+  workspace = runtime.store.root;
+  const server = createGuiServer(new SessionManager(runtime), TOKEN);
+  port = await listen(server, 0);
+  close = () => server.close();
+});
+after(() => close());
+
+interface Res {
+  status: number;
+  body: string;
+}
+
+function call(method: string, path: string, opts: { body?: unknown; token?: string | null; host?: string } = {}): Promise<Res> {
+  return new Promise((resolve, reject) => {
+    const headers: Record<string, string> = { host: opts.host ?? `127.0.0.1:${port}` };
+    const token = opts.token === undefined ? TOKEN : opts.token;
+    if (token) headers["x-agent-token"] = token;
+    if (opts.body !== undefined) headers["content-type"] = "application/json";
+    const req = request({ host: "127.0.0.1", port, method, path, headers }, (res) => {
+      let body = "";
+      res.on("data", (d: Buffer) => (body += d.toString()));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+    });
+    req.on("error", reject);
+    if (opts.body !== undefined) req.write(JSON.stringify(opts.body));
+    req.end();
+  });
+}
+
+test("rejects foreign Host headers (DNS rebinding)", async () => {
+  assert.equal((await call("GET", "/api/sessions", { host: `evil.example:${port}` })).status, 403);
+});
+
+test("pages load without a token, APIs require it", async () => {
+  assert.equal((await call("GET", "/", { token: null })).status, 200);
+  assert.equal((await call("GET", "/stats", { token: null })).status, 200);
+  assert.equal((await call("GET", "/raw", { token: null })).status, 200);
+  assert.equal((await call("GET", "/api/sessions", { token: null })).status, 401);
+  assert.equal((await call("GET", "/api/sessions", { token: "wrong" })).status, 401);
+  assert.equal((await call("GET", `/api/sessions?token=${TOKEN}`, { token: null })).status, 200);
+  assert.equal((await call("POST", `/api/sessions?token=${TOKEN}`, { token: null, body: {} })).status, 401);
+});
+
+test("create a session, run a turn, read stats and raw files", async () => {
+  const created = await call("POST", "/api/sessions", { body: { workspace } });
+  assert.equal(created.status, 201);
+  const { id, workspace: ws } = JSON.parse(created.body) as { id: string; workspace: string };
+  assert.equal(ws, workspace);
+
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "hi" } })).status, 202);
+  for (let i = 0; i < 50 && JSON.parse((await call("GET", `/api/sessions/${id}`)).body).busy; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  const stats = JSON.parse((await call("GET", `/api/sessions/${id}/stats`)).body) as { totals: { turns: number } };
+  assert.equal(stats.totals.turns, 1);
+  const raw = await call("GET", `/api/sessions/${id}/file?name=events.jsonl`);
+  assert.match(raw.body, /"type":"turn_end"/);
+
+  const list = JSON.parse((await call("GET", "/api/sessions")).body) as { id: string; title: string }[];
+  assert.equal(list.find((s) => s.id === id)?.title, "hi");
+});
+
+test("validates ids, file names and bodies", async () => {
+  assert.equal((await call("GET", "/api/sessions/..%2F..%2Fetc/stats")).status, 400);
+  assert.equal((await call("GET", "/api/sessions/20260101-000000-abcdef")).status, 404);
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  assert.equal((await call("GET", `/api/sessions/${id}/file?name=../../.env`)).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "" } })).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${id}/approve`, { body: { id: "x" } })).status, 400);
+  assert.equal((await call("POST", "/api/sessions", { body: { workspace: "/definitely/not/here" } })).status, 400);
+  assert.equal((await call("POST", "/api/sessions", { body: {} })).status, 400);
+});
+
+test("approval mode can be set at creation and changed per session", async () => {
+  const created = JSON.parse((await call("POST", "/api/sessions", { body: { workspace, approvalMode: "auto" } })).body) as {
+    id: string;
+    approvalMode: string;
+  };
+  assert.equal(created.approvalMode, "auto");
+  const plain = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string; approvalMode: string };
+  assert.equal(plain.approvalMode, "ask");
+
+  const changed = await call("POST", `/api/sessions/${plain.id}/settings`, { body: { approvalMode: "auto" } });
+  assert.equal(JSON.parse(changed.body).approvalMode, "auto");
+  assert.equal((await call("POST", `/api/sessions/${plain.id}/settings`, { body: { approvalMode: "yolo" } })).status, 400);
+  assert.equal((await call("POST", "/api/sessions", { body: { approvalMode: 1 } })).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${plain.id}/settings`, { token: null, body: { approvalMode: "auto" } })).status, 401);
+});
+
+test("stop is a no-op when idle", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  const res = await call("POST", `/api/sessions/${id}/stop`, { body: {} });
+  assert.deepEqual(JSON.parse(res.body), { ok: true, stopped: false });
+});
+
+test("workspaces are opened, listed with session counts, and removed without touching sessions", async () => {
+  const added = await call("POST", "/api/workspaces", { body: { path: workspace + "/" } });
+  assert.equal(added.status, 201);
+  assert.equal(JSON.parse(added.body).path, workspace);
+  const list = JSON.parse((await call("GET", "/api/workspaces")).body) as { path: string; sessions: number }[];
+  const entry = list.find((w) => w.path === workspace);
+  assert.ok(entry && entry.sessions > 0);
+  assert.equal((await call("POST", "/api/workspaces", { body: { path: "/definitely/not/here" } })).status, 400);
+  assert.equal((await call("POST", "/api/workspaces", { body: {} })).status, 400);
+
+  const before = (JSON.parse((await call("GET", "/api/sessions")).body) as unknown[]).length;
+  const removed = await call("POST", "/api/workspaces/remove", { body: { path: workspace } });
+  assert.deepEqual(JSON.parse(removed.body), { ok: true, removed: true });
+  assert.equal((JSON.parse((await call("GET", "/api/sessions")).body) as unknown[]).length, before);
+  assert.equal((JSON.parse((await call("GET", "/api/workspaces")).body) as unknown[]).length, 0);
+});

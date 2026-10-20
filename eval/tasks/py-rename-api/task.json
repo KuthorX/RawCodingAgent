@@ -1,0 +1,11 @@
+{
+  "title": "跨文件重命名并保留兼容",
+  "difficulty": "hard",
+  "skill": "多文件一致修改",
+  "prompt": "把 shop 包里的 get_usr 重命名为 get_user，并更新所有调用处。为了兼容旧代码，get_usr 仍要可用，但调用它时要发出 DeprecationWarning 并返回同样的结果。除了 shop/users.py，shop/ 下的其他文件里都不应再出现 get_usr 这个名字（包括注释和导入）。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 18,
+    "maxCostUsd": 0.008
+  }
+}

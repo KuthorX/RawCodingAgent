@@ -1,0 +1,11 @@
+{
+  "title": "从症状找 bug",
+  "difficulty": "medium",
+  "skill": "搜索定位、跨文件理解",
+  "prompt": "用户反馈：注册时邮箱里带大写字母或首尾空格的用户（比如 \" Alice@Example.com\"），之后再登录就会失败，即使输入的是同一个邮箱。找到原因并修复，让邮箱在整个系统里的处理方式一致。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 12,
+    "maxCostUsd": 0.006
+  }
+}

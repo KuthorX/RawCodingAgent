@@ -1,0 +1,6 @@
+node_modules/
+.env
+.sessions/
+.workspaces.json
+.eval-runs/
+.traces/
