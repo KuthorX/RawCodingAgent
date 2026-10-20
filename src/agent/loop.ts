@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { costUsd, DEFAULT_PRICING, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { Tool } from "../tools/index.ts";
 import { ToolError } from "../tools/index.ts";
-import type { CompletionRequest, CompletionResponse, Message, Provider, StopReason, ToolCall, ToolResult } from "../types.ts";
+import type { CompletionRequest, CompletionResponse, Message, Provider, StopReason, ToolCall, ToolResult, UserMessage } from "../types.ts";
 import { callSignature, isRepeating, limitDetail, limitNotice, type LimitHit } from "./limits.ts";
 import { needsApproval, type ApprovalMode, type ApprovalOutcome, type Confirm } from "./permissions.ts";
 import type { Tracer } from "./trace.ts";
@@ -194,13 +194,13 @@ async function callModelOnce(
 // D1: the agent loop. Runs one user turn until the model stops calling tools.
 async function loop(
   history: Message[],
-  userInput: string,
+  userInput: UserMessage,
   deps: AgentDeps,
   turnId: string,
   control: TurnControl,
 ): Promise<TurnResult> {
   const { signal } = control;
-  let messages: Message[] = [...history, { role: "user", content: userInput }];
+  let messages: Message[] = [...history, userInput];
   const interrupted = (steps: number): TurnResult => ({ messages, finishReason: "interrupted", steps });
   const maxRepeats = deps.maxRepeats ?? DEFAULT_MAX_REPEATS;
   const maxCost = deps.maxTurnCostUsd ?? null;
@@ -305,15 +305,18 @@ async function summarize(
   }
 }
 
+// userInput: plain text, or a user message with attached images.
 export async function runTurn(
   history: Message[],
-  userInput: string,
+  userInput: string | UserMessage,
   deps: AgentDeps,
   control: TurnControl = {},
 ): Promise<TurnResult> {
-  const span = deps.tracer.startSpan("turn", "turn", null, { input: userInput.slice(0, INPUT_PREVIEW_CHARS) });
+  const input: UserMessage = typeof userInput === "string" ? { role: "user", content: userInput } : userInput;
+  const attrs = { input: input.content.slice(0, INPUT_PREVIEW_CHARS), ...(input.images?.length ? { images: input.images.length } : {}) };
+  const span = deps.tracer.startSpan("turn", "turn", null, attrs);
   try {
-    const result = await loop(history, userInput, deps, span.id, control);
+    const result = await loop(history, input, deps, span.id, control);
     span.end({ finishReason: result.finishReason, steps: result.steps });
     return result;
   } catch (err) {

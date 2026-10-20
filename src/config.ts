@@ -6,7 +6,8 @@ export interface Config {
   maxTurnCostUsd: number | null; // null = no cost limit
   maxRepeats: number;
   promptRules: PromptRule[];
-  llm: { apiKey: string; baseURL: string | undefined; model: string };
+  // vision: the model accepts images (OpenAI image_url parts). Off for deepseek-chat, which is text-only.
+  llm: { apiKey: string; baseURL: string | undefined; model: string; vision: boolean };
 }
 
 function positiveInt(name: string, value: string): number {
@@ -43,6 +44,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       apiKey,
       baseURL: env.OPENAI_BASE_URL || undefined,
       model: env.OPENAI_MODEL ?? "deepseek-chat",
+      vision: /^(1|true|yes)$/i.test(env.OPENAI_VISION ?? ""),
     },
   };
 }

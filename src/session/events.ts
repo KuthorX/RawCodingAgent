@@ -6,7 +6,8 @@ import type { ToolCall } from "../types.ts";
 export type SessionEvent =
   | AgentEvent
   // queued: sent while a turn was running (an interjection), delivered at the next step.
-  | { type: "user"; text: string; queued?: boolean }
+  // images: attachment file names in the session's attachments/ directory.
+  | { type: "user"; text: string; queued?: boolean; images?: string[] }
   | { type: "interjection_dropped"; count: number }
   | { type: "approval_request"; id: string; call: ToolCall }
   | { type: "approval_resolved"; id: string; allow: boolean }

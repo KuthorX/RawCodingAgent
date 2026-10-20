@@ -115,6 +115,23 @@ test("fork creates a new session; 404 for an unknown one", async () => {
   assert.equal((await call("POST", "/api/sessions/20260101-000000-abcdef/fork", { body: {} })).status, 404);
 });
 
+test("message with pasted images: saved, served back, validated", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  const png = `data:image/png;base64,${Buffer.from("89504e470d0a1a0a", "hex").toString("base64")}`;
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "", images: ["data:text/html;base64,PGI+"] } })).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "x", images: Array(9).fill(png) } })).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "", images: [png] } })).status, 202);
+  for (let i = 0; i < 50 && JSON.parse((await call("GET", `/api/sessions/${id}`)).body).busy; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  const events = (await call("GET", `/api/sessions/${id}/file?name=events.jsonl`)).body;
+  const name = (JSON.parse(events.split("\n")[0]!) as { images: string[] }).images[0]!;
+  const img = await call("GET", `/api/sessions/${id}/attachment?name=${name}`);
+  assert.equal(img.status, 200);
+  assert.equal((await call("GET", `/api/sessions/${id}/attachment?name=..%2Fmeta.json`)).status, 400);
+  assert.equal((await call("GET", `/api/sessions/${id}/attachment?name=1-abcdef.png`)).status, 404);
+});
+
 test("stop is a no-op when idle", async () => {
   const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
   const res = await call("POST", `/api/sessions/${id}/stop`, { body: {} });

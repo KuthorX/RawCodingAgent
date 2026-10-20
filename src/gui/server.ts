@@ -1,9 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { isApprovalMode } from "../agent/permissions.ts";
-import { isSessionFile, isSessionId } from "../session/store.ts";
-import { HttpError, readJson, sendJson, sendText, tokenMatches } from "./http.ts";
+import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId } from "../session/store.ts";
+import { HttpError, readJson, sendBytes, sendJson, sendText, tokenMatches } from "./http.ts";
 import type { SessionManager } from "./manager.ts";
 import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.ts";
 import { revealInFileManager } from "./reveal.ts";
@@ -28,6 +28,25 @@ function sessionId(raw: string | undefined): string {
 function fileName(raw: unknown) {
   if (typeof raw !== "string" || !isSessionFile(raw)) throw new HttpError(400, "unknown session file");
   return raw;
+}
+
+const MAX_IMAGES = 8;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// Base64 is 4/3 of the raw size; plus room for the text.
+const MAX_MESSAGE_BODY = Math.ceil((MAX_IMAGES * MAX_IMAGE_BYTES * 4) / 3) + 1_000_000;
+
+// "images": data URLs of pasted images (png / jpeg / gif / webp, at most MAX_IMAGES of MAX_IMAGE_BYTES each).
+function parseImages(raw: unknown): { data: Buffer; mediaType: string }[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new HttpError(400, '"images" must be an array of data URLs');
+  if (raw.length > MAX_IMAGES) throw new HttpError(400, `at most ${MAX_IMAGES} images per message`);
+  return raw.map((url, i) => {
+    const m = typeof url === "string" ? /^data:([a-z/+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(url) : null;
+    if (!m || !IMAGE_TYPES[m[1]!]) throw new HttpError(400, `image ${i + 1}: expected a png, jpeg, gif or webp data URL`);
+    const data = Buffer.from(m[2]!, "base64");
+    if (data.length > MAX_IMAGE_BYTES) throw new HttpError(413, `image ${i + 1} is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+    return { data, mediaType: m[1]! };
+  });
 }
 
 function streamEvents(req: IncomingMessage, res: ServerResponse, manager: SessionManager, id: string): void {
@@ -91,7 +110,7 @@ async function handleWorkspaces(
   throw new HttpError(404, "not found");
 }
 
-// Routes: /api/sessions[/:id[/message|approve|settings|stop|fork|stats|reveal|file]]
+// Routes: /api/sessions[/:id[/message|approve|settings|stop|fork|stats|reveal|file|attachment]]
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager): Promise<void> {
   const [, , , rawId, action] = url.pathname.split("/");
   const method = req.method ?? "GET";
@@ -117,11 +136,24 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       return sendJson(res, 200, manager.stats(id));
     case "GET file":
       return sendText(res, "text/plain", manager.store.readFile(id, fileName(url.searchParams.get("name"))));
+    case "GET attachment": {
+      const name = url.searchParams.get("name") ?? "";
+      if (!isAttachmentName(name)) throw new HttpError(400, "invalid attachment name");
+      const ext = name.split(".").pop();
+      const type = Object.keys(IMAGE_TYPES).find((t) => IMAGE_TYPES[t] === ext)!;
+      const path = manager.store.attachmentPath(id, name);
+      if (!existsSync(path)) throw new HttpError(404, "attachment not found");
+      return sendBytes(res, type, readFileSync(path));
+    }
     case "POST message": {
-      const body = await readJson(req);
+      const body = await readJson(req, MAX_MESSAGE_BODY);
       const text = typeof body.text === "string" ? body.text.trim() : "";
-      if (!text) throw new HttpError(400, '"text" must be a non-empty string');
-      const { queued, done } = manager.get(id).send(text);
+      const images = parseImages(body.images);
+      if (!text && images.length === 0) throw new HttpError(400, '"text" must be a non-empty string (or attach images)');
+      const runner = manager.get(id);
+      if (images.length > 0 && runner.isBusy) throw new HttpError(409, "agent 正在运行，图片要等这一轮结束（或停止）后再发送");
+      const saved = images.map((img) => manager.store.saveAttachment(id, img.data, img.mediaType));
+      const { queued, done } = runner.send(text, saved);
       done.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
       return sendJson(res, 202, { ok: true, queued });
     }

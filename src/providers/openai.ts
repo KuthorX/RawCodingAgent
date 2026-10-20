@@ -1,18 +1,42 @@
 import OpenAI from "openai";
 import type { Config } from "../config.ts";
-import type { CompletionRequest, CompletionResponse, Message, Provider, StopReason, ToolCall } from "../types.ts";
+import { readFileSync } from "node:fs";
+import type { CompletionRequest, CompletionResponse, Message, Provider, StopReason, ToolCall, UserMessage } from "../types.ts";
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 const PROVIDER = "openai";
 const MAX_TOKENS = 8192;
 
-export function toOpenAIMessages(system: string, messages: Message[]): ChatMessage[] {
+// With vision the images go along as data URLs; otherwise the model is told where they are saved,
+// so it can still mention or copy them instead of silently not knowing they exist.
+function userContent(m: UserMessage, vision: boolean): OpenAI.Chat.Completions.ChatCompletionUserMessageParam["content"] {
+  const images = m.images ?? [];
+  if (images.length === 0) return m.content;
+  if (!vision) {
+    const list = images.map((img) => `- ${img.path}`).join("\n");
+    return `${m.content}\n\n[The user attached ${images.length} image(s). This model cannot view images; they are saved at:\n${list}]`;
+  }
+  const parts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = m.content ? [{ type: "text", text: m.content }] : [];
+  for (const img of images) {
+    let data: string;
+    try {
+      data = readFileSync(img.path).toString("base64");
+    } catch {
+      parts.push({ type: "text", text: `[attached image missing: ${img.path}]` });
+      continue;
+    }
+    parts.push({ type: "image_url", image_url: { url: `data:${img.mediaType};base64,${data}` } });
+  }
+  return parts;
+}
+
+export function toOpenAIMessages(system: string, messages: Message[], vision = false): ChatMessage[] {
   const out: ChatMessage[] = [{ role: "system", content: system }];
   for (const m of messages) {
     switch (m.role) {
       case "user":
-        out.push({ role: "user", content: m.content });
+        out.push({ role: "user", content: userContent(m, vision) });
         break;
       case "assistant":
         out.push({
@@ -77,10 +101,12 @@ function mapFinishReason(reason: string | null | undefined): StopReason {
 export class OpenAIProvider implements Provider {
   readonly name = PROVIDER;
   readonly model: string;
+  readonly vision: boolean;
   private readonly client: OpenAI;
 
   constructor(config: Config["llm"]) {
     this.model = config.model;
+    this.vision = config.vision;
     this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
   }
 
@@ -89,7 +115,7 @@ export class OpenAIProvider implements Provider {
       {
       model: this.model,
       max_tokens: MAX_TOKENS,
-      messages: toOpenAIMessages(req.system, req.messages),
+      messages: toOpenAIMessages(req.system, req.messages, this.vision),
       ...(req.tools.length > 0
         ? {
             tools: req.tools.map((t) => ({

@@ -138,6 +138,17 @@
   textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-height: 40px; max-height: 200px; }
   textarea:focus { outline: none; border-color: var(--accent); }
   textarea:disabled { opacity: .6; }
+  /* Pasted images waiting to be sent, and the ones shown in a sent message. */
+  .attachments { max-width: 860px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .attachments[hidden] { display: none; }
+  .attachment { position: relative; width: 64px; height: 64px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg); }
+  .attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .attachment button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 0;
+                       background: rgb(0 0 0 / .6); color: #fff; font-size: 12px; line-height: 18px; }
+  footer.dragging textarea { border-color: var(--accent); border-style: dashed; }
+  .user .imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .user .imgs:not(:last-child) { margin-bottom: 6px; }
+  .user .imgs img { max-width: 200px; max-height: 160px; border-radius: 6px; border: 1px solid var(--line); display: block; cursor: zoom-in; }
 </style>
 </head>
 <body>
@@ -170,9 +181,10 @@
       <span id="head-links"></span>
     </div>
     <main id="scroller"><div id="log"></div></main>
-    <footer>
+    <footer id="footer">
+      <div class="attachments" id="attachments" hidden></div>
       <form id="form">
-        <textarea id="input" rows="1" placeholder="描述任务，Enter 发送，Shift+Enter 换行"></textarea>
+        <textarea id="input" rows="1" placeholder="描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片"></textarea>
         <button class="stop" id="stop" type="button" hidden title="中断模型请求和正在运行的命令（Esc）">停止</button>
         <button class="primary" id="send" type="submit">发送</button>
       </form>
@@ -222,7 +234,7 @@ function setBusy(value) {
   $("stop").disabled = false;
   input.placeholder = value
     ? "agent 正在工作：输入内容会在它下一步之前送达（插话），Esc 停止"
-    : "描述任务，Enter 发送，Shift+Enter 换行";
+    : "描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片";
 }
 
 // Queued interjection bubbles, oldest first, waiting for delivery.
@@ -530,7 +542,20 @@ const DANGEROUS = /\brm\s+-\w*[rf]|\brmdir\b|\bdel\s|Remove-Item|\bgit\s+(push\b
 
 const handlers = {
   user(e) {
-    const bubble = el("div", "msg user" + (e.queued ? " queued" : ""), e.text);
+    const bubble = el("div", "msg user" + (e.queued ? " queued" : ""));
+    if (e.images?.length) {
+      const imgs = el("div", "imgs");
+      for (const name of e.images) {
+        const src = withToken(`/api/sessions/${current}/attachment`, { name });
+        const img = el("img");
+        img.src = src;
+        img.alt = name;
+        img.onclick = () => window.open(src, "_blank");
+        imgs.append(img);
+      }
+      bubble.append(imgs);
+    }
+    if (e.text) bubble.append(e.text);
     if (e.queued) {
       bubble._tag = el("span", "tag", "插话 · 等待送达");
       bubble.append(bubble._tag);
@@ -679,6 +704,8 @@ $("mode-auto").addEventListener("change", (ev) => {
 // ---------- open a session ----------
 function openSession(id) {
   events?.close();
+  attachments = [];
+  renderAttachments();
   queuedBubbles = [];
   current = id || null;
   toolCards.clear();
@@ -739,14 +766,73 @@ function openSession(id) {
   refreshSessions();
 }
 
+// ---------- image attachments ----------
+const MAX_IMAGES = 8, MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+let attachments = []; // data URLs, in the order they were added
+
+function renderAttachments() {
+  const tray = $("attachments");
+  tray.hidden = attachments.length === 0;
+  tray.replaceChildren(...attachments.map((url, i) => {
+    const box = el("div", "attachment");
+    const img = el("img");
+    img.src = url;
+    const remove = el("button", "", "×");
+    remove.type = "button";
+    remove.title = "移除";
+    remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); };
+    box.append(img, remove);
+    return box;
+  }));
+}
+
+function addImages(files) {
+  for (const file of files) {
+    if (!IMAGE_TYPES.includes(file.type)) { toast(`不支持的图片格式：${file.type || file.name}`); continue; }
+    if (file.size > MAX_IMAGE_BYTES) { toast(`图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024} MB：${file.name}`); continue; }
+    if (attachments.length >= MAX_IMAGES) { toast(`一条消息最多 ${MAX_IMAGES} 张图片`); break; }
+    const reader = new FileReader();
+    const slot = attachments.push("") - 1; // keep paste order even though reads finish in any order
+    reader.onload = () => { attachments[slot] = reader.result; renderAttachments(); };
+    reader.onerror = () => { attachments.splice(slot, 1); renderAttachments(); };
+    reader.readAsDataURL(file);
+  }
+}
+
+input.addEventListener("paste", (ev) => {
+  const files = [...(ev.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+  if (files.length === 0) return; // plain text paste
+  ev.preventDefault();
+  addImages(files);
+});
+const footer = $("footer");
+footer.addEventListener("dragover", (ev) => {
+  if (![...ev.dataTransfer.types].includes("Files")) return;
+  ev.preventDefault();
+  footer.classList.add("dragging");
+});
+footer.addEventListener("dragleave", () => footer.classList.remove("dragging"));
+footer.addEventListener("drop", (ev) => {
+  footer.classList.remove("dragging");
+  if (!ev.dataTransfer.files.length) return;
+  ev.preventDefault();
+  addImages([...ev.dataTransfer.files]);
+});
+
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = input.value.trim();
-  if (!text || !current) return;
+  const images = attachments.filter(Boolean);
+  if ((!text && images.length === 0) || !current) return;
+  // Interjections are text only; the images stay in the tray until the turn ends.
+  if (busy && images.length > 0) return toast("agent 正在运行：图片要等这一轮结束（或停止）后再发送");
   try {
-    await api(`/api/sessions/${current}/message`, { text });
+    await api(`/api/sessions/${current}/message`, { text, ...(images.length ? { images } : {}) });
     input.value = "";
     input.style.height = "";
+    attachments = [];
+    renderAttachments();
     refreshSessions();
   } catch (e) { append(el("div", "err", "发送失败：" + e.message)); }
 });

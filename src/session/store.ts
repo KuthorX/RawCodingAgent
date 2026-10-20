@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
+  cpSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -15,7 +16,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isApprovalMode, type ApprovalMode } from "../agent/permissions.ts";
-import type { Message } from "../types.ts";
+import type { ImageAttachment, Message } from "../types.ts";
 import type { SessionEvent } from "./events.ts";
 
 export interface SessionMeta {
@@ -40,6 +41,14 @@ export function isSessionFile(name: string): name is SessionFile {
 
 const ID_PATTERN = /^[0-9]{8}-[0-9]{6}-[a-f0-9]{6}$/;
 const TITLE_CHARS = 60;
+
+// Pasted images, kept in <session>/attachments/ and referenced from messages and events by file name.
+export const IMAGE_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+const ATTACHMENT_PATTERN = /^[0-9]+-[a-f0-9]{6}\.(png|jpg|gif|webp)$/;
+
+export function isAttachmentName(name: string): boolean {
+  return ATTACHMENT_PATTERN.test(name);
+}
 
 export function isSessionId(id: string): boolean {
   return ID_PATTERN.test(id);
@@ -112,6 +121,21 @@ export class SessionStore {
     return this.filePath(id, "trace.jsonl");
   }
 
+  saveAttachment(id: string, data: Buffer, mediaType: string): ImageAttachment & { name: string } {
+    const ext = IMAGE_TYPES[mediaType];
+    if (!ext) throw new Error(`unsupported image type "${mediaType}"`);
+    const dir = join(this.dir(id), "attachments");
+    mkdirSync(dir, { recursive: true });
+    const name = `${Date.now()}-${randomBytes(3).toString("hex")}.${ext}`;
+    writeFileSync(join(dir, name), data);
+    return { name, path: join(dir, name), mediaType };
+  }
+
+  attachmentPath(id: string, name: string): string {
+    if (!isAttachmentName(name)) throw new Error(`invalid attachment name "${name}"`);
+    return join(this.dir(id), "attachments", name);
+  }
+
   readFile(id: string, file: SessionFile): string {
     const path = this.filePath(id, file);
     return existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -144,7 +168,15 @@ export class SessionStore {
       forkedFrom: { id: source.id, turns: source.turns },
     };
     writeJsonAtomic(join(this.dir(meta.id), "meta.json"), meta);
-    writeJsonAtomic(join(this.dir(meta.id), "messages.json"), this.loadMessages(sourceId));
+    // Images are copied too, and messages point at the copies, so each session owns its files.
+    const attachments = join(this.dir(sourceId), "attachments");
+    if (existsSync(attachments)) cpSync(attachments, join(this.dir(meta.id), "attachments"), { recursive: true });
+    const messages = this.loadMessages(sourceId).map((m) =>
+      m.role === "user" && m.images
+        ? { ...m, images: m.images.map((img) => ({ ...img, path: img.path.startsWith(attachments) ? join(this.dir(meta.id), "attachments", img.path.slice(attachments.length + 1)) : img.path })) }
+        : m,
+    );
+    writeJsonAtomic(join(this.dir(meta.id), "messages.json"), messages);
     const forked: SessionEvent = { type: "forked", from: source.id, fromTitle: source.title, turns: source.turns };
     writeFileSync(join(this.dir(meta.id), "events.jsonl"), [...kept, forked].map((e) => JSON.stringify(e) + "\n").join(""));
     return meta;

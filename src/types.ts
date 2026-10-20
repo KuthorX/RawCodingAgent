@@ -12,8 +12,17 @@ export interface ToolResult {
   isError: boolean;
 }
 
+// An image the user attached. Stored as a file in the session directory and read when a request is built,
+// so messages.json stays small.
+export interface ImageAttachment {
+  path: string; // absolute
+  mediaType: string; // image/png, image/jpeg, ...
+}
+
+export type UserMessage = { role: "user"; content: string; images?: ImageAttachment[] };
+
 export type Message =
-  | { role: "user"; content: string }
+  | UserMessage
   | {
       role: "assistant";
       text: string;

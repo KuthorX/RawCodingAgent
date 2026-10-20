@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentDeps } from "../agent/loop.ts";
 import { runTurn, TurnAbortedError } from "../agent/loop.ts";
 import type { ApprovalMode, Confirm } from "../agent/permissions.ts";
-import type { Message } from "../types.ts";
+import type { ImageAttachment, Message } from "../types.ts";
 import type { SessionEvent } from "./events.ts";
 import { titleFrom, type SessionMeta, type SessionStore } from "./store.ts";
 
@@ -72,15 +72,18 @@ export class SessionRunner {
 
   // Idle: starts a turn. Busy: queues the text as an interjection, delivered before the next model call
   // (or as the next turn if the current one ends first). `done` resolves when the session is idle again.
-  send(text: string): { queued: boolean; done: Promise<void> } {
+  // Images can only start a turn: interjections are plain text injected between steps.
+  send(text: string, images: (ImageAttachment & { name: string })[] = []): { queued: boolean; done: Promise<void> } {
+    if (this.running && images.length > 0) throw new Error("agent 正在运行，图片要等这一轮结束（或停止）后再发送");
     if (this.running) {
       this.queue = [...this.queue, text];
       this.emit({ type: "user", text, queued: true });
       return { queued: true, done: this.running };
     }
-    if (!this.meta.title) this.meta = this.store.updateMeta(this.id, { title: titleFrom(text) });
-    this.emit({ type: "user", text });
-    const done = this.drain(text).finally(() => {
+    if (!this.meta.title) this.meta = this.store.updateMeta(this.id, { title: titleFrom(text) || "（图片）" });
+    this.emit({ type: "user", text, ...(images.length ? { images: images.map((i) => i.name) } : {}) });
+    const first: Message = { role: "user", content: text, ...(images.length ? { images: images.map(({ path, mediaType }) => ({ path, mediaType })) } : {}) };
+    const done = this.drain(first).finally(() => {
       // Always leave the busy state, even if persistence fails, so the session never gets stuck.
       this.running = null;
       this.controller = null;
@@ -135,24 +138,24 @@ export class SessionRunner {
   }
 
   // Runs a turn, then keeps going while interjections arrived too late to join it.
-  private async drain(first: string): Promise<void> {
-    let text: string | null = first;
-    while (text !== null) {
+  private async drain(first: Extract<Message, { role: "user" }>): Promise<void> {
+    let input: Extract<Message, { role: "user" }> | null = first;
+    while (input !== null) {
       this.controller = new AbortController();
-      const final = await this.run(text, this.controller.signal);
+      const final = await this.run(input, this.controller.signal);
       const stopped = this.controller.signal.aborted;
-      text = !stopped && this.queue.length > 0 ? this.queue.join("\n\n") : null;
+      input = !stopped && this.queue.length > 0 ? { role: "user", content: this.queue.join("\n\n") } : null;
       this.queue = [];
       // Clear busy before announcing the end, so a client reacting to it can send immediately.
-      if (text === null) {
+      if (input === null) {
         this.running = null;
         this.controller = null;
       }
-      this.safely(() => this.emit(text === null ? final : { ...final, continues: true }));
+      this.safely(() => this.emit(input === null ? final : { ...final, continues: true }));
     }
   }
 
-  private async run(text: string, signal: AbortSignal): Promise<Extract<SessionEvent, { type: "turn_end" | "error" }>> {
+  private async run(input: Extract<Message, { role: "user" }>, signal: AbortSignal): Promise<Extract<SessionEvent, { type: "turn_end" | "error" }>> {
     const control = {
       signal,
       takeInterjections: () => {
@@ -162,7 +165,7 @@ export class SessionRunner {
       },
     };
     try {
-      const result = await runTurn(this.history, text, this.deps, control);
+      const result = await runTurn(this.history, input, this.deps, control);
       this.commit(result.messages);
       return { type: "turn_end", finishReason: result.finishReason, steps: result.steps };
     } catch (err) {
