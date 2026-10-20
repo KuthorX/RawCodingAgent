@@ -14,7 +14,19 @@ export interface RunnerOptions {
   makeDeps: (meta: SessionMeta, hooks: Pick<AgentDeps, "confirm" | "onEvent" | "approvalMode">) => AgentDeps;
   // When omitted, approvals are surfaced as approval_request events and answered via approve().
   confirm?: Confirm;
+  // Tightest spending cap left over this session and the workspace/project it belongs to; null = no cap.
+  // `label` is for the user, `scope` for the model's limit notice.
+  budget?: (meta: SessionMeta) => Budget | null;
 }
+
+export interface Budget {
+  remainingUsd: number;
+  scope: string;
+  label: string;
+}
+
+// A message the session can't take right now; the GUI reports it as 409.
+export class SendRejected extends Error {}
 
 const INTERRUPTED = "上次运行在这一轮结束前中断（进程退出），这一轮的改动可能不完整。";
 
@@ -36,9 +48,11 @@ export class SessionRunner {
   private readonly store: SessionStore;
   private readonly listeners = new Set<Listener>();
   private readonly pending = new Map<string, (allow: boolean) => void>();
+  private readonly budget: RunnerOptions["budget"];
 
   constructor(options: RunnerOptions) {
     this.store = options.store;
+    this.budget = options.budget;
     this.meta = options.meta;
     this.store.acquireLock(this.meta.id);
     this.history = this.store.loadMessages(this.meta.id);
@@ -74,12 +88,14 @@ export class SessionRunner {
   // (or as the next turn if the current one ends first). `done` resolves when the session is idle again.
   // Images can only start a turn: interjections are plain text injected between steps.
   send(text: string, images: (ImageAttachment & { name: string })[] = []): { queued: boolean; done: Promise<void> } {
-    if (this.running && images.length > 0) throw new Error("agent 正在运行，图片要等这一轮结束（或停止）后再发送");
+    if (this.running && images.length > 0) throw new SendRejected("agent 正在运行，图片要等这一轮结束（或停止）后再发送");
     if (this.running) {
       this.queue = [...this.queue, text];
       this.emit({ type: "user", text, queued: true });
       return { queued: true, done: this.running };
     }
+    const budget = this.budget?.(this.meta);
+    if (budget && budget.remainingUsd <= 0) throw new SendRejected(`${budget.label}的额度已经用完，调高或取消上限后才能继续`);
     if (!this.meta.title) this.meta = this.store.updateMeta(this.id, { title: titleFrom(text) || "（图片）" });
     this.emit({ type: "user", text, ...(images.length ? { images: images.map((i) => i.name) } : {}) });
     const first: Message = { role: "user", content: text, ...(images.length ? { images: images.map(({ path, mediaType }) => ({ path, mediaType })) } : {}) };
@@ -117,6 +133,24 @@ export class SessionRunner {
     this.emit({ type: "approval_resolved", id, allow });
     resolve(allow);
     return true;
+  }
+
+  // Turn guards and spending cap of this session; effective from the next turn.
+  setLimits(patch: { limits?: SessionMeta["limits"]; budgetUsd?: number | null }): void {
+    this.meta = this.store.updateMeta(this.id, patch);
+    this.deps.tracer.log("limits", patch);
+  }
+
+  // The session's own turn guards override the defaults baked into deps; the budget is looked up per turn,
+  // since other sessions of the same workspace/project spend from it too.
+  private turnDeps(): AgentDeps {
+    const limits = this.meta.limits ?? {};
+    return {
+      ...this.deps,
+      ...(limits.maxSteps !== undefined ? { maxSteps: limits.maxSteps ?? Infinity } : {}),
+      ...(limits.maxTurnCostUsd !== undefined ? { maxTurnCostUsd: limits.maxTurnCostUsd } : {}),
+      budget: this.budget?.(this.meta) ?? null,
+    };
   }
 
   // Session-level permission switch; persisted, and effective from the next tool call.
@@ -165,7 +199,7 @@ export class SessionRunner {
       },
     };
     try {
-      const result = await runTurn(this.history, input, this.deps, control);
+      const result = await runTurn(this.history, input, this.turnDeps(), control);
       this.commit(result.messages);
       return { type: "turn_end", finishReason: result.finishReason, steps: result.steps };
     } catch (err) {

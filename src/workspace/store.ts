@@ -8,6 +8,9 @@ export interface Project {
   path: string; // absolute; also the identity. The project's main workspace.
   name: string;
   addedAt: string;
+  // Spending caps (USD) over all sessions of the project / of one workspace (keyed by workspace path).
+  budgetUsd?: number | null;
+  workspaceBudgets?: Record<string, number>;
 }
 
 // A worktree this app created. Worktrees made by hand are listed too, they just have no record here.
@@ -87,6 +90,25 @@ export class ProjectStore {
     const project: Project = { path, name: basename(path) || path, addedAt: now.toISOString() };
     this.projects.write([...this.list(), project]);
     return project;
+  }
+
+  // workspace: set that workspace's cap instead of the project's. null removes the cap.
+  setBudget(projectPath: string, budgetUsd: number | null, workspace?: string): Project {
+    const path = normalizePath(projectPath);
+    const list = this.list();
+    const project = list.find((p) => p.path === path);
+    if (!project) throw new Error(`project "${path}" not found`);
+    let updated: Project;
+    if (workspace === undefined) {
+      updated = { ...project, budgetUsd };
+    } else {
+      const budgets = { ...project.workspaceBudgets };
+      if (budgetUsd === null) delete budgets[normalizePath(workspace)];
+      else budgets[normalizePath(workspace)] = budgetUsd;
+      updated = { ...project, workspaceBudgets: budgets };
+    }
+    this.projects.write(list.map((p) => (p.path === path ? updated : p)));
+    return updated;
   }
 
   // Removes from the list only; files, worktrees and sessions are untouched.

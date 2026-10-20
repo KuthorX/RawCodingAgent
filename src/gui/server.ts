@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { isApprovalMode } from "../agent/permissions.ts";
-import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId } from "../session/store.ts";
+import { SendRejected } from "../session/runner.ts";
+import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId, type TurnLimits } from "../session/store.ts";
 import { HttpError, readJson, sendBytes, sendJson, sendText, tokenMatches } from "./http.ts";
 import type { SessionManager } from "./manager.ts";
 import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.ts";
@@ -49,6 +50,24 @@ function parseImages(raw: unknown): { data: Buffer; mediaType: string }[] {
   });
 }
 
+// A spending cap or limit: a number >= 0 (steps: a positive integer), or null for "no limit".
+function capValue(raw: unknown, name: string, integer = false): number | null {
+  if (raw === null) return null;
+  const ok = typeof raw === "number" && Number.isFinite(raw) && (integer ? Number.isInteger(raw) && raw > 0 : raw >= 0);
+  if (!ok) throw new HttpError(400, `"${name}" must be ${integer ? "a positive integer" : "a number >= 0"} or null`);
+  return raw as number;
+}
+
+// Missing keys follow the global default, null means no limit.
+function parseLimits(raw: unknown): TurnLimits {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new HttpError(400, '"limits" must be an object');
+  const r = raw as Record<string, unknown>;
+  const limits: TurnLimits = {};
+  if ("maxSteps" in r) limits.maxSteps = capValue(r.maxSteps, "maxSteps", true);
+  if ("maxTurnCostUsd" in r) limits.maxTurnCostUsd = capValue(r.maxTurnCostUsd, "maxTurnCostUsd");
+  return limits;
+}
+
 function streamEvents(req: IncomingMessage, res: ServerResponse, manager: SessionManager, id: string): void {
   const runner = manager.get(id);
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
@@ -91,6 +110,7 @@ async function handleProjects(
 ): Promise<void> {
   const route = `${req.method} ${url.pathname}`;
   if (route === "GET /api/projects") return sendJson(res, 200, await manager.describeProjects());
+  if (route === "GET /api/projects/limits") return sendJson(res, 200, manager.defaults);
   if (route === "GET /api/projects/branches") return sendJson(res, 200, await manager.branches(manager.project(url.searchParams.get("project"))));
   // Opens the OS folder chooser, then opens the chosen folder as a project.
   if (route === "POST /api/projects/pick") {
@@ -101,6 +121,11 @@ async function handleProjects(
   if (route === "POST /api/projects/workspaces") {
     const str = (key: string) => (typeof body[key] === "string" && (body[key] as string).trim() ? (body[key] as string).trim() : undefined);
     return sendJson(res, 201, await manager.createWorkspace(manager.project(body.project), { name: str("name"), branch: str("branch"), base: str("base") }));
+  }
+  if (route === "POST /api/projects/budget") {
+    const budgetUsd = capValue(body.budgetUsd, "budgetUsd");
+    const workspace = typeof body.workspace === "string" ? body.workspace : undefined;
+    return sendJson(res, 200, manager.setBudget(manager.project(body.project).path, budgetUsd, workspace));
   }
   if (route === "POST /api/projects/workspaces/remove") {
     if (typeof body.root !== "string") throw new HttpError(400, '"root" is required');
@@ -140,8 +165,10 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
 
   const id = sessionId(rawId);
   switch (`${method} ${action ?? ""}`) {
-    case "GET ":
-      return sendJson(res, 200, manager.get(id).info);
+    case "GET ": {
+      const info = manager.get(id).info;
+      return sendJson(res, 200, { ...info, budget: manager.budgetFor(info) });
+    }
     case "GET stats":
       return sendJson(res, 200, manager.stats(id));
     case "GET file":
@@ -163,7 +190,14 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       const runner = manager.get(id);
       if (images.length > 0 && runner.isBusy) throw new HttpError(409, "agent 正在运行，图片要等这一轮结束（或停止）后再发送");
       const saved = images.map((img) => manager.store.saveAttachment(id, img.data, img.mediaType));
-      const { queued, done } = runner.send(text, saved);
+      let sent;
+      try {
+        sent = runner.send(text, saved);
+      } catch (err) {
+        if (err instanceof SendRejected) throw new HttpError(409, err.message);
+        throw err;
+      }
+      const { queued, done } = sent;
       done.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
       return sendJson(res, 202, { ok: true, queued });
     }
@@ -185,12 +219,21 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       if (!manager.get(id).approve(body.id, body.allow)) throw new HttpError(404, "no pending approval with that id");
       return sendJson(res, 200, { ok: true });
     }
+    // Any of: approvalMode, limits (replaces the session's turn limits), budgetUsd.
     case "POST settings": {
       const body = await readJson(req);
-      if (!isApprovalMode(body.approvalMode)) throw new HttpError(400, '"approvalMode" must be "ask" or "auto"');
+      if (body.approvalMode !== undefined && !isApprovalMode(body.approvalMode)) throw new HttpError(400, '"approvalMode" must be "ask" or "auto"');
+      const limits = body.limits === undefined ? undefined : parseLimits(body.limits);
+      const budgetUsd = body.budgetUsd === undefined ? undefined : capValue(body.budgetUsd, "budgetUsd");
+      if (body.approvalMode === undefined && limits === undefined && budgetUsd === undefined) {
+        throw new HttpError(400, 'nothing to change: give "approvalMode", "limits" or "budgetUsd"');
+      }
       const runner = manager.get(id);
-      runner.setApprovalMode(body.approvalMode);
-      return sendJson(res, 200, runner.info);
+      if (body.approvalMode !== undefined) runner.setApprovalMode(body.approvalMode as "ask" | "auto");
+      if (limits !== undefined || budgetUsd !== undefined) {
+        runner.setLimits({ ...(limits !== undefined ? { limits } : {}), ...(budgetUsd !== undefined ? { budgetUsd } : {}) });
+      }
+      return sendJson(res, 200, { ...runner.info, budget: manager.budgetFor(runner.info) });
     }
     case "POST reveal": {
       const body = await readJson(req);

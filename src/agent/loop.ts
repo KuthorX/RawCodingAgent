@@ -17,6 +17,9 @@ export interface AgentDeps {
   maxSteps: number;
   // D1 guards besides maxSteps. Per turn; null/undefined cost = no cost limit, maxRepeats defaults to 3.
   maxTurnCostUsd?: number | null;
+  // What is left of the tightest spending cap over the session, its workspace and its project when the
+  // turn starts (scope names it for the user). The turn stops once its own cost goes past it.
+  budget?: { remainingUsd: number; scope: string } | null;
   maxRepeats?: number;
   pricing?: Pricing;
   // Read before every tool call, so a mode switched mid-turn applies to the next call.
@@ -208,7 +211,7 @@ async function loop(
   let usage: TokenUsage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
   let signatures: string[] = [];
   const stopAt = async (hit: LimitHit, steps: number): Promise<TurnResult> => {
-    const detail = limitDetail(hit, { maxSteps: deps.maxSteps, maxCostUsd: maxCost, maxRepeats });
+    const detail = limitDetail(hit, { maxSteps: deps.maxSteps, maxCostUsd: maxCost, maxRepeats, budgetScope: deps.budget?.scope });
     deps.tracer.log("limit", { hit, steps, costUsd: costUsd(usage, pricing) });
     messages = await summarize(messages, detail, steps + 1, deps, turnId, signal);
     return { messages, finishReason: hit, steps };
@@ -278,6 +281,7 @@ async function loop(
     if (signal?.aborted) return interrupted(step);
     if (repeated) return stopAt("repeated", step);
     if (maxCost !== null && costUsd(usage, pricing) > maxCost) return stopAt("max_cost", step);
+    if (deps.budget && costUsd(usage, pricing) > deps.budget.remainingUsd) return stopAt("budget", step);
   }
   return stopAt("max_steps", deps.maxSteps);
 }

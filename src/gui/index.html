@@ -53,6 +53,14 @@
   dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
   dialog .row button { height: 32px; }
   dialog .hint { font-size: 12px; color: var(--muted); }
+  dialog .err-text { font-size: 12px; }
+  dialog .pair { display: flex; gap: 6px; }
+  dialog .pair select { flex: 1; }
+  dialog .pair input { width: 110px; }
+  dialog .pair input[hidden] { display: none; }
+  .ws-head .spend { font-weight: 400; font-size: 12px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  .ws-head .spend.near { color: var(--warn); }
+  .ws-head .spend.over { color: var(--err); }
   .item:hover { background: var(--soft); text-decoration: none; }
   .item.active { background: var(--soft); box-shadow: inset 3px 0 0 var(--accent); }
   .item .title { display: flex; gap: 6px; align-items: center; font-size: 13px; }
@@ -225,6 +233,36 @@
     <div class="row">
       <button type="button" id="wsd-cancel">取消</button>
       <button type="submit" class="primary" id="wsd-ok">创建</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="limits-dialog">
+  <form method="dialog" id="limits-form">
+    <h3>本会话的额度</h3>
+    <p id="ld-spent"></p>
+    <label>每轮最多步数（模型调用次数）
+      <span class="pair"><select id="ld-steps-mode"><option value="default"></option><option value="none">不限</option><option value="custom">自定义</option></select>
+      <input type="text" id="ld-steps" inputmode="numeric" hidden></span></label>
+    <label>每轮最多花费（美元）
+      <span class="pair"><select id="ld-cost-mode"><option value="default"></option><option value="none">不限</option><option value="custom">自定义</option></select>
+      <input type="text" id="ld-cost" inputmode="decimal" hidden></span></label>
+    <label>本会话累计最多花费（美元，留空不限）<input type="text" id="ld-budget" inputmode="decimal" autocomplete="off"></label>
+    <div class="hint" id="ld-effective"></div>
+    <div class="row">
+      <button type="button" id="ld-cancel">取消</button>
+      <button type="submit" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="budget-dialog">
+  <form method="dialog" id="budget-form">
+    <h3 id="bd-title">额度</h3>
+    <p id="bd-desc"></p>
+    <label>累计最多花费（美元，留空不限）<input type="text" id="bd-value" inputmode="decimal" autocomplete="off"></label>
+    <div class="hint" id="bd-hint"></div>
+    <div class="row">
+      <button type="button" id="bd-cancel">取消</button>
+      <button type="submit" class="primary">保存</button>
     </div>
   </form>
 </dialog>
@@ -423,7 +461,13 @@ function projectGroup(p, sessions) {
   head.title = p.repo ? `${p.path}\ngit 仓库：${p.repo}` : `${p.path}\n不是 git 仓库：只有主目录，不能新建工作区`;
   const count = sessions.filter((s) => p.workspaces.some((w) => w.path === s.workspace)).length;
   head.append(el("span", "caret", collapsed.has(key) ? "▸" : "▾"), el("span", "name", p.name), el("span", "count", String(count)));
+  const spend = spendBadge(p.spentUsd, p.budgetUsd);
+  if (spend) head.append(spend);
   head.onclick = () => toggleGroup(key);
+  head.addEventListener("contextmenu", (ev) => showMenu(ev, [
+    ["复制路径", () => copyText(p.path, "路径")],
+    ["设置项目额度…", () => openBudgetDialog(p)],
+  ]));
   if (p.repo) head.append(smallButton("+ 工作区", "新建一个 git worktree（独立的分支和目录）", () => openWorkspaceDialog(p)));
   head.append(smallButton("×", "从列表移除项目（不删除文件、工作区和会话）", async () => {
     if (!confirm(`从列表移除项目 ${p.path}？\n不会删除任何文件、worktree 或会话，它的会话会归到“其他”。`)) return;
@@ -447,6 +491,8 @@ function workspaceGroup(p, w, sessions) {
   if (w.branch) head.append(el("span", "branch", w.branch));
   if (w.missing) head.append(el("span", "gone", "目录不存在"));
   else if (w.dirty) head.append(el("span", "dirty", `${w.dirty} 改动`));
+  const spend = spendBadge(w.spentUsd, w.budgetUsd);
+  if (spend) head.append(spend);
   if (!w.missing) head.append(smallButton("+ 会话", `在 ${w.path} 新建会话`, () => createSession(w.path)));
   head.onclick = () => toggleGroup(key);
   head.addEventListener("contextmenu", (ev) => workspaceMenu(ev, p, w));
@@ -464,6 +510,7 @@ function workspaceMenu(ev, p, w) {
   const items = [["复制路径", () => copyText(w.path, "路径")]];
   if (w.branch) items.push(["复制分支名", () => copyText(w.branch, "分支名")]);
   if (!w.missing) items.push(["在文件管理器中打开", () => api("/api/projects/reveal", { path: w.path }).catch((e) => alert(e.message))]);
+  items.push(["设置工作区额度…", () => openBudgetDialog(p, w)]);
   if (!w.main) items.push(null, ["删除工作区…", () => deleteWorkspace(p, w)]);
   showMenu(ev, items);
 }
@@ -512,6 +559,99 @@ function renderSidebar() {
   $("ws-add").hidden = projects.length === 0;
   if (!current) renderStart();
 }
+
+// ---------- spending caps ----------
+// "$1.20 / $5": shown only when a cap is set; amber from 80%, red once used up.
+function spendBadge(spent, cap) {
+  if (typeof cap !== "number") return null;
+  const ratio = cap === 0 ? 1 : spent / cap;
+  const badge = el("span", "spend" + (ratio >= 1 ? " over" : ratio >= 0.8 ? " near" : ""), `$${spent.toFixed(2)} / $${cap}`);
+  badge.title = `已花 $${spent.toFixed(4)}，上限 $${cap}${ratio >= 1 ? "：已用完，新消息会被拒绝" : ""}`;
+  return badge;
+}
+
+// "" = no cap; otherwise a number >= 0. Throws a message for anything else.
+function parseUsd(text, label) {
+  const t = text.trim().replace(/^\$/, "");
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) throw new Error(`${label}要填一个不小于 0 的数字，或留空`);
+  return n;
+}
+
+let budgetTarget = null; // { project, workspace? }
+function openBudgetDialog(project, workspace) {
+  budgetTarget = { project, workspace };
+  const scope = workspace ? `工作区 ${workspace.name}` : `项目 ${project.name}`;
+  const cap = workspace ? workspace.budgetUsd : project.budgetUsd;
+  const spent = workspace ? workspace.spentUsd : project.spentUsd;
+  $("bd-title").textContent = `${scope}的额度`;
+  $("bd-desc").textContent = `${workspace ? "这个工作区" : "这个项目所有工作区"}里全部会话的累计花费，目前 $${spent.toFixed(4)}。超过上限后，正在跑的一轮会停下来做总结，之后的新消息会被拒绝。`;
+  $("bd-value").value = typeof cap === "number" ? String(cap) : "";
+  $("bd-hint").textContent = "";
+  $("budget-dialog").showModal();
+}
+$("bd-cancel").onclick = () => $("budget-dialog").close();
+$("budget-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const { project, workspace } = budgetTarget;
+  try {
+    const budgetUsd = parseUsd($("bd-value").value, "上限");
+    await api("/api/projects/budget", { project: project.path, budgetUsd, ...(workspace ? { workspace: workspace.path } : {}) });
+    $("budget-dialog").close();
+    refreshSessions();
+  } catch (e) { $("bd-hint").textContent = e.message; $("bd-hint").className = "err-text"; }
+});
+
+let defaultLimits = null; // { maxSteps, maxTurnCostUsd } from .env
+async function openLimitsDialog() {
+  const [info, defaults, stats] = await Promise.all([
+    api(`/api/sessions/${current}`),
+    defaultLimits ?? api("/api/projects/limits"),
+    api(`/api/sessions/${current}/stats`),
+  ]);
+  defaultLimits = defaults;
+  const limits = info.limits ?? {};
+  const pick = (mode, input, value, defaultLabel) => {
+    mode.options[0].textContent = `默认（${defaultLabel}）`;
+    mode.value = value === undefined ? "default" : value === null ? "none" : "custom";
+    input.value = typeof value === "number" ? String(value) : "";
+    input.hidden = mode.value !== "custom";
+  };
+  pick($("ld-steps-mode"), $("ld-steps"), limits.maxSteps, `${defaults.maxSteps} 步`);
+  pick($("ld-cost-mode"), $("ld-cost"), limits.maxTurnCostUsd, defaults.maxTurnCostUsd === null ? "不限" : `$${defaults.maxTurnCostUsd}`);
+  $("ld-budget").value = typeof info.budgetUsd === "number" ? String(info.budgetUsd) : "";
+  $("ld-spent").textContent = `本会话已花 $${stats.totals.costUsd.toFixed(4)}（${stats.totals.turns} 轮）。修改从下一轮开始生效。项目和工作区的额度在侧栏右键设置。`;
+  $("ld-effective").className = "hint";
+  $("ld-effective").textContent = info.budget ? `当前最紧的累计额度：${info.budget.label.trim()}，还剩 $${Math.max(0, info.budget.remainingUsd).toFixed(4)}` : "没有累计额度限制。";
+  $("limits-dialog").showModal();
+}
+for (const [mode, input] of [["ld-steps-mode", "ld-steps"], ["ld-cost-mode", "ld-cost"]]) {
+  $(mode).addEventListener("change", () => { $(input).hidden = $(mode).value !== "custom"; if (!$(input).hidden) $(input).focus(); });
+}
+$("ld-cancel").onclick = () => $("limits-dialog").close();
+$("limits-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try {
+    const limits = {};
+    const steps = $("ld-steps-mode").value, cost = $("ld-cost-mode").value;
+    if (steps === "none") limits.maxSteps = null;
+    if (steps === "custom") {
+      const n = Number($("ld-steps").value.trim());
+      if (!Number.isInteger(n) || n < 1) throw new Error("步数要填一个正整数");
+      limits.maxSteps = n;
+    }
+    if (cost === "none") limits.maxTurnCostUsd = null;
+    if (cost === "custom") {
+      const n = parseUsd($("ld-cost").value, "每轮花费");
+      if (n === null) throw new Error("每轮花费要填一个数字，不限请选“不限”");
+      limits.maxTurnCostUsd = n;
+    }
+    await api(`/api/sessions/${current}/settings`, { limits, budgetUsd: parseUsd($("ld-budget").value, "累计花费") });
+    $("limits-dialog").close();
+    toast("额度已保存，从下一轮开始生效");
+  } catch (e) { $("ld-effective").textContent = e.message; $("ld-effective").className = "err-text"; }
+});
 
 // ---------- new workspace / fork into a new workspace ----------
 let dialogState = null; // { project, forkFrom? }
@@ -827,7 +967,7 @@ const handlers = {
   },
   turn_end(e) {
     const ok = e.finishReason === "end_turn";
-    const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", repeated: "重复调用同一工具，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
+    const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
     append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
     endTurn(e.continues);
   },
@@ -919,7 +1059,11 @@ function openSession(id) {
       const r = fork.getBoundingClientRect();
       sessionMenu({ preventDefault() {}, clientX: r.left, clientY: r.bottom + 4 }, { ...info, workspace: currentWorkspace });
     };
-    links.replaceChildren(fork, link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("·"),
+    const limitsBtn = el("button", "", "额度");
+    limitsBtn.type = "button";
+    limitsBtn.title = "本会话的每轮步数、每轮花费和累计花费上限";
+    limitsBtn.onclick = () => openLimitsDialog().catch((e) => alert(e.message));
+    links.replaceChildren(fork, limitsBtn, link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("·"),
       link(rawUrl(current, "events.jsonl"), "原始事件", true));
     showMode(info.approvalMode);
     setBusy(info.busy);

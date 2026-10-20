@@ -30,6 +30,15 @@ export interface SessionMeta {
   approvalMode: ApprovalMode;
   // Set on a session created by fork(): where its history came from.
   forkedFrom?: { id: string; turns: number };
+  // This session's turn guards. A missing key follows the global default (.env), null means no limit.
+  limits?: TurnLimits;
+  // Cap on everything this session spends, across turns; missing/null = no cap.
+  budgetUsd?: number | null;
+}
+
+export interface TurnLimits {
+  maxSteps?: number | null;
+  maxTurnCostUsd?: number | null;
 }
 
 export const SESSION_FILES = ["meta.json", "messages.json", "events.jsonl", "trace.jsonl"] as const;

@@ -20,6 +20,8 @@ export interface Runtime {
   model: string;
   pricing: Pricing;
   promptRules: readonly PromptRule[];
+  // Turn guards from .env; a session's own limits override them (see SessionRunner.turnDeps).
+  limits: { maxSteps: number; maxTurnCostUsd: number | null };
   // Mode given to newly created sessions (--yes => "auto"); each session can change its own later.
   defaultApprovalMode: ApprovalMode;
   makeDeps: RunnerOptions["makeDeps"];
@@ -54,6 +56,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     model: provider.model,
     pricing,
     promptRules: config.promptRules,
+    limits: { maxSteps: config.maxSteps, maxTurnCostUsd: config.maxTurnCostUsd },
     defaultApprovalMode,
     makeDeps: (meta, hooks) => {
       const tracer = createTracer(store.tracePath(meta.id));

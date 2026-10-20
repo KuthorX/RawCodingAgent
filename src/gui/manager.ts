@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import type { Runtime } from "../app.ts";
 import type { ApprovalMode } from "../agent/permissions.ts";
-import { SessionRunner } from "../session/runner.ts";
+import { SessionRunner, type Budget } from "../session/runner.ts";
 import type { SessionMeta } from "../session/store.ts";
 import { parseTrace, totals, toolStats, turns, type Totals } from "../trace/analyze.ts";
 import { normalizePath, type Project } from "../workspace/store.ts";
@@ -19,13 +19,22 @@ async function asHttp<T>(p: Promise<T>): Promise<T> {
   }
 }
 
+type SpendingView = ProjectView & {
+  budgetUsd: number | null;
+  spentUsd: number;
+  workspaces: (ProjectView["workspaces"][number] & { budgetUsd: number | null; spentUsd: number })[];
+};
+
 // Lazily loads runners so any stored session can be reopened and continued.
 export class SessionManager {
   private readonly runtime: Runtime;
   private readonly runners = new Map<string, SessionRunner>();
+  // Latest project views: which project a workspace belongs to needs git, the budget check must not wait for it.
+  private known: ProjectView[] = [];
 
   constructor(runtime: Runtime) {
     this.runtime = runtime;
+    this.describeProjects().catch(() => {});
   }
 
   get projects() {
@@ -47,9 +56,60 @@ export class SessionManager {
     return project;
   }
 
-  // Every project with its workspaces (worktrees), dirty counts included.
-  describeProjects(): Promise<ProjectView[]> {
-    return Promise.all(this.projects.list().map((p) => describeProject(p, this.projects)));
+  // Every project with its workspaces (worktrees), dirty counts and spending included.
+  async describeProjects(): Promise<SpendingView[]> {
+    this.known = await Promise.all(this.projects.list().map((p) => describeProject(p, this.projects)));
+    const spent = this.spentByWorkspace();
+    return this.known.map((p) => {
+      const workspaces = p.workspaces.map((w) => ({ ...w, budgetUsd: p.workspaceBudgets?.[w.path] ?? null, spentUsd: spent.get(w.path) ?? 0 }));
+      return { ...p, budgetUsd: p.budgetUsd ?? null, spentUsd: workspaces.reduce((n, w) => n + w.spentUsd, 0), workspaces };
+    });
+  }
+
+  private spentByWorkspace(): Map<string, number> {
+    const spent = new Map<string, number>();
+    for (const s of this.list()) spent.set(s.workspace, (spent.get(s.workspace) ?? 0) + s.totals.costUsd);
+    return spent;
+  }
+
+  private sessionSpent(id: string): number {
+    return totals(parseTrace(this.store.readFile(id, "trace.jsonl")), this.runtime.pricing).costUsd;
+  }
+
+  // The tightest of the session's, its workspace's and its project's caps, as what is left of it.
+  budgetFor(meta: SessionMeta): Budget | null {
+    const candidates: Budget[] = [];
+    if (typeof meta.budgetUsd === "number") {
+      candidates.push({ remainingUsd: meta.budgetUsd - this.sessionSpent(meta.id), scope: "session", label: "这个会话" });
+    }
+    const workspace = normalizePath(meta.workspace);
+    const project = this.known.find((p) => p.workspaces.some((w) => w.path === workspace));
+    const projectCap = project ? this.projects.get(project.path) : undefined;
+    const wsCap = projectCap?.workspaceBudgets?.[workspace];
+    if (project && (typeof wsCap === "number" || typeof projectCap?.budgetUsd === "number")) {
+      const spent = this.spentByWorkspace();
+      if (typeof wsCap === "number") {
+        const name = project.workspaces.find((w) => w.path === workspace)!.name;
+        candidates.push({ remainingUsd: wsCap - (spent.get(workspace) ?? 0), scope: `workspace "${name}"`, label: `工作区 ${name} ` });
+      }
+      if (typeof projectCap?.budgetUsd === "number") {
+        const used = project.workspaces.reduce((n, w) => n + (spent.get(w.path) ?? 0), 0);
+        candidates.push({ remainingUsd: projectCap.budgetUsd - used, scope: `project "${project.name}"`, label: `项目 ${project.name} ` });
+      }
+    }
+    return candidates.reduce<Budget | null>((min, b) => (min === null || b.remainingUsd < min.remainingUsd ? b : min), null);
+  }
+
+  setBudget(projectPath: string, budgetUsd: number | null, workspace?: string): Project {
+    try {
+      return this.projects.setBudget(projectPath, budgetUsd, workspace);
+    } catch (err) {
+      throw new HttpError(404, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  get defaults() {
+    return this.runtime.limits;
   }
 
   async branches(project: Project): Promise<{ branches: string[]; base: string }> {
@@ -85,7 +145,12 @@ export class SessionManager {
     const existing = this.runners.get(id);
     if (existing) return existing;
     if (!this.store.exists(id)) throw new HttpError(404, `session "${id}" not found`);
-    const runner = new SessionRunner({ store: this.store, meta: this.store.getMeta(id), makeDeps: this.runtime.makeDeps });
+    const runner = new SessionRunner({
+      store: this.store,
+      meta: this.store.getMeta(id),
+      makeDeps: this.runtime.makeDeps,
+      budget: (meta) => this.budgetFor(meta),
+    });
     this.runners.set(id, runner);
     return runner;
   }

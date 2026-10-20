@@ -69,6 +69,7 @@ export function testRuntime(provider: Provider): Runtime {
     model: provider.model,
     pricing: DEFAULT_PRICING,
     promptRules: [],
+    limits: { maxSteps: 10, maxTurnCostUsd: null },
     defaultApprovalMode: "ask",
     makeDeps: (meta, hooks) => ({
       ...makeDeps(provider),

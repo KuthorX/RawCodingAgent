@@ -184,3 +184,22 @@ test("message with pasted images: saved, served back, validated", async () => {
   assert.equal((await call("GET", `/api/sessions/${id}/attachment?name=..%2Fmeta.json`)).status, 400);
   assert.equal((await call("GET", `/api/sessions/${id}/attachment?name=1-abcdef.png`)).status, 404);
 });
+
+test("settings: per-session limits and budget are validated and stored; caps on projects", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  const set = (body: unknown) => call("POST", `/api/sessions/${id}/settings`, { body });
+  assert.equal((await set({})).status, 400);
+  assert.equal((await set({ limits: { maxSteps: 0 } })).status, 400);
+  assert.equal((await set({ limits: { maxTurnCostUsd: -1 } })).status, 400);
+  assert.equal((await set({ budgetUsd: "1" })).status, 400);
+  const ok = JSON.parse((await set({ limits: { maxSteps: null, maxTurnCostUsd: 1 }, budgetUsd: 3 })).body);
+  assert.deepEqual([ok.limits, ok.budgetUsd, ok.budget.scope], [{ maxSteps: null, maxTurnCostUsd: 1 }, 3, "session"]);
+  assert.deepEqual(JSON.parse((await call("GET", "/api/projects/limits")).body), { maxSteps: 10, maxTurnCostUsd: null });
+
+  await call("POST", "/api/projects", { body: { path: workspace } });
+  assert.equal((await call("POST", "/api/projects/budget", { body: { project: workspace, budgetUsd: -2 } })).status, 400);
+  assert.equal((await call("POST", "/api/projects/budget", { body: { project: workspace, budgetUsd: 4 } })).status, 200);
+  const project = (JSON.parse((await call("GET", "/api/projects")).body) as { path: string; budgetUsd: number }[]).find((p) => p.path === workspace)!;
+  assert.equal(project.budgetUsd, 4);
+  await call("POST", "/api/projects/remove", { body: { path: workspace } });
+});
