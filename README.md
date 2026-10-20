@@ -99,7 +99,7 @@ src/
     permissions.ts      ★ 审批策略
     trace.ts            span / 事件写入
   providers/openai.ts   内部格式 ↔ OpenAI Chat Completions
-  tools/                read_file / write_file / edit_file / bash
+  tools/                read_file / write_file / edit_file / glob / grep / bash
   session/
     store.ts            会话目录读写
     runner.ts           单个会话：历史、事件回放、审批、运行中的 turn
