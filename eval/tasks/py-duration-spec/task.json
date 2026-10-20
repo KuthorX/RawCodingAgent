@@ -1,0 +1,11 @@
+{
+  "title": "规格很细、失败输出很长",
+  "difficulty": "expert",
+  "skill": "处理被截断的长输出、补全规格",
+  "prompt": "duration.py 的 parse_duration 没有完全按 docstring 实现，tests/test_duration.py 里有大量失败的子用例。按 docstring 修好它，让测试全部通过，不要修改测试。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 30,
+    "maxCostUsd": 0.02
+  }
+}

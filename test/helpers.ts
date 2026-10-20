@@ -68,6 +68,7 @@ export function testRuntime(provider: Provider): Runtime {
     workspaces: new WorkspaceStore(join(tempWorkspace(), "workspaces.json")),
     model: provider.model,
     pricing: DEFAULT_PRICING,
+    promptRules: [],
     defaultApprovalMode: "ask",
     makeDeps: (meta, hooks) => ({
       ...makeDeps(provider),

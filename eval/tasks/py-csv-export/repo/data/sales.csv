@@ -1,0 +1,10 @@
+﻿Region,Amount,Note
+North,"1,200.50",
+"North, East",300.00,
+North,(50.00),refund
+South,99.99,"bulk, discounted"
+North,"2,300.25",
+   
+South,(9.99),refund
+South,"(1,000.00)","refund, damaged"
+

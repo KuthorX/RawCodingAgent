@@ -1,0 +1,11 @@
+{
+  "title": "按需求单改 6 个文件",
+  "difficulty": "expert",
+  "skill": "多文件一致修改、向后兼容",
+  "prompt": "按 TICKET.md 实现库存的 location 功能。现有测试要继续通过。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 30,
+    "maxCostUsd": 0.02
+  }
+}

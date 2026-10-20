@@ -9,7 +9,7 @@ const tasks = loadTasks(join(PROJECT_ROOT, "eval", "tasks"));
 
 test("eval suite has tasks of every difficulty", () => {
   assert.ok(tasks.length >= 10);
-  for (const d of ["easy", "medium", "hard"]) assert.ok(tasks.some((t) => t.difficulty === d), d);
+  for (const d of ["easy", "medium", "hard", "expert"]) assert.ok(tasks.some((t) => t.difficulty === d), d);
 });
 
 // A task is only meaningful if the untouched repo fails the check and the reference solution passes it.

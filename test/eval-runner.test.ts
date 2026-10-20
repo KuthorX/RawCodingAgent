@@ -4,7 +4,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { PROJECT_ROOT } from "../src/app.ts";
-import { compare, formatTable, summarize, type RunInfo } from "../src/eval/report.ts";
+import { compare, experimentTable, formatTable, summarize, wilson, type RunInfo } from "../src/eval/report.ts";
 import { BudgetedProvider, judge, runTask, secretEnvNames, type JudgeInput } from "../src/eval/runner.ts";
 import { loadTasks } from "../src/eval/tasks.ts";
 import { DEFAULT_PRICING } from "../src/pricing.ts";
@@ -90,7 +90,7 @@ test("report: table and comparison with a previous run", () => {
     finishReason: "end_turn" as const, error: null, steps: 2, toolCalls: 1, toolErrors: 0, inputTokens: 1, cachedInputTokens: 0,
     outputTokens: 1, costUsd: 0.002, durationMs: 1500, budget, check: { passed, exitCode: passed ? 0 : 1, output: "", timedOut: false },
   });
-  const info = (runId: string, hashes: Record<string, string>): RunInfo => ({ runId, model: "m", pricing: DEFAULT_PRICING, startedAt: "t", hashes });
+  const info = (runId: string, hashes: Record<string, string>): RunInfo => ({ runId, model: "m", pricing: DEFAULT_PRICING, promptRules: [], startedAt: "t", hashes });
   const errored = { ...o("py-slugify", false), reasons: ["error" as const] };
   const now = summarize(info("r2", { "py-paginate": "h1", "py-slugify": "h2" }), [o("py-paginate", true), errored]);
   const before = summarize(info("r1", { "py-paginate": "h1", "py-slugify": "h2" }), [o("py-paginate", false), o("py-slugify", true)]);
@@ -107,4 +107,34 @@ test("secretEnvNames picks credentials but leaves git and other config alone", (
   const env = { DEEPSEEK_API_KEY: "x", OPENAI_API_KEY: "x", ANTHROPIC_AUTH_TOKEN: "x", GH_TOKEN: "x", DB_PASSWORD: "x",
     GIT_CONFIG_KEY_0: "x", GIT_CONFIG_COUNT: "1", PANE_KEY: "x", PATH: "/bin", KEYBOARD: "us" };
   assert.deepEqual(secretEnvNames(env).sort(), ["ANTHROPIC_AUTH_TOKEN", "DB_PASSWORD", "DEEPSEEK_API_KEY", "GH_TOKEN", "OPENAI_API_KEY"]);
+});
+
+test("wilson interval matches known values", () => {
+  const [lo, hi] = wilson(40, 45);
+  assert.ok(Math.abs(lo - 0.766) < 0.002 && Math.abs(hi - 0.952) < 0.002, `${lo} ${hi}`);
+  assert.deepEqual(wilson(0, 0), [0, 1]);
+  const [lo0, hi0] = wilson(0, 10);
+  assert.equal(lo0, 0);
+  assert.ok(hi0 > 0.27 && hi0 < 0.28);
+});
+
+test("experimentTable only counts tasks unchanged in every run and shows per-task differences", () => {
+  const out = (taskId: string, passed: boolean, steps = 4) => ({
+    taskId, attempt: 1, sessionId: "s", workspace: "w", passed, reasons: passed ? [] : ["check_failed" as const],
+    finishReason: "end_turn" as const, error: null, steps, toolCalls: 1, toolErrors: 0, inputTokens: 1, cachedInputTokens: 0,
+    outputTokens: 1, costUsd: 0.001, durationMs: 1, budget, check: { passed, exitCode: 0, output: "", timedOut: false },
+  });
+  const run = (runId: string, rules: string[], hashes: Record<string, string>, outcomes: ReturnType<typeof out>[]) => {
+    const info: RunInfo = { runId, model: "m", pricing: DEFAULT_PRICING, promptRules: rules, startedAt: "t", hashes };
+    return { summary: summarize(info, outcomes), outcomes };
+  };
+  const a = run("A", [], { t1: "h", t2: "h", t3: "OLD" }, [out("t1", true), out("t2", false), out("t3", false)]);
+  const b = run("B", ["spec"], { t1: "h", t2: "h", t3: "NEW" }, [out("t1", true), out("t2", true, 9), out("t3", true)]);
+  const table = experimentTable([a, b], { t1: "easy", t2: "expert", t3: "expert" });
+  // t3 changed between runs, so B's pass on it is not counted: 1/2 vs 2/2, not 1/3 vs 3/3.
+  assert.match(table, /A\s+m\s+\(none\)\s+1\/2 50%/);
+  assert.match(table, /B\s+m\s+spec\s+2\/2 100%/);
+  assert.match(table, /t2\s+0\/1 4st\s+1\/1 9st/);
+  assert.doesNotMatch(table, /^t1 /m);
+  assert.match(table, /not compared \(missing or changed in some run\): t3/);
 });

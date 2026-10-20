@@ -53,11 +53,13 @@ npm run eval -- --validate             # 不调用模型：检查每个任务"�
 npm run eval                           # 全部任务各跑 1 次（约 $0.02，deepseek-chat）
 npm run eval -- --repeat 3             # 每个任务跑 3 次，减少随机性
 npm run eval -- --only py-paginate,py-lru-cache
+npm run eval -- --report <运行编号>,<运行编号>   # 并排对比几次运行（含 95% 置信区间）
+AGENT_PROMPT_RULES= npm run eval -- --repeat 3   # 换一组 system prompt 规则再跑（D3），空 = 基线
 ```
 
-每次尝试会把 `eval/tasks/<id>/repo/` 复制到系统临时目录（不在本项目、也不在任何 git 仓库里，路径会打印出来），`git init` 成独立仓库，然后开一个自动批准的会话（标题 `[eval] <id>`，可在网页侧边栏"其他"分组和统计页查看）。运行前会从环境变量里去掉 API key 等凭据，agent 的 bash 拿不到。agent 结束后，用隐藏的 `check/` 整体替换测试目录（agent 改过或新增的测试都不算数），再运行检查命令。
+每次尝试会把 `eval/tasks/<id>/repo/` 复制到系统临时目录（不在本项目、也不在任何 git 仓库里，路径会打印出来），`git init` 成独立仓库，然后开一个自动批准的会话。评测会话存在 `.eval-runs/<运行编号>/sessions/`，和结果放在一起，不出现在网页的会话列表里。运行前会从环境变量里去掉 API key 等凭据，agent 的 bash 拿不到。agent 结束后，用隐藏的 `check/` 整体替换测试目录（agent 改过或新增的测试都不算数），再运行检查命令。
 
-**PASS = 检查通过 + agent 自己结束 + 步数 ≤ 预算 + 成本 ≤ 预算。** 成本超了会立即停止这一轮。API 报错、评测程序异常记为 ERROR，单独统计，不计入通过率。结果写入 `.eval-runs/<runId>/results.json`；和上一次运行对比时，只比较内容没变过的任务（按任务目录的哈希判断），模型或单价不同会给出提示。
+**PASS = 检查通过 + agent 自己结束 + 步数 ≤ 预算 + 成本 ≤ 预算。** 成本超了会立即停止这一轮。API 报错、评测程序异常记为 ERROR，单独统计，不计入通过率。结果写入 `.eval-runs/<运行编号>/results.json`；和上一次运行对比时，只比较内容没变过的任务（按任务目录的哈希判断），模型或单价不同会给出提示。
 
 新增任务：在 `eval/tasks/` 下建目录，放 `task.json`、`repo/`、`check/`、`solution/`，然后跑 `--validate`。
 

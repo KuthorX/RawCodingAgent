@@ -15,6 +15,7 @@
   .open-row { display: flex; gap: 6px; }
   .open-row input { flex: 1; min-width: 0; }
   .open-row + .open-row { margin-top: 6px; }
+  .ctx-warn { color: #b26b00; }
   .open-row .pick { flex: 1; }
   .ws-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 8px; background: var(--soft); border-bottom: 1px solid var(--line);
              font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
@@ -183,7 +184,8 @@ function sessionItem(s) {
   if (s.approvalMode === "auto") title.append(el("span", "badge", "自动批准"));
   const sub = el("div", "sub");
   sub.append(el("span", "", fmt.time(s.updatedAt)),
-    el("span", "", `${s.turns} 轮 · ${fmt.int(s.totals.inputTokens + s.totals.outputTokens)} tok · ${s.totals.toolCalls} 工具`));
+    el("span", s.totals.contextTokens > CONTEXT_WARN_TOKENS ? "ctx-warn" : "",
+      `${s.turns} 轮 · 上下文 ${fmt.k(s.totals.contextTokens)} · ${fmt.usd(s.totals.costUsd)} · ${s.totals.toolCalls} 工具`));
   item.append(title, sub);
   item.title = `${s.id}\n${s.workspace}`;
   return item;

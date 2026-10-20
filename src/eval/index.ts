@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { createRuntime, PROJECT_ROOT } from "../app.ts";
-import { compare, formatTable, isError, summarize, type RunFile } from "./report.ts";
+import { compare, experimentTable, formatTable, isError, summarize, type RunFile } from "./report.ts";
 import { runTask, secretEnvNames, type TaskOutcome } from "./runner.ts";
 import { copyRepo, loadTasks, overlay, runCheck, taskHash, type EvalTask } from "./tasks.ts";
 
@@ -18,6 +18,7 @@ const USAGE = `usage: npm run eval -- [options]
   --concurrency <n>    tasks run in parallel (default 3)
   --validate           no model calls: check that every original repo fails and every solution passes
   --list               list tasks and budgets
+  --report <runIds>    compare finished runs side by side (comma-separated ids from .eval-runs/)
 `;
 
 function positiveInt(value: string, flag: string): number {
@@ -110,11 +111,22 @@ async function main(): Promise<number> {
       concurrency: { type: "string", default: "3" },
       validate: { type: "boolean", default: false },
       list: { type: "boolean", default: false },
+      report: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
   if (values.help) {
     process.stdout.write(USAGE);
+    return 0;
+  }
+  if (values.report) {
+    const runs = values.report.split(",").map((id) => {
+      const file = join(RUNS_DIR, id.trim(), "results.json");
+      if (!existsSync(file)) throw new Error(`no results for run "${id}"`);
+      return JSON.parse(readFileSync(file, "utf8")) as RunFile;
+    });
+    const difficulties = Object.fromEntries(loadTasks(TASKS_DIR).map((t) => [t.id, t.difficulty]));
+    process.stdout.write(experimentTable(runs, difficulties) + "\n");
     return 0;
   }
   const tasks = selectTasks(loadTasks(TASKS_DIR), values.only);
@@ -128,15 +140,18 @@ async function main(): Promise<number> {
 
   const repeat = positiveInt(values.repeat, "--repeat");
   const concurrency = positiveInt(values.concurrency, "--concurrency");
-  const runtime = createRuntime("auto");
-  scrubSecrets();
   const startedAt = new Date();
   const id = runId(startedAt);
   const runDir = join(RUNS_DIR, id);
+  // Eval sessions live with the run's results, not in the GUI's session list.
+  // Created before the run directory, so a config error doesn't leave an empty one behind.
+  const runtime = createRuntime("auto", { sessionsDir: join(runDir, "sessions") });
   mkdirSync(runDir, { recursive: true });
+  scrubSecrets();
   // Outside this project and outside any git repo, so the agent can't reach hidden tests, solutions or .env.
   const workRoot = mkdtempSync(join(tmpdir(), `rca-eval-${id}-`));
-  process.stdout.write(`eval run ${id}: ${tasks.length} task(s) × ${repeat}, model ${runtime.model}\nworkspaces: ${workRoot}\n`);
+  const rules = runtime.promptRules.join(",") || "(none)";
+  process.stdout.write(`eval run ${id}: ${tasks.length} task(s) × ${repeat}, model ${runtime.model}, prompt rules ${rules}\nworkspaces: ${workRoot}\n`);
 
   const jobs = tasks.flatMap((task) =>
     Array.from({ length: repeat }, (_, i) => async (): Promise<TaskOutcome> => {
@@ -151,7 +166,7 @@ async function main(): Promise<number> {
   const outcomes = await pool(jobs, concurrency);
 
   const hashes = Object.fromEntries(tasks.map((t) => [t.id, taskHash(t)]));
-  const summary = summarize({ runId: id, model: runtime.model, pricing: runtime.pricing, startedAt: startedAt.toISOString(), hashes }, outcomes);
+  const summary = summarize({ runId: id, model: runtime.model, pricing: runtime.pricing, promptRules: [...runtime.promptRules], startedAt: startedAt.toISOString(), hashes }, outcomes);
   const file: RunFile = { summary, outcomes };
   writeFileSync(join(runDir, "results.json"), JSON.stringify(file, null, 2) + "\n");
 
@@ -160,7 +175,7 @@ async function main(): Promise<number> {
   process.stdout.write(`passed ${summary.passed}/${summary.attempts}${errors}, total cost $${summary.costUsd.toFixed(4)}\n`);
   const prev = previousRun(id);
   if (prev) process.stdout.write(compare(summary, prev.summary).join("\n") + "\n");
-  process.stdout.write(`results: ${join(runDir, "results.json")}\n`);
+  process.stdout.write(`results: ${join(runDir, "results.json")}\nsessions (trace, events, messages): ${join(runDir, "sessions")}/<session>/\n`);
   return summary.passed === summary.attempts && summary.errors === 0 ? 0 : 1;
 }
 

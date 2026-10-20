@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
+import { isPromptRule, type PromptRule } from "./agent/system-prompt.ts";
 
 export interface Config {
   maxSteps: number;
   maxTurnCostUsd: number | null; // null = no cost limit
   maxRepeats: number;
+  promptRules: PromptRule[];
   llm: { apiKey: string; baseURL: string | undefined; model: string };
 }
 
@@ -19,6 +21,13 @@ function nonNegative(name: string, value: string): number {
   return n;
 }
 
+function promptRules(value: string): PromptRule[] {
+  const names = value.split(",").map((s) => s.trim()).filter(Boolean);
+  const unknown = names.filter((n) => !isPromptRule(n));
+  if (unknown.length > 0) throw new Error(`AGENT_PROMPT_RULES: unknown rule(s) ${unknown.join(", ")}`);
+  return [...new Set(names)] as PromptRule[];
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const apiKey = env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is required (see .env.example)");
@@ -27,6 +36,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // 0 turns the cost limit off.
     maxTurnCostUsd: nonNegative("AGENT_MAX_TURN_COST_USD", env.AGENT_MAX_TURN_COST_USD ?? "0.5") || null,
     maxRepeats: positiveInt("AGENT_MAX_REPEATS", env.AGENT_MAX_REPEATS ?? "3"),
+    // D3: "spec" had the only consistent (not significant) positive signal in the prompt experiment;
+    // set AGENT_PROMPT_RULES= (empty) to run the bare baseline.
+    promptRules: promptRules(env.AGENT_PROMPT_RULES ?? "spec"),
     llm: {
       apiKey,
       baseURL: env.OPENAI_BASE_URL || undefined,

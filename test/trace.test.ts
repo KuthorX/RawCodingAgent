@@ -64,6 +64,7 @@ test("totals, toolStats and turns aggregate spans", () => {
   const pricing = { inputPerMTok: 1e6, cachedInputPerMTok: 1e5, outputPerMTok: 2e6 };
   assert.deepEqual(totals(spans, pricing), {
     turns: 1, llmCalls: 2, toolCalls: 2, toolErrors: 1, inputTokens: 15, cachedInputTokens: 4, outputTokens: 3, costUsd: 17.4,
+    contextTokens: 5, // the latest llm span (l2) had 5 input tokens
     llmMs: 20, toolMs: 40, approvalMs: 500,
     approvals: { auto: 0, allowed: 1, denied: 0 },
   });
@@ -94,4 +95,12 @@ test("tool spans record how each call was permitted, using the mode at call time
   const approvals = tracer.spans.filter((s) => s.kind === "tool").map((s) => s.attrs.approval);
   assert.deepEqual(approvals, ["not_required", "denied", "allowed", "auto"]);
   assert.equal(asked, 2);
+});
+
+test("contextTokens skips aborted or failed calls, which carry no usage", () => {
+  const text = [
+    span({ id: "l1", parentId: "t", kind: "llm", name: "m", start: "2026-01-01T00:00:00.000Z", attrs: { inputTokens: 200000, outputTokens: 1 } }),
+    span({ id: "l2", parentId: "t", kind: "llm", name: "m", start: "2026-01-01T00:00:05.000Z", status: "error", attrs: { error: "503" } }),
+  ].join("\n");
+  assert.equal(totals(parseTrace(text)).contextTokens, 200000);
 });

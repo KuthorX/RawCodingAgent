@@ -1,0 +1,11 @@
+{
+  "title": "按规格实现令牌桶",
+  "difficulty": "expert",
+  "skill": "完整实现规格的每一条边界",
+  "prompt": "ratelimit.py 里的 TokenBucket 只实现了一部分，而且有 bug。按 SPEC.md 把它补全，规格里的每一条都要满足。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 30,
+    "maxCostUsd": 0.02
+  }
+}

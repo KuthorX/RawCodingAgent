@@ -14,6 +14,9 @@ export interface Totals {
   cachedInputTokens: number; // part of inputTokens served from the provider's prompt cache
   outputTokens: number;
   costUsd: number; // estimated from the token counts and the configured pricing
+  // Input tokens of the latest model call that reported usage: how big the conversation is now (D10).
+  // Slightly low: it excludes that call's own output and any tool results added after it.
+  contextTokens: number;
   llmMs: number;
   toolMs: number; // execution only, excluding time spent waiting for approval
   approvalMs: number;
@@ -72,6 +75,12 @@ export function totals(spans: readonly LocatedSpan[], pricing: Pricing = DEFAULT
     toolErrors: tools.filter((s) => s.status === "error").length,
     ...usage,
     costUsd: costUsd(usage, pricing),
+    // Aborted or failed calls carry no usage; skip them so a stop doesn't reset the number to 0.
+    contextTokens: num(
+      llm
+        .filter((s) => typeof s.attrs.inputTokens === "number")
+        .reduce<LocatedSpan | null>((latest, s) => (latest === null || s.start > latest.start ? s : latest), null)?.attrs.inputTokens,
+    ),
     llmMs: llm.reduce((n, s) => n + s.durationMs, 0),
     toolMs: tools.reduce((n, s) => n + execMs(s), 0),
     approvalMs: tools.reduce((n, s) => n + num(s.attrs.approvalMs), 0),

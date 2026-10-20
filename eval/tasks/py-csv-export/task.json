@@ -1,0 +1,11 @@
+{
+  "title": "运行起来才能发现的数据格式问题",
+  "difficulty": "expert",
+  "skill": "运行代码、观察真实数据",
+  "prompt": "运行 `python3 report.py data/sales.csv` 会打印每个地区的总额。财务说 North 应该是 3450.75，但现在的结果不对。修好 report.py，财务系统以后导出的同样格式的文件也都要能算对。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 30,
+    "maxCostUsd": 0.02
+  }
+}

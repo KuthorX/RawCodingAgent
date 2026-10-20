@@ -139,3 +139,16 @@ test("does not mutate the history passed in", async () => {
   await runTurn(history, "next", makeDeps(new ScriptedProvider([reply("ok")])));
   assert.deepEqual(history, snapshot);
 });
+
+test("system prompt rules are appended in order and unknown rules are rejected", async () => {
+  const { buildSystemPrompt, PROMPT_RULES } = await import("../src/agent/system-prompt.ts");
+  const { loadConfig } = await import("../src/config.ts");
+  const prompt = buildSystemPrompt("/w", ["spec", "debug"]);
+  assert.ok(prompt.includes("/w"));
+  assert.ok(prompt.endsWith(`${PROMPT_RULES.spec}\n${PROMPT_RULES.debug}`));
+  assert.equal(buildSystemPrompt("/w").split("\n").length, 4);
+  assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: " debug, spec ,debug" }).promptRules, ["debug", "spec"]);
+  assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k" }).promptRules, ["spec"]);
+  assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: "" }).promptRules, []);
+  assert.throws(() => loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: "debug,nope" }), /unknown rule\(s\) nope/);
+});

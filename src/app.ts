@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { AgentDeps } from "./agent/loop.ts";
 import type { ApprovalMode } from "./agent/permissions.ts";
-import { buildSystemPrompt } from "./agent/system-prompt.ts";
+import { buildSystemPrompt, type PromptRule } from "./agent/system-prompt.ts";
 import { createTracer } from "./agent/trace.ts";
 import { loadConfig, loadDotEnv } from "./config.ts";
 import { OpenAIProvider } from "./providers/openai.ts";
@@ -18,17 +18,23 @@ export interface Runtime {
   workspaces: WorkspaceStore;
   model: string;
   pricing: Pricing;
+  promptRules: readonly PromptRule[];
   // Mode given to newly created sessions (--yes => "auto"); each session can change its own later.
   defaultApprovalMode: ApprovalMode;
   makeDeps: RunnerOptions["makeDeps"];
 }
 
 // Shared by the CLI and the GUI: config, provider, session storage, and per-session agent wiring.
-export function createRuntime(defaultApprovalMode: ApprovalMode): Runtime {
+export interface RuntimeOptions {
+  // Where sessions are stored; the eval keeps its sessions next to each run's results instead of in the GUI list.
+  sessionsDir?: string;
+}
+
+export function createRuntime(defaultApprovalMode: ApprovalMode, options: RuntimeOptions = {}): Runtime {
   loadDotEnv(resolve(PROJECT_ROOT, ".env"));
   const config = loadConfig();
   const provider = new OpenAIProvider(config.llm);
-  const store = new SessionStore(resolve(PROJECT_ROOT, ".sessions"));
+  const store = new SessionStore(options.sessionsDir ?? resolve(PROJECT_ROOT, ".sessions"));
   const pricing = loadPricing();
 
   return {
@@ -36,6 +42,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode): Runtime {
     workspaces: new WorkspaceStore(resolve(PROJECT_ROOT, ".workspaces.json")),
     model: provider.model,
     pricing,
+    promptRules: config.promptRules,
     defaultApprovalMode,
     makeDeps: (meta, hooks) => {
       const tracer = createTracer(store.tracePath(meta.id));
@@ -43,7 +50,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode): Runtime {
       return {
         provider,
         tools: defaultTools,
-        system: buildSystemPrompt(meta.workspace),
+        system: buildSystemPrompt(meta.workspace, config.promptRules),
         workspace: meta.workspace,
         maxSteps: config.maxSteps,
         maxTurnCostUsd: config.maxTurnCostUsd,

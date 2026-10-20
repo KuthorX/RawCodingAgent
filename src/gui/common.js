@@ -56,8 +56,12 @@ function fileLinks(session, files = FILES) {
   return box;
 }
 
+// D10: conversations above this many input tokens are flagged; compaction isn't implemented yet.
+const CONTEXT_WARN_TOKENS = 300_000;
+
 const fmt = {
   int: (n) => (n ?? 0).toLocaleString("en-US"),
+  k: (n) => ((n ?? 0) >= 1000 ? `${Math.round(n / 1000)}k` : String(n ?? 0)),
   usd: (n) => `$${(n ?? 0).toFixed(4)}`,
   ms: (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${n}ms`),
   time: (iso) => (iso ? new Date(iso).toLocaleString("zh-CN", { hour12: false }) : ""),

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-export type Difficulty = "easy" | "medium" | "hard";
+export type Difficulty = "easy" | "medium" | "hard" | "expert";
 
 export interface Budget {
   maxSteps: number; // model calls in the turn
@@ -28,7 +28,7 @@ export interface CheckResult {
   timedOut: boolean;
 }
 
-const DIFFICULTIES: readonly Difficulty[] = ["easy", "medium", "hard"];
+const DIFFICULTIES: readonly Difficulty[] = ["easy", "medium", "hard", "expert"];
 const CHECK_TIMEOUT_MS = 60_000;
 const CHECK_OUTPUT_CHARS = 4000;
 

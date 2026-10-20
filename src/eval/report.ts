@@ -14,6 +14,7 @@ export interface RunSummary {
   runId: string;
   model: string;
   pricing: Pricing;
+  promptRules: string[];
   startedAt: string;
   attempts: number;
   passed: number;
@@ -31,6 +32,7 @@ export interface RunInfo {
   runId: string;
   model: string;
   pricing: Pricing;
+  promptRules: string[];
   startedAt: string;
   hashes: Record<string, string>; // task id -> taskHash
 }
@@ -91,6 +93,8 @@ export function compare(current: RunSummary, previous: RunSummary): string[] {
   const sum = (s: RunSummary, key: "passed" | "attempts") => shared.reduce((n, id) => n + s.byTask[id][key], 0);
   const lines = [`vs ${previous.runId} (${previous.model}), ${shared.length} comparable task(s): ${sum(previous, "passed")}/${sum(previous, "attempts")} → ${sum(current, "passed")}/${sum(current, "attempts")}`];
   if (previous.model !== current.model) lines.push(`  ! model differs: ${previous.model} → ${current.model}`);
+  const rules = (s: RunSummary) => (s.promptRules ?? []).join(",") || "(none)";
+  if (rules(previous) !== rules(current)) lines.push(`  prompt rules: ${rules(previous)} → ${rules(current)}`);
   if (previous.pricing && !samePricing(previous.pricing, current.pricing)) lines.push("  ! pricing differs: costs and over_cost verdicts are not comparable");
   if (changed.length > 0) lines.push(`  ! task content changed, not compared: ${changed.join(", ")}`);
   const rate = (t: TaskTally) => (t.attempts === 0 ? null : t.passed / t.attempts);
@@ -103,4 +107,76 @@ export function compare(current: RunSummary, previous: RunSummary): string[] {
     }
   }
   return lines;
+}
+
+// Wilson score interval (95%) for a pass rate: with 45 attempts, a few passes either way is noise.
+export function wilson(passed: number, n: number, z = 1.96): [number, number] {
+  if (n === 0) return [0, 1];
+  const p = passed / n;
+  const denom = 1 + (z * z) / n;
+  const center = (p + (z * z) / (2 * n)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+  return [Math.max(0, center - half), Math.min(1, center + half)];
+}
+
+const pct = (x: number): string => `${Math.round(x * 100)}%`;
+const mean = (xs: number[]): number => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
+
+// Task ids present in every run with identical content; only those are comparable across runs.
+function comparableTasks(runs: readonly RunFile[]): { shared: string[]; excluded: string[] } {
+  const all = [...new Set(runs.flatMap((r) => Object.keys(r.summary.byTask)))].sort();
+  const shared = all.filter((id) => {
+    const hashes = runs.map((r) => r.summary.byTask[id]?.hash);
+    return hashes.every((h) => h !== undefined && h === hashes[0]);
+  });
+  return { shared, excluded: all.filter((id) => !shared.includes(id)) };
+}
+
+// Side-by-side view of several runs, e.g. the same suite under different prompt rules.
+// Only tasks that exist unchanged in every run are counted.
+export function experimentTable(runs: readonly RunFile[], difficulties: Record<string, string>): string {
+  const { shared, excluded } = comparableTasks(runs);
+  const graded = (r: RunFile) => r.outcomes.filter((o) => !isError(o) && shared.includes(o.taskId));
+  const rows = [["run", "model", "prompt rules", "pass", "naive 95% CI", "expert pass", "avg steps", "avg cost"]];
+  for (const run of runs) {
+    const outcomes = graded(run);
+    const passed = outcomes.filter((o) => o.passed).length;
+    const expert = outcomes.filter((o) => difficulties[o.taskId] === "expert");
+    const [lo, hi] = wilson(passed, outcomes.length);
+    rows.push([
+      run.summary.runId,
+      run.summary.model,
+      (run.summary.promptRules ?? []).join(",") || "(none)",
+      `${passed}/${outcomes.length} ${pct(passed / Math.max(1, outcomes.length))}`,
+      `${pct(lo)}-${pct(hi)}`,
+      `${expert.filter((o) => o.passed).length}/${expert.length}`,
+      mean(outcomes.map((o) => o.steps)).toFixed(1),
+      `$${mean(outcomes.map((o) => o.costUsd)).toFixed(4)}`,
+    ]);
+  }
+
+  // Per task, so differences can be traced to specific tasks instead of a pooled rate.
+  const perTask = [["task", ...runs.map((r) => (r.summary.promptRules ?? []).join(",") || "(none)")]];
+  for (const id of shared) {
+    const cells = runs.map((r) => {
+      const os = graded(r).filter((o) => o.taskId === id);
+      return `${os.filter((o) => o.passed).length}/${os.length} ${mean(os.map((o) => o.steps)).toFixed(0)}st`;
+    });
+    if (new Set(cells.map((c) => c.split(" ")[0])).size > 1) perTask.push([id, ...cells]);
+  }
+
+  const notes: string[] = [];
+  if (excluded.length > 0) notes.push(`! not compared (missing or changed in some run): ${excluded.join(", ")}`);
+  if (new Set(runs.map((r) => r.summary.model)).size > 1) notes.push("! models differ between runs");
+  const prices = runs.map((r) => r.summary.pricing).filter((p): p is Pricing => p !== undefined);
+  if (prices.some((p) => !samePricing(p, prices[0]))) notes.push("! pricing differs: avg cost is not comparable");
+  notes.push("naive CI treats every attempt as independent; repeats of one task are correlated, so the real uncertainty is wider.");
+
+  const sections = [render(rows), perTask.length > 1 ? `tasks whose pass count differs (passes/attempts, avg steps):\n${render(perTask)}` : "no task's pass count differs between runs.", ...notes];
+  return sections.join("\n\n");
+}
+
+function render(rows: string[][]): string {
+  const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
+  return rows.map((r) => r.map((cell, i) => pad(cell, widths[i])).join("  ").trimEnd()).join("\n");
 }

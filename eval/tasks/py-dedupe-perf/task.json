@@ -1,0 +1,11 @@
+{
+  "title": "不改行为的性能优化",
+  "difficulty": "expert",
+  "skill": "保持语义的重构、性能",
+  "prompt": "similar.find_duplicates 在 5 万条记录上要跑好几分钟。在不改变任何可观察行为（包括返回结果的顺序、对缺失 email 的处理）的前提下，把它优化到 5 万条记录 2 秒内完成。",
+  "check": "python3 -m unittest discover -s tests -q",
+  "budget": {
+    "maxSteps": 30,
+    "maxCostUsd": 0.02
+  }
+}
