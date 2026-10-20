@@ -50,7 +50,24 @@
   button.stop { border-color: var(--err); color: var(--err); }
   button.stop[hidden] { display: none; }
   .user { align-self: flex-end; max-width: 80%; background: var(--accent); color: #fff; padding: 8px 12px; border-radius: 12px 12px 2px 12px; }
-  .assistant pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; font: 12.5px/1.5 var(--mono); }
+  .md { white-space: normal; }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md blockquote, .md pre, .md .table-wrap { margin: 0 0 10px; }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 18px 0 8px; line-height: 1.35; font-weight: 600; }
+  .md h1 { font-size: 1.4em; } .md h2 { font-size: 1.25em; } .md h3 { font-size: 1.1em; } .md h4, .md h5, .md h6 { font-size: 1em; }
+  .md ul, .md ol { padding-left: 1.6em; }
+  .md li { margin: 2px 0; }
+  .md li > ul, .md li > ol, .md li > p { margin: 4px 0; }
+  .md blockquote { padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
+  .md hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+  .md code { font: 0.9em var(--mono); background: var(--soft); border-radius: 4px; padding: 1px 5px; }
+  .md pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; font: 12.5px/1.5 var(--mono); white-space: pre; }
+  .md pre code { font: inherit; background: none; padding: 0; }
+  .md .table-wrap { overflow-x: auto; }
+  .md table { border-collapse: collapse; font-size: 13px; }
+  .md th, .md td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; vertical-align: top; }
+  .md th { background: var(--soft); font-weight: 600; }
   .tool { border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 6px; background: var(--panel); font-size: 13px; }
   .tool.ok { border-left-color: var(--ok); }
   .tool.error { border-left-color: var(--err); }
@@ -113,6 +130,7 @@
   </section>
 </div>
 <script src="/common.js"></script>
+<script src="/markdown.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -285,10 +303,8 @@ $("ws-path").addEventListener("keydown", (ev) => { if (ev.key === "Enter") openW
 
 // ---------- transcript rendering ----------
 function renderAssistant(text) {
-  const box = el("div", "msg assistant");
-  text.split(/```[^\n]*\n?/).forEach((part, i) => {
-    if (part) box.append(i % 2 === 1 ? el("pre", "", part.replace(/\n$/, "")) : document.createTextNode(part));
-  });
+  const box = el("div", "msg assistant md");
+  box.append(renderMarkdown(text));
   return box;
 }
 

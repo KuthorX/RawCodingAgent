@@ -17,6 +17,7 @@ const PAGES: Record<string, [string, string]> = {
   "/raw": ["text/html", page("raw.html")],
   "/common.css": ["text/css", page("common.css")],
   "/common.js": ["text/javascript", page("common.js")],
+  "/markdown.js": ["text/javascript", page("markdown.js")],
 };
 
 function sessionId(raw: string | undefined): string {
