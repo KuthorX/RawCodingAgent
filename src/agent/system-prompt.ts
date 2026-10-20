@@ -15,6 +15,12 @@ export const PROMPT_RULES = {
   efficient:
     "Work efficiently: combine related reads into one command, don't re-run the same check without changing something, " +
     "and finish as soon as the task is done and verified.",
+  // Seen in GUI sessions: ~3/4 of bash calls were sed -n / cat / grep / find or Python scripts editing files,
+  // even with the dedicated tools available.
+  tools:
+    "Use the dedicated tools for files: read_file (with offset/limit for part of a long file) to read, grep and glob to search, " +
+    "edit_file (with edits for several changes) to change and write_file to create. Use bash to run programs, tests and git, " +
+    "not to read, search or edit files.",
   spec:
     "If the task refers to a spec, docstring or ticket, go through it point by point and make sure every point " +
     "is implemented and checked before you finish.",

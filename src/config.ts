@@ -37,8 +37,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxTurnCostUsd: nonNegative("AGENT_MAX_TURN_COST_USD", env.AGENT_MAX_TURN_COST_USD ?? "0.5") || null,
     maxRepeats: positiveInt("AGENT_MAX_REPEATS", env.AGENT_MAX_REPEATS ?? "3"),
     // D3: "spec" had the only consistent (not significant) positive signal in the prompt experiment;
-    // set AGENT_PROMPT_RULES= (empty) to run the bare baseline.
-    promptRules: promptRules(env.AGENT_PROMPT_RULES ?? "spec"),
+    // "tools" steers file work away from bash (D4). Set AGENT_PROMPT_RULES= (empty) to run the bare baseline.
+    promptRules: promptRules(env.AGENT_PROMPT_RULES ?? "spec,tools"),
     llm: {
       apiKey,
       baseURL: env.OPENAI_BASE_URL || undefined,

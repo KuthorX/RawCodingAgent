@@ -149,7 +149,7 @@ test("system prompt rules are appended in order and unknown rules are rejected",
   assert.ok(prompt.endsWith(`${PROMPT_RULES.spec}\n${PROMPT_RULES.debug}`));
   assert.equal(buildSystemPrompt("/w").split("\n").length, 4);
   assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: " debug, spec ,debug" }).promptRules, ["debug", "spec"]);
-  assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k" }).promptRules, ["spec"]);
+  assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k" }).promptRules, ["spec", "tools"]);
   assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: "" }).promptRules, []);
   assert.throws(() => loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: "debug,nope" }), /unknown rule\(s\) nope/);
 });

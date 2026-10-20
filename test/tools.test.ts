@@ -53,6 +53,29 @@ test("edit_file rejects zero, multiple and empty matches", async () => {
   assert.equal(readFileSync(join(workspace, "f.ts"), "utf8"), "x\nx\n");
 });
 
+test("read_file reads a range with offset/limit and says how to continue", async () => {
+  const workspace = tempWorkspace();
+  writeFileSync(join(workspace, "f.txt"), "a\r\nb\r\nc\r\nd\r\n");
+  assert.equal(await readFileTool.run({ path: "f.txt" }, { workspace }), "    1\ta\n    2\tb\n    3\tc\n    4\td");
+  assert.equal(await readFileTool.run({ path: "f.txt", offset: 2, limit: 2 }, { workspace }), "    2\tb\n    3\tc\n[lines 2-3 of 4; continue with offset 4]");
+  assert.equal(await readFileTool.run({ path: "f.txt", offset: 3 }, { workspace }), "    3\tc\n    4\td\n[lines 3-4 of 4]");
+  await assert.rejects(readFileTool.run({ path: "f.txt", offset: 9 }, { workspace }), /past the end/);
+  await assert.rejects(readFileTool.run({ path: "f.txt", limit: 0 }, { workspace }), /positive integer/);
+});
+
+test("edit_file applies several edits in order, or none if one fails", async () => {
+  const workspace = tempWorkspace();
+  writeFileSync(join(workspace, "f.py"), "a = 1\r\nb = 2\r\nc = 3\r\n");
+  const edit = (edits: unknown) => editFileTool.run({ path: "f.py", edits }, { workspace });
+  assert.equal(await edit([{ old_string: "a = 1", new_string: "a = 10" }, { old_string: "a = 10\nb = 2", new_string: "a = 10\nb = 20" }]), "Edited f.py (2 changes)");
+  assert.equal(readFileSync(join(workspace, "f.py"), "utf8"), "a = 10\r\nb = 20\r\nc = 3\r\n");
+  await assert.rejects(edit([{ old_string: "c = 3", new_string: "c = 30" }, { old_string: "zzz", new_string: "" }]), /edits\[1\], no changes were written/);
+  assert.equal(readFileSync(join(workspace, "f.py"), "utf8"), "a = 10\r\nb = 20\r\nc = 3\r\n");
+  await assert.rejects(edit([]), /non-empty array/);
+  await assert.rejects(edit([{ old_string: "c" }]), /edits\[0\]: "new_string" must be a string/);
+  await assert.rejects(editFileTool.run({ path: "f.py", old_string: "c", new_string: "d", edits: [] }, { workspace }), /not both/);
+});
+
 test("edit_file matches \\n text in CRLF files and keeps CRLF", async () => {
   const workspace = tempWorkspace();
   writeFileSync(join(workspace, "f.py"), "def a():\r\n    return 1\r\n\r\ndef b():\r\n    return 2\r\n");
