@@ -1,11 +1,11 @@
-import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { createRuntime, PROJECT_ROOT } from "../app.ts";
 import { compare, experimentTable, formatTable, isError, summarize, type RunFile } from "./report.ts";
-import { runTask, secretEnvNames, type TaskOutcome } from "./runner.ts";
+import { crashed, pool, positiveInt, runId, scrubSecrets } from "./common.ts";
+import { runTask, type TaskOutcome } from "./runner.ts";
 import { copyRepo, loadTasks, overlay, runCheck, taskHash, type EvalTask } from "./tasks.ts";
 
 const TASKS_DIR = join(PROJECT_ROOT, "eval", "tasks");
@@ -21,32 +21,12 @@ const USAGE = `usage: npm run eval -- [options]
   --report <runIds>    compare finished runs side by side (comma-separated ids from .eval-runs/)
 `;
 
-function positiveInt(value: string, flag: string): number {
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 1) throw new Error(`${flag} must be a positive integer`);
-  return n;
-}
-
 function selectTasks(all: EvalTask[], only: string | undefined): EvalTask[] {
   if (!only) return all;
   const ids = only.split(",").map((s) => s.trim()).filter(Boolean);
   const unknown = ids.filter((id) => !all.some((t) => t.id === id));
   if (unknown.length > 0) throw new Error(`unknown task(s): ${unknown.join(", ")}`);
   return all.filter((t) => ids.includes(t.id));
-}
-
-// Runs jobs with at most `limit` in flight; results keep the input order.
-async function pool<T>(jobs: (() => Promise<T>)[], limit: number): Promise<T[]> {
-  const results: T[] = new Array(jobs.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < jobs.length) {
-      const i = next++;
-      results[i] = await jobs[i]();
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
-  return results;
 }
 
 async function validate(tasks: EvalTask[]): Promise<boolean> {
@@ -78,29 +58,6 @@ function previousRun(currentId: string): RunFile | null {
     .sort();
   const last = ids.at(-1);
   return last ? (JSON.parse(readFileSync(join(RUNS_DIR, last, "results.json"), "utf8")) as RunFile) : null;
-}
-
-// Random suffix: two runs started in the same second must not share a directory.
-function runId(now: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  const stamp = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
-  return `${stamp}-${randomBytes(2).toString("hex")}`;
-}
-
-// The agent's bash inherits this process's environment. The provider already holds its key,
-// so drop credentials before the first tool call.
-function scrubSecrets(): void {
-  for (const key of secretEnvNames(process.env)) delete process.env[key];
-}
-
-// An exception in the harness (not the agent) becomes an "error" outcome, so finished attempts are still saved.
-function crashed(task: EvalTask, attempt: number, workspace: string, err: unknown): TaskOutcome {
-  const message = err instanceof Error ? err.message : String(err);
-  return {
-    taskId: task.id, attempt, sessionId: "", workspace, passed: false, reasons: ["error"], finishReason: null, error: message,
-    steps: 0, toolCalls: 0, toolErrors: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costUsd: 0, durationMs: 0,
-    budget: task.budget, check: { passed: false, exitCode: null, output: "", timedOut: false },
-  };
 }
 
 async function main(): Promise<number> {
@@ -157,7 +114,7 @@ async function main(): Promise<number> {
     Array.from({ length: repeat }, (_, i) => async (): Promise<TaskOutcome> => {
       const attempt = i + 1;
       const workspace = join(workRoot, `${task.id}-${attempt}`);
-      const outcome = await runTask(runtime, task, { workspace, attempt }).catch((err: unknown) => crashed(task, attempt, workspace, err));
+      const outcome = await runTask(runtime, task, { workspace, attempt }).catch((err: unknown) => crashed(task.id, task.budget, attempt, workspace, err));
       const mark = outcome.passed ? "PASS" : `${isError(outcome) ? "ERROR" : "FAIL"} (${outcome.reasons.join(",")})`;
       process.stdout.write(`  ${task.id} #${attempt}: ${mark}  ${outcome.steps} steps, $${outcome.costUsd.toFixed(4)}\n`);
       return outcome;

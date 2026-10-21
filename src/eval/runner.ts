@@ -7,6 +7,7 @@ import type { SessionEvent } from "../session/events.ts";
 import { SessionRunner } from "../session/runner.ts";
 import { parseTrace, totals } from "../trace/analyze.ts";
 import { toolMix, type ToolMix } from "../trace/bash-usage.ts";
+import type { Tool } from "../tools/index.ts";
 import type { CompletionRequest, CompletionResponse, Provider } from "../types.ts";
 import { copyRepo, initGit, overlay, runCheck, type Budget, type CheckResult, type EvalTask } from "./tasks.ts";
 
@@ -116,14 +117,22 @@ export interface RunTaskOptions {
   attempt: number;
 }
 
-// One attempt: copy the repo, let the agent work unattended (auto approval) within the budget,
-// then restore the hidden canonical tests and run the check.
-export async function runTask(runtime: Runtime, task: EvalTask, options: RunTaskOptions): Promise<TaskOutcome> {
-  mkdirSync(options.workspace, { recursive: true });
-  copyRepo(task, options.workspace);
-  initGit(options.workspace);
+export interface AgentTurnOptions {
+  workspace: string;
+  title: string;
+  prompt: string;
+  budget: Budget;
+  // Swaps tools for this session only, e.g. a bash that runs inside a container (SWE-bench).
+  tools?: (tools: readonly Tool[]) => readonly Tool[];
+}
+
+// What one unattended turn did, before grading.
+export type AgentTurn = Omit<TaskOutcome, "taskId" | "attempt" | "workspace" | "passed" | "reasons" | "budget" | "check">;
+
+// Lets the agent work unattended (auto approval) on one prompt within the budget, and reads back what it did.
+export async function runAgentTurn(runtime: Runtime, options: AgentTurnOptions): Promise<AgentTurn> {
   const meta = runtime.store.create(options.workspace, runtime.model, "auto");
-  runtime.store.updateMeta(meta.id, { title: `[eval] ${task.id} #${options.attempt}` });
+  runtime.store.updateMeta(meta.id, { title: options.title });
 
   let runner: SessionRunner | null = null;
   runner = new SessionRunner({
@@ -131,10 +140,11 @@ export async function runTask(runtime: Runtime, task: EvalTask, options: RunTask
     meta: runtime.store.getMeta(meta.id),
     makeDeps: (m, hooks) => {
       const deps = runtime.makeDeps(m, hooks);
-      const provider = new BudgetedProvider(deps.provider, runtime.pricing, task.budget.maxCostUsd, () => {
+      const provider = new BudgetedProvider(deps.provider, runtime.pricing, options.budget.maxCostUsd, () => {
         runner?.stop();
       });
-      return { ...deps, provider, maxSteps: task.budget.maxSteps };
+      const tools = options.tools ? options.tools(deps.tools) : deps.tools;
+      return { ...deps, provider, tools, maxSteps: options.budget.maxSteps };
     },
   });
 
@@ -143,31 +153,19 @@ export async function runTask(runtime: Runtime, task: EvalTask, options: RunTask
     if ((event.type === "turn_end" || event.type === "error") && !event.continues) final = event;
   });
   const t0 = performance.now();
-  await runner.send(task.prompt).done;
+  await runner.send(options.prompt).done;
   const durationMs = Math.round(performance.now() - t0);
   unsubscribe();
 
-  overlay(task, "check", options.workspace);
-  const check = await runCheck(task, options.workspace);
   const spans = parseTrace(runtime.store.readFile(meta.id, "trace.jsonl"));
   const t = totals(spans, runtime.pricing);
   const end = final as FinalEvent | null;
-  const finishReason = end?.type === "turn_end" ? end.finishReason : null;
-  const error = end === null ? "turn produced no result" : end.type === "error" ? end.message : null;
-  // Steps the turn actually took; the extra summary call after a limit is not a step.
-  const steps = end?.type === "turn_end" ? end.steps : t.llmCalls;
-  const reasons = judge({ finishReason, error, steps, costUsd: t.costUsd, budget: task.budget, checkPassed: check.passed });
-
   return {
-    taskId: task.id,
-    attempt: options.attempt,
     sessionId: meta.id,
-    workspace: options.workspace,
-    passed: reasons.length === 0,
-    reasons,
-    finishReason,
-    error,
-    steps,
+    finishReason: end?.type === "turn_end" ? end.finishReason : null,
+    error: end === null ? "turn produced no result" : end.type === "error" ? end.message : null,
+    // Steps the turn actually took; the extra summary call after a limit is not a step.
+    steps: end?.type === "turn_end" ? end.steps : t.llmCalls,
     toolCalls: t.toolCalls,
     toolErrors: t.toolErrors,
     toolMix: toolMix(spans, options.workspace),
@@ -176,7 +174,28 @@ export async function runTask(runtime: Runtime, task: EvalTask, options: RunTask
     outputTokens: t.outputTokens,
     costUsd: t.costUsd,
     durationMs,
-    budget: task.budget,
-    check,
   };
+}
+
+// Combines a turn with its grade into the saved outcome, judged the same way for every kind of task.
+export function toOutcome(turn: AgentTurn, taskId: string, attempt: number, workspace: string, budget: Budget, check: CheckResult): TaskOutcome {
+  const reasons = judge({ finishReason: turn.finishReason, error: turn.error, steps: turn.steps, costUsd: turn.costUsd, budget, checkPassed: check.passed });
+  return { taskId, attempt, workspace, passed: reasons.length === 0, reasons, budget, check, ...turn };
+}
+
+// One attempt: copy the repo, let the agent work within the budget,
+// then restore the hidden canonical tests and run the check.
+export async function runTask(runtime: Runtime, task: EvalTask, options: RunTaskOptions): Promise<TaskOutcome> {
+  mkdirSync(options.workspace, { recursive: true });
+  copyRepo(task, options.workspace);
+  initGit(options.workspace);
+  const turn = await runAgentTurn(runtime, {
+    workspace: options.workspace,
+    title: `[eval] ${task.id} #${options.attempt}`,
+    prompt: task.prompt,
+    budget: task.budget,
+  });
+  overlay(task, "check", options.workspace);
+  const check = await runCheck(task, options.workspace);
+  return toOutcome(turn, task.id, options.attempt, options.workspace, task.budget, check);
 }

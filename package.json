@@ -12,7 +12,8 @@
     "gui": "node src/index.ts --gui",
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc",
-    "eval": "node src/eval/index.ts"
+    "eval": "node src/eval/index.ts",
+    "eval:swe": "node src/eval/swebench/index.ts"
   },
   "dependencies": {
     "openai": "^7.39.0"

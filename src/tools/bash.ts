@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { requireString, type Tool } from "./types.ts";
 
-const TIMEOUT_MS = 120_000;
+export const TIMEOUT_MS = 120_000;
 // How long output may keep arriving after the shell itself has exited.
 const EXIT_GRACE_MS = 500;
 const IS_WINDOWS = process.platform === "win32";
@@ -243,16 +243,21 @@ export const bashTool: Tool = {
   dangerous: true,
   async run(input, ctx) {
     const r = await runShell(requireString(input, "command"), { cwd: ctx.workspace, timeoutMs: TIMEOUT_MS, signal: ctx.signal });
-    if (r.startError) return r.startError;
-    const notes = [
-      r.timedOut && `[killed after ${TIMEOUT_MS / 1000}s timeout]`,
-      r.stopped && "[killed: stopped by the user]",
-      r.leftRunning && "[a background process is still running; its further output is not captured]",
-      `[exit code: ${r.exitCode ?? "killed"}]`,
-    ].filter(Boolean);
-    // No blank line between the output and the notes: one looks like part of the output, and the model
-    // copied such a phantom trailing blank line from `sed -n` output into an edit_file old_string.
-    const output = r.output && !r.output.endsWith("\n") ? `${r.output}\n` : r.output;
-    return output + notes.join("\n");
+    return formatShellResult(r);
   },
 };
+
+// The bash tool's result as the model sees it: output, then notes on how the command ended.
+export function formatShellResult(r: ShellResult): string {
+  if (r.startError) return r.startError;
+  const notes = [
+    r.timedOut && `[killed after ${TIMEOUT_MS / 1000}s timeout]`,
+    r.stopped && "[killed: stopped by the user]",
+    r.leftRunning && "[a background process is still running; its further output is not captured]",
+    `[exit code: ${r.exitCode ?? "killed"}]`,
+  ].filter(Boolean);
+  // No blank line between the output and the notes: one looks like part of the output, and the model
+  // copied such a phantom trailing blank line from `sed -n` output into an edit_file old_string.
+  const output = r.output && !r.output.endsWith("\n") ? `${r.output}\n` : r.output;
+  return output + notes.join("\n");
+}

@@ -80,6 +80,26 @@ AGENT_PROMPT_RULES= npm run eval -- --repeat 3   # 换一组 system prompt 规�
 
 新增任务：在 `eval/tasks/` 下建目录，放 `task.json`、`repo/`、`check/`、`solution/`，然后跑 `--validate`。
 
+### SWE-bench Verified
+
+自建任务太简单时，用公开基准 [SWE-bench Verified](https://www.swebench.com)（500 个真实 GitHub issue）测更难的题，也能和别人公布的结果对照。需要 Docker 和 [uv](https://docs.astral.sh/uv/)；第一次运行会自动建 `.swebench-venv/`（装官方 `swebench` 包，用来生成评测脚本和解析测试日志），并把数据集下载到 `.swebench-cache/`。
+
+```bash
+npm run eval:swe -- --repo django/django --difficulty easy --sample 5 --list   # 先看会选中哪些
+npm run eval:swe -- --only django__django-11099 --validate                    # 不调用模型：参考答案必须判为 resolved
+npm run eval:swe -- --repo django/django --sample 5 --seed pilot --remove-images
+npm run eval:swe -- --report <运行编号>,<运行编号>
+```
+
+- **怎么跑**：每个实例有官方镜像（`swebench/sweb.eval.x86_64.*`，x86，在 Apple Silicon 上走模拟）。把镜像里的 `/testbed` 复制到系统临时目录，再以**相同的绝对路径**挂回一个容器，`/testbed` 链接到它。agent 的文件工具在宿主机上改这份代码，`bash` 换成在容器里执行的版本（激活项目的 conda 环境，120 秒超时在容器内生效），两边看到的路径一致。宿主机的环境变量不会进入容器。
+- **怎么判**：agent 结束后，在它的容器里用 `git add -A && git diff --cached --binary <起始提交>` 取出改动（在容器里取：`.git/config` 归 agent 控制，宿主机的 git 会执行它放进去的 hook、filter 或 fsmonitor；起始提交是 agent 开始前记下的，它自己 commit 过也算），在一个**全新的**容器里按官方顺序 `git apply`，然后运行实例自带的评测脚本（它会先把测试文件重置并打上隐藏测试），最后用 `swebench` 的解析器判定 FAIL_TO_PASS 和 PASS_TO_PASS 是否全部通过。这和官方 harness 的流程一样（打补丁的命令顺序也照抄），只是 Docker 由这里直接调度：agent 运行时本来就要自己起容器，评分用同一套代码，不必再走 harness 的 Python Docker SDK。
+- **两个数字**：`resolved` 只看测试，和公开榜单的口径一致；`passed` 还要求 agent 自己结束、没超步数和成本预算（默认 100 步 / $0.5，`--max-steps`、`--max-cost` 可调），和自建任务的 PASS 一样。
+- **产物**：`.eval-runs/swe/<运行编号>/`：`results.json`、`sessions/`，以及每次尝试的 `attempts/<实例>-<次>/`（`patch.diff`、`eval.sh`、`test.log`、`report.json`）。临时目录里的代码默认评完就删（`--keep-workspaces` 保留）。
+- **磁盘**：每个镜像解压后 1–4 GB，同一仓库同一版本的实例共用大部分层。`--remove-images` 在实例跑完后删掉它的镜像。
+- **版本**：数据集固定在一个 revision（`setup.ts` 的 `DATASET_REVISION`），结果里按它标记；官方镜像只有 `:latest`，没法同样固定。
+- **中断**：Ctrl-C 会删掉这次运行起的容器（名字里都带运行编号）。
+- **已知局限**：题目公开多年，模型可能训练时见过；Verified 的 500 题里 Django 占 231 个；镜像里的 git 历史停在 base commit（抽查过没有不可达的后续提交），但没像 DeepSWE 那样做浅克隆。
+
 ## 会话数据
 
 每个会话一个目录 `.sessions/<id>/`：
@@ -133,6 +153,8 @@ src/
     runner.ts           跑一次尝试：成本守卫、判定 PASS/FAIL
     report.ts           结果表、与上次运行对比
     index.ts            npm run eval 入口
+    common.ts           两个入口共用：并发池、运行编号、去掉凭据
+    swebench/           npm run eval:swe：数据集、Docker 容器里的 bash、官方脚本评分（helper.py 调 swebench 包）
   gui/
     server.ts           路由、token 与 Host 校验
     iterations.ts       迭代记录：docs/iterations.json + git log

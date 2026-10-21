@@ -7,3 +7,5 @@ node_modules/
 .projects.json
 .worktrees.json
 .settings.json
+.swebench-cache/
+.swebench-venv/
