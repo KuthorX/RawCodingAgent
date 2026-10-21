@@ -10,6 +10,7 @@ import type { SessionManager } from "./manager.ts";
 import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.ts";
 import { commitDetail, loadIterations } from "./iterations.ts";
 import { revealInFileManager } from "./reveal.ts";
+import { forWire } from "./wire.ts";
 
 const HOST = "127.0.0.1";
 const APP_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -76,7 +77,7 @@ function streamEvents(req: IncomingMessage, res: ServerResponse, manager: Sessio
   const runner = manager.get(id);
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
   res.write(`event: hello\ndata: ${JSON.stringify(runner.info)}\n\n`);
-  const unsubscribe = runner.subscribe((event) => res.write(`data: ${JSON.stringify(event)}\n\n`));
+  const unsubscribe = runner.subscribe((event) => res.write(`data: ${JSON.stringify(forWire(event))}\n\n`));
   // subscribe() replays history synchronously; tell the client where live events begin.
   res.write("event: replay_done\ndata: {}\n\n");
   const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);
@@ -149,7 +150,7 @@ async function handleProjects(
   throw new HttpError(404, "not found");
 }
 
-// Routes: /api/sessions[/:id[/message|approve|settings|stop|fork|stats|reveal|file|attachment]]
+// Routes: /api/sessions[/:id[/message|approve|settings|stop|fork|stats|reveal|file|attachment|tool]]
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager): Promise<void> {
   const [, , , rawId, action] = url.pathname.split("/");
   const method = req.method ?? "GET";
@@ -175,6 +176,11 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
     }
     case "GET stats":
       return sendJson(res, 200, manager.stats(id));
+    case "GET tool": {
+      const call = manager.get(id).toolCall(url.searchParams.get("call") ?? "");
+      if (!call) throw new HttpError(404, "tool call not found");
+      return sendJson(res, 200, call);
+    }
     case "GET file":
       return sendText(res, "text/plain", manager.store.readFile(id, fileName(url.searchParams.get("name"))));
     case "GET attachment": {

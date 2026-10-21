@@ -290,7 +290,9 @@ function closeStaleCards() {
 
 function append(node, parent = logBox) {
   const scroller = $("scroller");
-  const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+  // Reading scrollHeight forces a layout of the whole log; during a replay that would happen once per event,
+  // so skip it and scroll once at replay_done.
+  const atBottom = !replaying && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   logBox.querySelector(".empty")?.remove();
   if (parent === logBox) foldTools();
   parent.append(node);
@@ -828,6 +830,26 @@ function inputText(input) {
   return JSON.stringify(input, null, 2);
 }
 
+// The event stream trims long tool input/output (see gui/wire.ts); this button loads the full text of one card.
+function offerFull(card, callId) {
+  if (!card._more) {
+    const session = current;
+    card._more = el("button", "link more", "内容较长，已截断 · 显示全部");
+    card._more.type = "button";
+    card._more.onclick = async () => {
+      card._more.disabled = true;
+      try {
+        const full = await api(`/api/sessions/${session}/tool?call=${encodeURIComponent(callId)}`);
+        card._input.textContent = inputText(full.input);
+        if (full.content !== null && card._output) card._output.textContent = full.content;
+        card._more.remove(); // a trimmed result arriving later offers it again
+      } catch (e) { toast("加载失败：" + e.message); }
+      card._more.disabled = false;
+    };
+  }
+  card._body.append(card._more); // (re)attached last, below the output
+}
+
 // Consecutive tool calls share one timeline. Once something else follows, a run of FOLD_AT or more folds
 // into a single "N 次工具调用" line, unless one of them still needs attention.
 const FOLD_AT = 3;
@@ -903,6 +925,7 @@ const handlers = {
     card._input = el("pre", "input", inputText(e.call.input));
     if (!(typeof cmd === "string" && Object.keys(e.call.input).length === 1 && !cmd.includes("\n") && cmd.length <= 100)) card._body.append(card._input);
     card.append(summary, card._body);
+    if (e.truncated) offerFull(card, e.call.id);
     toolCards.set(e.call.id, card);
     const group = toolGroup();
     append(card, group._list);
@@ -914,6 +937,8 @@ const handlers = {
     card.classList.add("waiting");
     const danger = DANGEROUS.test(e.call.input?.command ?? "");
     card.classList.toggle("danger", danger);
+    // The approval carries the full input even when tool_call was trimmed: show exactly what will run.
+    card._input.textContent = inputText(e.call.input);
     if (!card._input.isConnected) card._body.prepend(card._input);
     card.closest(".tools").open = true;
     card.open = true;
@@ -965,7 +990,9 @@ const handlers = {
     card.classList.add(e.result.isError ? "error" : "ok");
     // Success is the normal case and stays quiet; only failures say so.
     card._state.textContent = e.result.isError ? "失败" : "";
-    card._body.append(el("pre", "", e.result.content));
+    card._output = el("pre", "", e.result.content);
+    card._body.append(card._output);
+    if (e.truncated || card._more?.isConnected) offerFull(card, e.call.id);
     updateGroup(card.closest(".tools"));
   },
   turn_end(e) {
@@ -1075,6 +1102,7 @@ function openSession(id) {
   events.addEventListener("replay_done", () => {
     replaying = false;
     setBusy(busy);
+    $("scroller").scrollTop = $("scroller").scrollHeight;
   });
   events.onmessage = (msg) => {
     const event = JSON.parse(msg.data);

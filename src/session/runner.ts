@@ -84,6 +84,16 @@ export class SessionRunner {
     return this.running !== null;
   }
 
+  // Full input and output of one tool call, for a card the event stream sent trimmed. content is null while it runs.
+  toolCall(callId: string): { input: Record<string, unknown>; content: string | null } | null {
+    let input: Record<string, unknown> | null = null;
+    for (const e of this.log) {
+      if (e.type === "tool_call" && e.call.id === callId) input = e.call.input;
+      if (e.type === "tool_result" && e.call.id === callId) return { input: e.call.input, content: e.result.content };
+    }
+    return input && { input, content: null };
+  }
+
   subscribe(listener: Listener): () => void {
     for (const event of this.log) listener(event);
     this.listeners.add(listener);
