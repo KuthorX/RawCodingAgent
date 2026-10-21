@@ -55,12 +55,13 @@ export class SessionRunner {
   private readonly listeners = new Set<Listener>();
   private readonly pending = new Map<string, (allow: boolean) => void>();
   private readonly budget: RunnerOptions["budget"];
+  private readonly releaseLock: () => void;
 
   constructor(options: RunnerOptions) {
     this.store = options.store;
     this.budget = options.budget;
     this.meta = options.meta;
-    this.store.acquireLock(this.meta.id);
+    this.releaseLock = this.store.acquireLock(this.meta.id);
     this.history = this.store.loadMessages(this.meta.id);
     this.log = this.store.loadEvents(this.meta.id);
     // Persist the marker so the interrupted turn stays closed after later turns are appended.
@@ -92,6 +93,12 @@ export class SessionRunner {
       if (e.type === "tool_result" && e.call.id === callId) return { input: e.call.input, content: e.result.content };
     }
     return input && { input, content: null };
+  }
+
+  // Lets go of the session (e.g. before deleting it). Only for an idle session; the runner is unusable afterwards.
+  close(): void {
+    this.listeners.clear();
+    this.releaseLock();
   }
 
   subscribe(listener: Listener): () => void {
@@ -154,6 +161,10 @@ export class SessionRunner {
   setLimits(patch: { limits?: SessionMeta["limits"]; budgetUsd?: number | null }): void {
     this.meta = this.store.updateMeta(this.id, patch);
     this.deps.tracer.log("limits", patch);
+  }
+
+  setArchived(archived: boolean): void {
+    this.meta = this.store.updateMeta(this.id, { archived });
   }
 
   // The session's own turn guards override the defaults baked into deps; the budget is looked up per turn,

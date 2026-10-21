@@ -8,6 +8,7 @@ import { OpenAIProvider } from "./providers/openai.ts";
 import { loadPricing, type Pricing } from "./pricing.ts";
 import type { RunnerOptions } from "./session/runner.ts";
 import { SessionStore } from "./session/store.ts";
+import { SettingsStore } from "./gui/settings.ts";
 import { ProjectStore } from "./workspace/store.ts";
 import { defaultTools } from "./tools/index.ts";
 import { searchBackendFromEnv, webSearchTool } from "./tools/web-search.ts";
@@ -17,6 +18,7 @@ export const PROJECT_ROOT = resolve(import.meta.dirname, "..");
 export interface Runtime {
   store: SessionStore;
   projects: ProjectStore;
+  settings: SettingsStore;
   model: string;
   pricing: Pricing;
   promptRules: readonly PromptRule[];
@@ -33,7 +35,7 @@ export interface RuntimeOptions {
   sessionsDir?: string;
   // web_search is added when a search key is configured; the eval turns it off so runs stay offline and comparable.
   webSearch?: boolean;
-  // Where .projects.json / .worktrees.json live (default: the project root). Tests point it elsewhere.
+  // Where .projects.json / .worktrees.json / .settings.json live (default: the project root). Tests point it elsewhere.
   dataDir?: string;
 }
 
@@ -53,6 +55,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     store,
     // .workspaces.json is the list from before projects had worktrees; it becomes .projects.json.
     projects: new ProjectStore(resolve(dataDir, ".projects.json"), resolve(dataDir, ".worktrees.json"), resolve(dataDir, ".workspaces.json")),
+    settings: new SettingsStore(resolve(dataDir, ".settings.json")),
     model: provider.model,
     pricing,
     promptRules: config.promptRules,

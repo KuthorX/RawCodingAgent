@@ -7,7 +7,31 @@
 <link rel="stylesheet" href="/common.css">
 <style>
   body { height: 100vh; display: flex; flex-direction: column; }
-  .layout { flex: 1; display: flex; min-height: 0; }
+  /* Tabs: each view stays in the page once shown, switching only hides the others. */
+  .topbar { padding-block: 0; }
+  .topbar h1 { padding: 10px 0; }
+  .tabs { display: flex; gap: 4px; margin-left: 12px; align-self: stretch; }
+  .tabs a { display: flex; align-items: center; padding: 0 10px; color: var(--muted); box-shadow: inset 0 -2px 0 transparent; }
+  .tabs a:hover { color: var(--ink); text-decoration: none; }
+  .tabs a.on { color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+  .view { flex: 1; min-height: 0; }
+  .view[hidden] { display: none !important; }
+  .view.frame iframe { border: 0; width: 100%; height: 100%; display: block; background: var(--bg); }
+  .view.settings { overflow-y: auto; }
+  .settings-wrap { max-width: 640px; margin: 0 auto; padding: 28px 18px; }
+  .settings-wrap h2 { font-size: 16px; margin: 0 0 14px; }
+  .setting { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .setting label { display: flex; gap: 8px; align-items: center; font-weight: 600; cursor: pointer; }
+  .setting p { margin: 6px 0 0 24px; font-size: 12px; color: var(--muted); }
+  .layout { display: flex; }
+  .search { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .search input { width: 100%; font: inherit; font-size: 13px; padding: 0 8px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  .search input:focus { outline: none; border-color: var(--accent); }
+  .search-note { padding: 10px 12px; font-size: 12px; color: var(--muted); }
+  .item.hit { padding-left: 12px; }
+  .item .snip { color: var(--muted); font-size: 12px; margin-top: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
+  .item .snip .role { color: var(--ink); }
+  mark { background: var(--hl); color: inherit; border-radius: 2px; }
   aside { width: 280px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
   .new { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
   .new input[type=text] { flex: 1; min-width: 0; font: 12px var(--mono); padding: 0 8px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
@@ -15,11 +39,9 @@
   .open-row { display: flex; gap: 6px; }
   .open-row[hidden] { display: none; }
   .open-row button { height: 30px; flex: none; }
-  .side-foot label { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; }
   #sessions { flex: 1; overflow-y: auto; }
   .new > button { text-align: left; border-style: dashed; color: var(--muted); height: 30px; }
   .new > button:hover { color: var(--ink); }
-  .side-foot { padding: 10px 12px; border-top: 1px solid var(--line); }
   .ctx-warn { color: var(--warn); }
   .ws-head { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: 34px; background: var(--soft); border-block: 1px solid var(--line); margin-top: -1px;
              font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
@@ -183,9 +205,20 @@
 <body>
 <div class="topbar">
   <h1>raw-coding-agent</h1>
-  <nav><a id="nav-stats" href="#">统计</a><a data-page="/iterations" href="#">迭代记录</a></nav>
+  <nav class="tabs" id="tabs"><a data-tab="chat" href="#">会话</a><a data-tab="stats" href="#stats">统计</a><a data-tab="iterations" href="#iterations">迭代记录</a><a data-tab="settings" href="#settings">设置</a></nav>
 </div>
-<div class="layout" id="root">
+<div class="view frame" id="view-stats" hidden></div>
+<div class="view frame" id="view-iterations" hidden></div>
+<div class="view settings" id="view-settings" hidden>
+  <div class="settings-wrap">
+    <h2>设置</h2>
+    <div class="setting">
+      <label><input type="checkbox" id="set-auto"> 新会话自动批准 bash</label>
+      <p>开启后，新建的会话里 agent 的 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
+    </div>
+  </div>
+</div>
+<div class="view layout" id="root">
   <aside>
     <div class="new">
       <button id="ws-add" type="button">+ 打开项目</button>
@@ -194,10 +227,8 @@
         <button id="ws-open" type="button" title="弹出系统的文件夹选择框">选择…</button>
       </div>
     </div>
+    <div class="search"><input type="search" id="search" placeholder="搜索会话：标题、消息、回复" autocomplete="off"></div>
     <div id="sessions"></div>
-    <div class="side-foot">
-      <label title="之后用 “+ 新会话” 建的会话默认不再逐个询问 bash；每个会话可以在顶部单独切换"><input type="checkbox" id="new-auto"> 新会话自动批准 bash</label>
-    </div>
   </aside>
   <section class="chat">
     <div class="chat-head">
@@ -433,7 +464,24 @@ function sessionMenu(ev, s) {
   ];
   const project = projectOf(s.workspace);
   if (project?.repo) items.push(["Fork 到新工作区…", () => openWorkspaceDialog(project, { forkFrom: s })]);
+  items.push(null, s.archived ? ["取消归档", () => archiveSession(s, false)] : ["归档", () => archiveSession(s, true)], ["删除…", () => deleteSession(s)]);
   showMenu(ev, items);
+}
+
+async function archiveSession(s, archived) {
+  try { await api(`/api/sessions/${s.id}/archive`, { archived }); } catch (e) { return alert(e.message); }
+  toast(archived ? "已归档，可以在侧栏底部的「已归档」里找回" : "已取消归档");
+  refreshSessions();
+  if (searchQuery) runSearch();
+}
+
+async function deleteSession(s) {
+  if (!confirm(`删除会话「${s.title || s.id}」？\n它的消息、trace 和图片都会被删除，不能恢复。只想从列表里收起来可以用“归档”。`)) return;
+  try { await api(`/api/sessions/${s.id}/delete`, {}); } catch (e) { return alert(e.message); }
+  toast("已删除会话");
+  if (s.id === current) location.hash = "";
+  refreshSessions();
+  if (searchQuery) runSearch();
 }
 
 // The project whose workspaces include this directory.
@@ -544,10 +592,15 @@ async function refreshSessions() {
 function renderSidebar() {
   const box = $("sessions");
   box.replaceChildren();
+  if (!current) renderStart();
+  $("ws-form").hidden = projects.length > 0 && !wsFormOpen;
+  $("ws-add").hidden = projects.length === 0;
+  if (searchQuery) return renderSearch(box);
+  const active = sessionList.filter((s) => !s.archived);
   if (projects.length === 0) box.append(el("div", "ws-empty", "点上方「选择…」或输入路径，打开第一个项目"));
-  for (const p of projects) box.append(projectGroup(p, sessionList));
+  for (const p of projects) box.append(projectGroup(p, active));
   const known = new Set(projects.flatMap((p) => p.workspaces.map((w) => w.path)));
-  const others = sessionList.filter((s) => !known.has(s.workspace));
+  const others = active.filter((s) => !known.has(s.workspace));
   if (others.length) {
     const key = "__other__";
     const head = el("div", "ws-head");
@@ -557,9 +610,87 @@ function renderSidebar() {
     box.append(head);
     if (!collapsed.has(key)) for (const s of others) box.append(sessionItem(s));
   }
-  $("ws-form").hidden = projects.length > 0 && !wsFormOpen;
-  $("ws-add").hidden = projects.length === 0;
-  if (!current) renderStart();
+  const archived = sessionList.filter((s) => s.archived);
+  if (archived.length) {
+    const head = el("div", "ws-head");
+    head.title = "归档的会话不在项目里显示；右键可以取消归档或删除";
+    head.append(el("span", "caret", showArchived ? "▾" : "▸"), el("span", "name", "已归档"), el("span", "count", String(archived.length)));
+    head.onclick = () => { showArchived = !showArchived; localStorage.setItem("rca.showArchived", showArchived ? "1" : ""); renderSidebar(); };
+    box.append(head);
+    if (showArchived) for (const s of archived) box.append(sessionItem(s));
+  }
+}
+let showArchived = localStorage.getItem("rca.showArchived") === "1";
+
+// ---------- search ----------
+// Matches titles, your messages and the agent's replies (not tool calls), across all sessions including archived ones.
+let searchQuery = "", searchHits = null, searchSeq = 0, searchTimer = 0;
+
+async function runSearch() {
+  const seq = ++searchSeq;
+  try {
+    const hits = await api(`/api/sessions/search?q=${encodeURIComponent(searchQuery)}`);
+    if (seq !== searchSeq) return; // a newer query was typed meanwhile
+    searchHits = hits;
+  } catch (e) {
+    if (seq !== searchSeq) return;
+    searchHits = e;
+  }
+  renderSidebar();
+}
+
+$("search").addEventListener("input", () => {
+  searchQuery = $("search").value.trim();
+  clearTimeout(searchTimer);
+  searchSeq++;
+  searchHits = null;
+  if (searchQuery) searchTimer = setTimeout(runSearch, 150);
+  renderSidebar();
+});
+$("search").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape") return;
+  ev.stopPropagation(); // Esc elsewhere stops the agent
+  $("search").value = "";
+  $("search").dispatchEvent(new Event("input"));
+});
+
+// Text with every occurrence of the query wrapped in <mark>.
+function highlight(text) {
+  const frag = document.createDocumentFragment();
+  const lower = text.toLowerCase(), q = searchQuery.toLowerCase();
+  let at = 0;
+  for (let i = lower.indexOf(q); i !== -1; i = lower.indexOf(q, at)) {
+    frag.append(text.slice(at, i), el("mark", "", text.slice(i, i + q.length)));
+    at = i + q.length;
+  }
+  frag.append(text.slice(at));
+  return frag;
+}
+
+function renderSearch(box) {
+  if (searchHits === null) return box.append(el("div", "search-note", "搜索中…"));
+  if (searchHits instanceof Error) return box.append(el("div", "search-note err-text", "搜索失败：" + searchHits.message));
+  box.append(el("div", "search-note", searchHits.length ? `${searchHits.length} 个会话匹配${searchHits.length >= 50 ? "（只显示最近的 50 个）" : ""}` : "没有匹配的会话"));
+  for (const hit of searchHits) {
+    const item = el("a", "item hit" + (hit.id === current ? " active" : ""));
+    item.href = "#" + hit.id;
+    const title = el("div", "title");
+    const name = el("span", "name");
+    name.append(highlight(hit.title || "（未命名）"));
+    title.append(name);
+    if (hit.archived) title.append(el("span", "badge", "已归档"));
+    const project = projectOf(hit.workspace);
+    const ws = project?.workspaces.find((w) => w.path === hit.workspace);
+    const where = !project ? hit.workspace : ws.main ? project.name : `${project.name} / ${ws.name}`;
+    item.append(title, el("div", "sub", `${shortTime(hit.updatedAt)} · ${where}`));
+    for (const m of hit.matches) {
+      const snip = el("div", "snip");
+      snip.append(el("span", "role", m.role === "user" ? "你：" : "agent："), highlight(m.snippet));
+      item.append(snip);
+    }
+    item.addEventListener("contextmenu", (ev) => sessionMenu(ev, hit));
+    box.append(item);
+  }
 }
 
 // ---------- spending caps ----------
@@ -758,7 +889,7 @@ function renderStart() {
 
 async function createSession(workspace) {
   try {
-    const approvalMode = $("new-auto").checked ? "auto" : "ask";
+    const approvalMode = (await loadSettings()).newSessionApproval;
     const meta = await api("/api/sessions", { workspace, approvalMode });
     collapsed.delete("w:" + meta.workspace);
     location.hash = meta.id;
@@ -1060,7 +1191,6 @@ function openSession(id) {
   toolCards.clear();
   $("head-links").replaceChildren();
   $("mode").hidden = true;
-  $("nav-stats").href = withToken("/stats") + (current ? "#" + current : "");
   if (!current) {
     logBox.replaceChildren();
     $("head-title").textContent = "";
@@ -1093,7 +1223,7 @@ function openSession(id) {
     limitsBtn.type = "button";
     limitsBtn.title = "本会话的每轮步数、每轮花费和累计花费上限";
     limitsBtn.onclick = () => openLimitsDialog().catch((e) => alert(e.message));
-    links.replaceChildren(fork, limitsBtn, link(withToken("/stats") + "#" + current, "本会话统计"), document.createTextNode("·"),
+    links.replaceChildren(fork, limitsBtn, link("#stats/" + current, "本会话统计"), document.createTextNode("·"),
       link(rawUrl(current, "events.jsonl"), "原始事件", true));
     showMode(info.approvalMode);
     setBusy(info.busy);
@@ -1197,9 +1327,81 @@ input.addEventListener("keydown", (ev) => {
 });
 input.addEventListener("input", () => { input.style.height = ""; input.style.height = input.scrollHeight + "px"; });
 
+// ---------- settings ----------
+let settings = null;
+async function loadSettings() {
+  settings ??= await api("/api/settings");
+  $("set-auto").checked = settings.newSessionApproval === "auto";
+  return settings;
+}
+$("set-auto").addEventListener("change", async (ev) => {
+  try {
+    settings = await api("/api/settings", { newSessionApproval: ev.target.checked ? "auto" : "ask" });
+    toast("已保存");
+  } catch (e) {
+    ev.target.checked = !ev.target.checked;
+    alert(e.message);
+  }
+});
+
+// ---------- tabs ----------
+// The address says which tab shows: #stats[/<session>], #iterations[/<commit>], #settings, otherwise #<session> in the chat.
+// Stats and the iteration log are their own pages, each in an iframe that is created once and then only hidden,
+// so switching back is instant and keeps their scroll position and state.
+const FRAME_TABS = { stats: "/stats", iterations: "/iterations" };
+const OTHER_TABS = ["stats", "iterations", "settings"];
+const frames = {};
+let chatOpened = false;
+
+// The tab's window, or null when the frame was only just created (it opens at `sub` by itself).
+function frameFor(tab, sub) {
+  if (frames[tab]) return frames[tab].contentWindow;
+  frames[tab] = el("iframe");
+  frames[tab].src = withToken(FRAME_TABS[tab]) + (sub ? "#" + sub : "");
+  $("view-" + tab).append(frames[tab]);
+  return null;
+}
+
+function showFrame(tab, sub) {
+  const win = frameFor(tab, sub);
+  if (!win) return;
+  if (win.location.hash.slice(1) !== sub) win.location.hash = sub;
+  else if (tab === "stats") win.render?.(); // same page as before: refresh the numbers
+}
+
+function route() {
+  const hash = location.hash.slice(1);
+  const [head, ...rest] = hash.split("/");
+  const tab = OTHER_TABS.includes(head) ? head : "chat";
+  const sub = tab === "chat" ? hash : rest.join("/");
+  for (const view of OTHER_TABS) $("view-" + view).hidden = view !== tab;
+  $("root").hidden = tab !== "chat";
+  for (const a of $("tabs").children) a.classList.toggle("on", a.dataset.tab === tab);
+  if (tab === "chat") {
+    $("tabs").children[0].href = "#" + sub;
+    if (!chatOpened || (sub || null) !== current) { chatOpened = true; openSession(sub); }
+  } else if (FRAME_TABS[tab]) {
+    showFrame(tab, sub);
+  } else {
+    loadSettings().catch((e) => alert(e.message));
+  }
+}
+
+// A tab link goes back to where that tab was left.
+$("tabs").addEventListener("click", (ev) => {
+  const a = ev.target.closest("a");
+  const win = a && FRAME_TABS[a.dataset.tab] && frames[a.dataset.tab]?.contentWindow;
+  if (!win) return;
+  const sub = win.location.hash.slice(1);
+  a.href = "#" + a.dataset.tab + (sub ? "/" + sub : "");
+});
+
 if (requireToken($("root"))) {
-  window.addEventListener("hashchange", () => openSession(location.hash.slice(1)));
-  openSession(location.hash.slice(1));
+  window.addEventListener("hashchange", route);
+  route();
+  loadSettings().catch(() => {});
+  // Load the other tabs in the background, so even the first switch is instant.
+  setTimeout(() => { for (const tab of Object.keys(FRAME_TABS)) frameFor(tab, ""); }, 1500);
 }
 </script>
 </body>

@@ -6,3 +6,4 @@ node_modules/
 .traces/
 .projects.json
 .worktrees.json
+.settings.json

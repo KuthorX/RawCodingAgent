@@ -150,7 +150,7 @@ async function handleProjects(
   throw new HttpError(404, "not found");
 }
 
-// Routes: /api/sessions[/:id[/message|approve|settings|stop|fork|stats|reveal|file|attachment|tool]]
+// Routes: /api/sessions[/search|/:id[/message|approve|settings|archive|delete|stop|fork|stats|reveal|file|attachment|tool]]
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager): Promise<void> {
   const [, , , rawId, action] = url.pathname.split("/");
   const method = req.method ?? "GET";
@@ -167,6 +167,8 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
     }
     throw new HttpError(405, "method not allowed");
   }
+
+  if (rawId === "search" && method === "GET") return sendJson(res, 200, manager.search(url.searchParams.get("q") ?? ""));
 
   const id = sessionId(rawId);
   switch (`${method} ${action ?? ""}`) {
@@ -216,6 +218,15 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       if (nw !== undefined && (typeof nw !== "object" || nw === null)) throw new HttpError(400, '"newWorkspace" must be an object');
       const name = typeof (nw as { name?: unknown } | undefined)?.name === "string" ? (nw as { name: string }).name : undefined;
       return sendJson(res, 201, await manager.fork(id, nw === undefined ? undefined : { name }));
+    }
+    case "POST archive": {
+      const body = await readJson(req);
+      if (typeof body.archived !== "boolean") throw new HttpError(400, '"archived" (boolean) is required');
+      return sendJson(res, 200, manager.setArchived(id, body.archived));
+    }
+    case "POST delete": {
+      manager.remove(id);
+      return sendJson(res, 200, { ok: true });
     }
     case "POST stop": {
       return sendJson(res, 200, { ok: true, stopped: manager.get(id).stop() });
@@ -274,6 +285,15 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, { manager, t
   if (req.method === "GET" && events) return streamEvents(req, res, manager, sessionId(events[1]));
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager);
   if (url.pathname.startsWith("/api/projects")) return handleProjects(req, res, url, manager, pick);
+  if (url.pathname === "/api/settings") {
+    if (req.method === "GET") return sendJson(res, 200, manager.settings.get());
+    if (req.method === "POST") {
+      return readJson(req).then((body) => {
+        if (!isApprovalMode(body.newSessionApproval)) throw new HttpError(400, '"newSessionApproval" must be "ask" or "auto"');
+        sendJson(res, 200, manager.settings.update({ newSessionApproval: body.newSessionApproval }));
+      });
+    }
+  }
   // The iteration log reads this project's own git history (src/gui -> project root).
   if (req.method === "GET" && url.pathname === "/api/iterations") return loadIterations(APP_ROOT).then((d) => sendJson(res, 200, d));
   if (req.method === "GET" && url.pathname === "/api/iterations/commit") {

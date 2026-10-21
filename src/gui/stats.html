@@ -98,7 +98,7 @@ async function renderOverview() {
     const files = el("span", "files");
     files.append(link(rawUrl(s.id, "trace.jsonl"), "trace", true), link(rawUrl(s.id, "events.jsonl"), "events", true),
       link(rawUrl(s.id, "messages.json"), "messages", true), revealButton(s.id, "meta.json"));
-    tr.append(td(s.title || "（未命名）"), td(fmt.time(s.updatedAt), "mono"), td(fmt.int(s.turns), "num"),
+    tr.append(td((s.title || "（未命名）") + (s.archived ? "（已归档）" : "")), td(fmt.time(s.updatedAt), "mono"), td(fmt.int(s.turns), "num"),
       td(fmt.int(t.llmCalls), "num"), td(fmt.k(t.contextTokens), "num" + (t.contextTokens > CONTEXT_WARN_TOKENS ? " err-text" : "")),
       td(fmt.int(t.inputTokens), "num"), td(fmt.int(t.outputTokens), "num"),
       td(fmt.usd(t.costUsd), "num"), td(fmt.int(t.toolCalls), "num"), td(fmt.int(t.toolErrors), "num" + (t.toolErrors ? " err-text" : "")), td(files));
@@ -201,6 +201,10 @@ async function renderSession(id) {
     card("模型耗时", fmt.ms(t.llmMs)), card("工具执行耗时", fmt.ms(t.toolMs)), card("等待审批", fmt.ms(t.approvalMs)),
     card("审批：人工允许 / 拒绝 / 自动", `${t.approvals.allowed} / ${t.approvals.denied} / ${t.approvals.auto}`));
   top.firstChild.append(el("span", "badge-mode", meta.approvalMode === "auto" ? "当前：自动批准" : "当前：每次询问"));
+  const chat = el("button", "small", "打开对话");
+  chat.type = "button";
+  chat.onclick = () => openChat(id);
+  top.firstChild.append(chat);
   top.append(cards);
   const p = data.pricing;
   top.append(el("div", "meta", `成本按每百万 token 输入 $${p.inputPerMTok} / 缓存命中 $${p.cachedInputPerMTok} / 输出 $${p.outputPerMTok} 估算（.env 中 PRICE_* 可改）`));
@@ -237,7 +241,7 @@ async function render() {
   }
 }
 
-if (requireToken(root)) {
+if (asTab("stats") && requireToken(root)) {
   window.addEventListener("hashchange", render);
   render();
 }

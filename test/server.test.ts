@@ -9,11 +9,12 @@ const TOKEN = "test-token";
 let port = 0;
 let close: () => void = () => {};
 let workspace = "";
+let runtime: ReturnType<typeof testRuntime>;
 // Stands in for the native dialog: each test sets what the next "user choice" is.
 let nextPick: () => Promise<string | null> = async () => null;
 
 before(async () => {
-  const runtime = testRuntime(new ScriptedProvider([reply("hello")]));
+  runtime = testRuntime(new ScriptedProvider([reply("hello")]));
   workspace = runtime.store.root;
   const server = createGuiServer(new SessionManager(runtime), TOKEN, { pickFolder: () => nextPick() });
   port = await listen(server, 0);
@@ -202,4 +203,43 @@ test("settings: per-session limits and budget are validated and stored; caps on 
   const project = (JSON.parse((await call("GET", "/api/projects")).body) as { path: string; budgetUsd: number }[]).find((p) => p.path === workspace)!;
   assert.equal(project.budgetUsd, 4);
   await call("POST", "/api/projects/remove", { body: { path: workspace } });
+});
+
+test("archive hides nothing server-side but is listed; delete removes the session for good", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  assert.equal((await call("POST", `/api/sessions/${id}/archive`, { body: {} })).status, 400);
+  assert.equal(JSON.parse((await call("POST", `/api/sessions/${id}/archive`, { body: { archived: true } })).body).archived, true);
+  const listed = (JSON.parse((await call("GET", "/api/sessions")).body) as { id: string; archived?: boolean }[]).find((s) => s.id === id);
+  assert.equal(listed?.archived, true);
+  assert.equal(JSON.parse((await call("POST", `/api/sessions/${id}/archive`, { body: { archived: false } })).body).archived, false);
+
+  assert.equal((await call("POST", `/api/sessions/${id}/delete`, { body: {} })).status, 200);
+  assert.equal((await call("GET", `/api/sessions/${id}`)).status, 404);
+  assert.ok(!(JSON.parse((await call("GET", "/api/sessions")).body) as { id: string }[]).some((s) => s.id === id));
+  assert.equal((await call("POST", `/api/sessions/${id}/delete`, { body: {} })).status, 404);
+});
+
+test("search matches titles, user messages and replies, not tool calls", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  runtime.store.updateMeta(id, { title: "Refactor the Parser" });
+  runtime.store.appendEvent(id, { type: "user", text: "please look at zebra handling" });
+  runtime.store.appendEvent(id, { type: "assistant_text", text: "Done: the giraffe case is fixed." });
+  runtime.store.appendEvent(id, { type: "tool_call", call: { id: "c1", name: "bash", input: { command: "grep okapi" } } });
+  const search = async (q: string) => JSON.parse((await call("GET", `/api/sessions/search?q=${encodeURIComponent(q)}`)).body) as {
+    id: string;
+    matches: { role: string; snippet: string }[];
+  }[];
+  assert.deepEqual((await search("parser")).map((h) => [h.id, h.matches.length]), [[id, 0]]);
+  assert.deepEqual((await search("ZEBRA")).find((h) => h.id === id)?.matches, [{ role: "user", snippet: "please look at zebra handling" }]);
+  assert.equal((await search("giraffe")).find((h) => h.id === id)?.matches[0]?.role, "assistant");
+  assert.deepEqual(await search("okapi"), []);
+  assert.deepEqual(await search("  "), []);
+});
+
+test("GUI settings: new sessions auto-approve by default, can be switched off", async () => {
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "auto" });
+  assert.equal((await call("POST", "/api/settings", { body: { newSessionApproval: "yolo" } })).status, 400);
+  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { newSessionApproval: "ask" } })).body), { newSessionApproval: "ask" });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "ask" });
+  assert.equal((await call("GET", "/api/settings", { token: null })).status, 401);
 });

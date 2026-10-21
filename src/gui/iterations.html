@@ -206,10 +206,11 @@ $("by-time").onclick = () => { view = "time"; setSeg("by-time", "by-module"); re
 $("by-module").onclick = () => { view = "module"; setSeg("by-module", "by-time"); render(); };
 $("newest").onclick = () => { newestFirst = true; setSeg("newest", "oldest"); render(); };
 $("oldest").onclick = () => { newestFirst = false; setSeg("oldest", "newest"); render(); };
-$("d-close").onclick = () => { history.replaceState(null, "", location.pathname + location.search); showCommit(null); };
+const syncTab = asTab("iterations");
+$("d-close").onclick = () => { history.replaceState(null, "", location.pathname + location.search); syncTab?.(); showCommit(null); };
 window.addEventListener("hashchange", () => showCommit(location.hash.slice(1)));
 
-if (requireToken($("root"))) {
+if (syncTab && requireToken($("root"))) {
   api("/api/iterations").then((d) => {
     data = d;
     render();

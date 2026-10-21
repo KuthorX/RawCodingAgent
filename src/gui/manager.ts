@@ -19,6 +19,27 @@ async function asHttp<T>(p: Promise<T>): Promise<T> {
   }
 }
 
+export interface SearchHit {
+  id: string;
+  title: string;
+  workspace: string;
+  updatedAt: string;
+  archived: boolean;
+  matches: { role: "user" | "assistant"; snippet: string }[];
+}
+
+const SNIPPETS = 3;
+const SNIPPET_CONTEXT = 40;
+
+// The match with some text around it, on one line.
+function snippet(text: string, q: string): string {
+  const flat = text.replace(/\s+/g, " ");
+  const at = flat.toLowerCase().indexOf(q);
+  const start = Math.max(0, at - SNIPPET_CONTEXT);
+  const end = Math.min(flat.length, at + q.length + SNIPPET_CONTEXT * 2);
+  return (start > 0 ? "…" : "") + flat.slice(start, end) + (end < flat.length ? "…" : "");
+}
+
 type SpendingView = ProjectView & {
   budgetUsd: number | null;
   spentUsd: number;
@@ -183,6 +204,50 @@ export class SessionManager {
     const meta = this.store.fork(id, { workspace: created.workspace.path });
     this.get(meta.id);
     return { meta, workspace: created.workspace, uncommitted: dirty, copied: created.copied };
+  }
+
+  get settings() {
+    return this.runtime.settings;
+  }
+
+  setArchived(id: string, archived: boolean): SessionMeta {
+    if (!this.store.exists(id)) throw new HttpError(404, `session "${id}" not found`);
+    const runner = this.runners.get(id);
+    if (!runner) return this.store.updateMeta(id, { archived });
+    runner.setArchived(archived);
+    return runner.info;
+  }
+
+  // Deletes the session's directory (history, trace, images). A running turn must be stopped first.
+  remove(id: string): void {
+    if (!this.store.exists(id)) throw new HttpError(404, `session "${id}" not found`);
+    const runner = this.runners.get(id);
+    if (runner?.isBusy) throw new HttpError(409, "这个会话正在运行，先停止它");
+    runner?.close();
+    this.runners.delete(id);
+    try {
+      this.store.remove(id);
+    } catch (err) {
+      throw new HttpError(409, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Case-insensitive match on titles, user messages and assistant replies (not tool calls); newest sessions first.
+  search(query: string, limit = 50): SearchHit[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const hits: SearchHit[] = [];
+    for (const meta of this.store.list()) {
+      const matches = this.store
+        .readDialogue(meta.id)
+        .filter((m) => m.text.toLowerCase().includes(q))
+        .slice(0, SNIPPETS)
+        .map((m) => ({ role: m.role, snippet: snippet(m.text, q) }));
+      if (matches.length === 0 && !meta.title.toLowerCase().includes(q)) continue;
+      hits.push({ id: meta.id, title: meta.title, workspace: normalizePath(meta.workspace), updatedAt: meta.updatedAt, archived: meta.archived === true, matches });
+      if (hits.length >= limit) break;
+    }
+    return hits;
   }
 
   list(): (SessionMeta & { busy: boolean; totals: Totals })[] {

@@ -22,7 +22,13 @@ export function tokenMatches(expected: string, given: string | null | undefined)
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-const SECURITY_HEADERS = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer" };
+// Framing only by our own pages: the main page shows stats and the iteration log as tabs in iframes.
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "SAMEORIGIN",
+  "content-security-policy": "frame-ancestors 'self'",
+  "referrer-policy": "no-referrer",
+};
 
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...SECURITY_HEADERS });

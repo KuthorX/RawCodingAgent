@@ -34,6 +34,8 @@ export interface SessionMeta {
   limits?: TurnLimits;
   // Cap on everything this session spends, across turns; missing/null = no cap.
   budgetUsd?: number | null;
+  // Hidden from the sidebar's project tree (still searchable, can be restored).
+  archived?: boolean;
 }
 
 export interface TurnLimits {
@@ -207,6 +209,14 @@ export class SessionStore {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
+  // Refuses while another process holds the session (its lock is alive); our own runner must be closed first.
+  remove(id: string): void {
+    if (!this.exists(id)) throw new Error(`session "${id}" not found`);
+    const release = this.acquireLock(id);
+    release();
+    rmSync(this.dir(id), { recursive: true, force: true });
+  }
+
   updateMeta(id: string, patch: Partial<Omit<SessionMeta, "id" | "createdAt">>): SessionMeta {
     const meta = { ...this.getMeta(id), ...patch };
     writeJsonAtomic(join(this.dir(id), "meta.json"), meta);
@@ -242,6 +252,25 @@ export class SessionStore {
       });
   }
 
+  // The text a person would search for: user messages and the assistant's replies, not tool calls or output.
+  // Lines are filtered by prefix before parsing, so big tool results are never parsed.
+  readDialogue(id: string): { role: "user" | "assistant"; text: string }[] {
+    const path = join(this.dir(id), "events.jsonl");
+    if (!existsSync(path)) return [];
+    const out: { role: "user" | "assistant"; text: string }[] = [];
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      const user = line.startsWith('{"type":"user"');
+      if (!user && !line.startsWith('{"type":"assistant_text"')) continue;
+      try {
+        const e = JSON.parse(line) as { text?: unknown };
+        if (typeof e.text === "string" && e.text) out.push({ role: user ? "user" : "assistant", text: e.text });
+      } catch {
+        // a half-written line
+      }
+    }
+    return out;
+  }
+
   // One process per session (e.g. the GUI and `--resume` must not both write history).
   // A lock left by a dead process is taken over.
   acquireLock(id: string): () => void {
@@ -253,7 +282,10 @@ export class SessionStore {
       }
     }
     writeFileSync(path, String(process.pid));
-    const release = () => rmSync(path, { force: true });
+    const release = () => {
+      rmSync(path, { force: true });
+      process.off("exit", release);
+    };
     process.once("exit", release);
     return release;
   }

@@ -70,6 +70,30 @@ const fmt = {
 // Links to token-only pages, e.g. <a data-page="/iterations">.
 for (const a of document.querySelectorAll("a[data-page]")) a.href = withToken(a.dataset.page);
 
+// Stats and the iteration log are tabs of the main page (/), shown there in an iframe that is kept alive,
+// so switching tabs never reloads them. Opened on their own they move into the main page; inside it they hide
+// their own top bar and mirror their address (#<id>) into the main page's (#<tab>/<id>).
+const EMBEDDED = window.top !== window;
+function asTab(tab) {
+  const target = () => "#" + tab + (location.hash.length > 1 ? "/" + location.hash.slice(1) : "");
+  if (!EMBEDDED) {
+    if (!TOKEN) return () => {}; // requireToken() explains
+    location.replace(withToken("/") + target());
+    return false;
+  }
+  document.documentElement.classList.add("embedded");
+  // Only while this tab is the one showing: a preloaded frame must not take over the address.
+  const sync = () => { if (top.location.hash.slice(1).split("/")[0] === tab) top.history.replaceState(null, "", target()); };
+  addEventListener("hashchange", sync);
+  return sync;
+}
+
+// A link into the chat tab of the main page.
+function openChat(id) {
+  if (EMBEDDED) top.location.hash = id;
+  else location.href = withToken("/") + "#" + id;
+}
+
 function requireToken(target) {
   if (TOKEN) return true;
   target.replaceChildren(el("div", "banner", "缺少 token：请使用终端里打印的完整地址打开。"));
