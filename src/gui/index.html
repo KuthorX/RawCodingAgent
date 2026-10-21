@@ -887,6 +887,7 @@ const handlers = {
     settleQueued(e.count, "插话 · 已送达");
     append(el("div", "note", `agent 已收到 ${e.count} 条插话`));
   },
+  output_truncated(e) { append(el("div", "note", `输出超过 max_tokens，工具调用被截断：已让 agent 拆小重试（第 ${e.retry} 次）`)); },
   interjection_dropped(e) { settleQueued(e.count, "插话 · 未送达（已停止）", "dropped"); },
   assistant_text(e) { append(renderAssistant(e.text)); },
   tool_call(e) {

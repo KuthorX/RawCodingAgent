@@ -53,6 +53,8 @@ export async function runCli(runtime: Runtime, options: CliOptions): Promise<voi
         return event.queued ? note("(interjection queued: the agent sees it before its next step)") : undefined;
       case "interjection_delivered":
         return note(`(${event.count} interjection(s) delivered)`);
+      case "output_truncated":
+        return note(`(output hit max_tokens mid tool call; asked the model to retry in smaller pieces, ${event.retry})`);
       case "interjection_dropped":
         return note(`(${event.count} undelivered interjection(s) dropped)`);
       case "assistant_text":

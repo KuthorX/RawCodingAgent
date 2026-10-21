@@ -123,15 +123,32 @@ test("stops when the turn's cost passes the limit", async () => {
 });
 
 test("does not execute tool calls from a truncated response but keeps history valid", async () => {
-  const provider = new ScriptedProvider([
-    reply("", [{ id: "a", name: "write_file", input: { path: "x", content: "partial" } }], "max_tokens"),
-  ]);
+  const truncated = (id: string) => reply("", [{ id, name: "write_file", input: { path: "x", content: "partial" } }], "max_tokens");
+  const provider = new ScriptedProvider([truncated("a"), truncated("b"), truncated("c")]);
   const deps = makeDeps(provider);
   const result = await runTurn([], "go", deps);
+  // Two retries asking for smaller pieces, then the turn gives up.
   assert.equal(result.finishReason, "max_tokens");
+  assert.equal(provider.requests.length, 3);
   const last = result.messages.at(-1)!;
   assert.ok(last.role === "tool_results" && last.results[0]!.isError);
   assert.throws(() => readFileSync(join(deps.workspace, "x")));
+});
+
+test("a tool call cut off by max_tokens is retried in smaller pieces", async () => {
+  const events: string[] = [];
+  const provider = new ScriptedProvider([
+    reply("", [{ id: "a", name: "write_file", input: { path: "x", content: "par" } }], "max_tokens"),
+    reply("", [{ id: "b", name: "write_file", input: { path: "x", content: "small" } }]),
+    reply("done"),
+  ]);
+  const deps = makeDeps(provider, { onEvent: (e) => events.push(e.type) });
+  const result = await runTurn([], "go", deps);
+  assert.equal(result.finishReason, "end_turn");
+  assert.equal(readFileSync(join(deps.workspace, "x"), "utf8"), "small");
+  const retryPrompt = provider.requests[1]!.messages.at(-1)!;
+  assert.ok(retryPrompt.role === "tool_results" && /output token limit/.test(retryPrompt.results[0]!.content));
+  assert.ok(events.includes("output_truncated"));
 });
 
 test("does not mutate the history passed in", async () => {

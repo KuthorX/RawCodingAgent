@@ -35,7 +35,9 @@ export type AgentEvent =
   | { type: "assistant_text"; text: string }
   | { type: "tool_call"; call: ToolCall }
   | { type: "tool_result"; call: ToolCall; result: ToolResult }
-  | { type: "interjection_delivered"; count: number };
+  | { type: "interjection_delivered"; count: number }
+  // A tool call was cut off by max_tokens; the model is asked to retry in smaller pieces.
+  | { type: "output_truncated"; retry: number };
 
 export type FinishReason = Exclude<StopReason, "tool_use"> | LimitHit | "interrupted";
 
@@ -50,6 +52,11 @@ export interface TurnControl {
 const INTERRUPTED_RESULT = "not executed: the user stopped the turn";
 const REPEATED_RESULT = "not executed: the same call was already made several times in a row without progress";
 const DEFAULT_MAX_REPEATS = 3;
+const MAX_TRUNCATION_RETRIES = 2;
+const TRUNCATED_RESULT =
+  "not executed: your response hit the output token limit, so this tool call was cut off. " +
+  "Keep each tool call much smaller: write a large file as a short skeleton with write_file first, then fill it in " +
+  "with several smaller edit_file calls, or split it into several files.";
 
 export interface TurnResult {
   messages: Message[];
@@ -210,6 +217,7 @@ async function loop(
   const pricing = deps.pricing ?? DEFAULT_PRICING;
   let usage: TokenUsage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
   let signatures: string[] = [];
+  let truncations = 0; // consecutive responses cut off by max_tokens inside a tool call
   const stopAt = async (hit: LimitHit, steps: number): Promise<TurnResult> => {
     const detail = limitDetail(hit, { maxSteps: deps.maxSteps, maxCostUsd: maxCost, maxRepeats, budgetScope: deps.budget?.scope });
     deps.tracer.log("limit", { hit, steps, costUsd: costUsd(usage, pricing) });
@@ -249,13 +257,23 @@ async function loop(
 
     // Tool input may be cut off: don't run it, but answer every call so the history stays valid.
     if (response.stopReason === "max_tokens" || response.stopReason === "refusal") {
+      // Usually one call tried to write a whole large file at once: tell the model to split it and go on.
+      const retry = response.stopReason === "max_tokens" && truncations < MAX_TRUNCATION_RETRIES;
       const skipped = response.message.toolCalls.map((c) => ({
         callId: c.id,
-        content: `not executed: response ended with ${response.stopReason}`,
+        content: retry ? TRUNCATED_RESULT : `not executed: response ended with ${response.stopReason}`,
         isError: true,
       }));
-      return { messages: [...messages, { role: "tool_results", results: skipped }], finishReason: response.stopReason, steps: step };
+      messages = [...messages, { role: "tool_results", results: skipped }];
+      if (!retry) return { messages, finishReason: response.stopReason, steps: step };
+      truncations++;
+      deps.tracer.log("truncated", { step, retry: truncations });
+      deps.onEvent?.({ type: "output_truncated", retry: truncations });
+      if (maxCost !== null && costUsd(usage, pricing) > maxCost) return stopAt("max_cost", step);
+      if (deps.budget && costUsd(usage, pricing) > deps.budget.remainingUsd) return stopAt("budget", step);
+      continue;
     }
+    truncations = 0;
 
     // D2: tool calls run sequentially, results returned together in one message.
     // After a stop, every remaining call still gets a result so the history stays valid.
