@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { isPromptRule, type PromptRule } from "./agent/system-prompt.ts";
 
 export interface Config {
-  maxSteps: number;
+  maxSteps: number | null; // null = no step limit
   maxTurnCostUsd: number | null; // null = no cost limit
   maxRepeats: number;
   promptRules: PromptRule[];
@@ -33,8 +33,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const apiKey = env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is required (see .env.example)");
   return {
-    maxSteps: positiveInt("AGENT_MAX_STEPS", env.AGENT_MAX_STEPS ?? "100"),
-    // 0 turns the cost limit off.
+    // 0 turns the step / cost limit off. Steps are unlimited by default: the cost limit and the repeat guard
+    // already stop a runaway turn, and long tasks shouldn't be cut off halfway.
+    maxSteps: Math.floor(nonNegative("AGENT_MAX_STEPS", env.AGENT_MAX_STEPS ?? "0")) || null,
     maxTurnCostUsd: nonNegative("AGENT_MAX_TURN_COST_USD", env.AGENT_MAX_TURN_COST_USD ?? "0.5") || null,
     maxRepeats: positiveInt("AGENT_MAX_REPEATS", env.AGENT_MAX_REPEATS ?? "3"),
     // D3: "spec" had the only consistent (not significant) positive signal in the prompt experiment;

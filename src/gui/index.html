@@ -618,7 +618,7 @@ async function openLimitsDialog() {
     input.value = typeof value === "number" ? String(value) : "";
     input.hidden = mode.value !== "custom";
   };
-  pick($("ld-steps-mode"), $("ld-steps"), limits.maxSteps, `${defaults.maxSteps} 步`);
+  pick($("ld-steps-mode"), $("ld-steps"), limits.maxSteps, defaults.maxSteps === null ? "不限" : `${defaults.maxSteps} 步`);
   pick($("ld-cost-mode"), $("ld-cost"), limits.maxTurnCostUsd, defaults.maxTurnCostUsd === null ? "不限" : `$${defaults.maxTurnCostUsd}`);
   $("ld-budget").value = typeof info.budgetUsd === "number" ? String(info.budgetUsd) : "";
   $("ld-spent").textContent = `本会话已花 $${stats.totals.costUsd.toFixed(4)}（${stats.totals.turns} 轮）。修改从下一轮开始生效。项目和工作区的额度在侧栏右键设置。`;

@@ -30,8 +30,11 @@ test("openai: malformed arguments are flagged, not thrown", () => {
 
 test("config requires an API key and validates values", () => {
   assert.throws(() => loadConfig({}), /OPENAI_API_KEY/);
-  assert.throws(() => loadConfig({ OPENAI_API_KEY: "k", AGENT_MAX_STEPS: "0" }), /AGENT_MAX_STEPS/);
+  assert.throws(() => loadConfig({ OPENAI_API_KEY: "k", AGENT_MAX_STEPS: "-1" }), /AGENT_MAX_STEPS/);
+  assert.equal(loadConfig({ OPENAI_API_KEY: "k", AGENT_MAX_STEPS: "0" }).maxSteps, null);
+  assert.equal(loadConfig({ OPENAI_API_KEY: "k", AGENT_MAX_STEPS: "40" }).maxSteps, 40);
   const config = loadConfig({ OPENAI_API_KEY: "k" });
+  assert.equal(config.maxSteps, null); // no step limit by default
   assert.equal(config.llm.model, "deepseek-chat");
   assert.equal(config.llm.baseURL, undefined);
 });
