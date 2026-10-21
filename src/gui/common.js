@@ -37,15 +37,18 @@ function rawUrl(session, file, line) {
   return withToken("/raw", { session, file, ...(line ? { line: String(line) } : {}) }) + (line ? `#L${line}` : "");
 }
 
-function revealButton(session, file) {
-  const btn = el("button", "small", "在 Finder 中显示");
+// What the OS calls its file manager.
+const FILE_MANAGER = /Mac/.test(navigator.platform) ? "Finder" : /Win/.test(navigator.platform) ? "资源管理器" : "文件管理器";
+
+function revealButton(session, file, label = "定位") {
+  const btn = el("button", "small", label);
   btn.type = "button";
-  btn.title = `用系统文件管理器打开 ${file} 所在目录`;
+  btn.title = `在${FILE_MANAGER}中显示 ${file}`;
   btn.onclick = () => api(`/api/sessions/${session}/reveal`, { name: file }).catch((e) => alert(e.message));
   return btn;
 }
 
-// "trace.jsonl 查看 · 在 Finder 中显示" for every session file.
+// "trace.jsonl 查看内容 定位" for every session file.
 function fileLinks(session, files = FILES) {
   const box = el("div", "files");
   for (const file of files) {
@@ -85,6 +88,10 @@ function asTab(tab) {
   // Only while this tab is the one showing: a preloaded frame must not take over the address.
   const sync = () => { if (top.location.hash.slice(1).split("/")[0] === tab) top.history.replaceState(null, "", target()); };
   addEventListener("hashchange", sync);
+  addEventListener("keydown", (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.target.closest?.("input, textarea, select")) return;
+    if ("1234".includes(ev.key) && ev.key.length === 1) top.switchTab?.(ev.key);
+  });
   return sync;
 }
 

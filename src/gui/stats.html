@@ -5,15 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>统计 · raw-coding-agent</title>
 <link rel="stylesheet" href="/common.css">
+<script src="/theme.js"></script>
 <style>
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 18px; display: flex; flex-direction: column; gap: 18px; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
-  section h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .wrap { max-width: 1004px; margin: 0 auto; padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 14px; }
+  section { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+  section h2 { font-size: 13px; margin: 0 0 8px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   section h2 .files { font-weight: 400; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-  .card { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
-  .card .v { font-size: 20px; font-variant-numeric: tabular-nums; }
-  .card .k { color: var(--muted); font-size: 12px; }
+  section h2 { justify-content: flex-start; }
+  section h2 > :last-child:not(:first-child) { margin-left: auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); column-gap: 40px; }
+  .card { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+  .card .k { color: var(--muted); order: 1; white-space: nowrap; }
+  .card .k::after { content: ""; }
+  .card::after { content: ""; order: 2; flex: 1; border-bottom: 1px dotted var(--line); }
+  .card .v { order: 3; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .card .v.zero { color: var(--muted); }
   .badge-mode { font-weight: 400; font-size: 12px; color: var(--muted); }
   .turn { border-top: 1px solid var(--line); padding: 10px 0; }
   .turn:first-of-type { border-top: 0; }
@@ -23,14 +29,14 @@
   .span:hover { background: var(--soft); }
   .span .name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .span .name b { font-weight: 500; display: inline-block; width: 34px; }
-  .track { position: relative; height: 12px; background: var(--soft); border-radius: 3px; }
-  .bar { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 2px; }
+  .track { position: relative; height: 12px; background: var(--soft); border-radius: 2px; }
+  .bar { position: absolute; top: 0; bottom: 0; border-radius: 2px; min-width: 2px; }
   .bar.llm { background: var(--llm); }
   .bar.tool { background: var(--tool); }
   .bar.error { background: var(--err); }
   .bar.wait { background: repeating-linear-gradient(45deg, var(--warn) 0 3px, transparent 3px 6px); opacity: .6; }
   .span .info { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .raw { grid-column: 1 / -1; margin: 4px 0 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: auto; }
+  .raw { grid-column: 1 / -1; margin: 4px 0 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 2px; padding: 8px 10px; cursor: auto; }
   .raw pre { margin: 6px 0 0; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; }
   .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
@@ -58,9 +64,11 @@ function section(title, extra) {
   return box;
 }
 
+// "label ········ value"; a zero amount shows as a dim dash.
 function card(k, v) {
   const c = el("div", "card");
-  c.append(el("div", "v", v), el("div", "k", k));
+  const zero = /^(\$?0(\.0+)?( tok|ms)?|0 \/ 0 \/ 0)$/.test(String(v));
+  c.append(el("span", "v" + (zero ? " zero" : ""), zero ? "—" : v), el("span", "k", k));
   return c;
 }
 
@@ -205,7 +213,7 @@ async function renderSession(id) {
   chat.type = "button";
   chat.onclick = () => openChat(id);
   top.firstChild.append(chat);
-  top.append(cards);
+  top.append(t.llmCalls ? cards : el("div", "muted", "还没有模型调用，没有可统计的数据。"));
   const p = data.pricing;
   top.append(el("div", "meta", `成本按每百万 token 输入 $${p.inputPerMTok} / 缓存命中 $${p.cachedInputPerMTok} / 输出 $${p.outputPerMTok} 估算（.env 中 PRICE_* 可改）`));
 

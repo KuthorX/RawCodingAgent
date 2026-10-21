@@ -23,6 +23,7 @@ const PAGES: Record<string, [string, string]> = {
   "/iterations": ["text/html", page("iterations.html")],
   "/common.css": ["text/css", page("common.css")],
   "/common.js": ["text/javascript", page("common.js")],
+  "/theme.js": ["text/javascript", page("theme.js")],
   "/markdown.js": ["text/javascript", page("markdown.js")],
 };
 

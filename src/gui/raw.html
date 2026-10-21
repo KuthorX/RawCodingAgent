@@ -5,11 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>原文件 · raw-coding-agent</title>
 <link rel="stylesheet" href="/common.css">
+<script src="/theme.js"></script>
 <style>
-  .bar2 { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; }
-  .tabs { display: flex; gap: 4px; }
-  .tabs a { padding: 2px 10px; border-radius: 5px; font-family: var(--mono); font-size: 12px; color: var(--ink); }
-  .tabs a.active { background: var(--accent); color: #fff; }
+  .bar2 { display: flex; flex-wrap: wrap; gap: 14px; align-items: stretch; padding: 0 16px 0 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .bar2 > :not(.tabs) { align-self: center; }
+  /* One tab per session file, like the main page's tabs; switching loads in place. */
+  .tabs { display: flex; }
+  .tabs a { display: flex; align-items: center; padding: 4px 16px; color: var(--muted); border-right: 1px solid var(--line); }
+  .tabs a:hover { color: var(--ink); background: var(--soft); text-decoration: none; }
+  .tabs a.active { background: var(--accent); color: var(--on-accent); }
   label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
   body { height: 100vh; display: flex; flex-direction: column; }
   #view { flex: 1; overflow: auto; font: 12px/1.6 var(--mono); padding: 8px 0 40px; }
@@ -42,7 +46,7 @@
 "use strict";
 const params = new URLSearchParams(location.search);
 const session = params.get("session");
-const file = params.get("file") || "trace.jsonl";
+let file = params.get("file") || "trace.jsonl";
 const view = document.getElementById("view");
 let lines = [];
 
@@ -77,16 +81,26 @@ function render() {
   if (target) document.getElementById(`L${target}`)?.scrollIntoView({ block: "center" });
 }
 
-async function load() {
-  document.title = `${file} · ${session}`;
-  document.getElementById("nav-stats").href = withToken("/stats") + "#" + session;
+function showTabs() {
   const tabs = document.getElementById("tabs");
-  for (const f of FILES) {
+  tabs.replaceChildren(...FILES.map((f) => {
     const a = link(rawUrl(session, f), f);
     if (f === file) a.className = "active";
-    tabs.append(a);
-  }
-  document.getElementById("reveal").append(revealButton(session, file));
+    a.onclick = (ev) => {
+      ev.preventDefault();
+      if (f === file) return;
+      file = f;
+      history.replaceState(null, "", rawUrl(session, f));
+      load().catch((e) => view.replaceChildren(el("div", "banner", "加载失败：" + e.message)));
+    };
+    return a;
+  }));
+}
+
+async function load() {
+  document.title = `${file} · ${session}`;
+  showTabs();
+  document.getElementById("reveal").replaceChildren(revealButton(session, file, `在${FILE_MANAGER}中显示`));
   document.getElementById("pretty").checked = file.endsWith(".jsonl") && targetLine() !== null;
 
   const res = await fetch(withToken(`/api/sessions/${session}/file`, { name: file }));
@@ -102,6 +116,7 @@ async function load() {
 }
 
 if (requireToken(view)) {
+  document.getElementById("nav-stats").href = withToken("/stats") + "#" + session;
   document.getElementById("pretty").onchange = render;
   document.getElementById("wrap").onchange = render;
   window.addEventListener("hashchange", render);

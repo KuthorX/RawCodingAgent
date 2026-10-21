@@ -5,207 +5,248 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>raw-coding-agent</title>
 <link rel="stylesheet" href="/common.css">
+<script src="/theme.js"></script>
 <style>
   body { height: 100vh; display: flex; flex-direction: column; }
   /* Tabs: each view stays in the page once shown, switching only hides the others. */
-  .topbar { padding-block: 0; }
-  .topbar h1 { padding: 10px 0; }
-  .tabs { display: flex; gap: 4px; margin-left: 12px; align-self: stretch; }
-  .tabs a { display: flex; align-items: center; padding: 0 10px; color: var(--muted); box-shadow: inset 0 -2px 0 transparent; }
-  .tabs a:hover { color: var(--ink); text-decoration: none; }
-  .tabs a.on { color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+  .topbar { padding: 0; gap: 0; }
+  .tabs { display: flex; gap: 0; align-self: stretch; }
+  .tabs a { display: flex; align-items: center; gap: 6px; padding: 5px 16px; color: var(--muted); border-right: 1px solid var(--line); }
+  .tabs a kbd { background: none; padding: 0; color: var(--accent-ink); }
+  .tabs a:hover { color: var(--ink); text-decoration: none; background: var(--soft); }
+  .tabs a.on { color: var(--on-accent); background: var(--accent); }
+  .tabs a.on kbd { color: var(--on-accent); }
+  .topbar h1 { margin-left: auto; padding: 0 16px; font-weight: 400; color: var(--muted); font-size: 12px; }
   .view { flex: 1; min-height: 0; }
   .view[hidden] { display: none !important; }
   .view.frame iframe { border: 0; width: 100%; height: 100%; display: block; background: var(--bg); }
   .view.settings { overflow-y: auto; }
-  .settings-wrap { max-width: 640px; margin: 0 auto; padding: 28px 18px; }
-  .settings-wrap h2 { font-size: 16px; margin: 0 0 14px; }
-  .setting { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
-  .setting label { display: flex; gap: 8px; align-items: center; font-weight: 600; cursor: pointer; }
-  .setting p { margin: 6px 0 0 24px; font-size: 12px; color: var(--muted); }
+  .settings-wrap { max-width: 680px; margin: 0 auto; padding: 24px 22px; }
+  .settings-wrap h2 { font-size: 13px; font-weight: 400; color: var(--muted); margin: 0 0 12px; }
+  .setting { border: 1px solid var(--line); padding: 12px 14px; }
+  .setting + .setting { border-top: 0; }
+  .setting .row { display: flex; align-items: center; gap: 10px; }
+  .setting .row b { flex: 1; font-weight: 400; }
+  .seg { display: inline-flex; border: 1px solid var(--line); }
+  .seg button { border: 0; padding: 0 10px; color: var(--muted); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--sel); color: var(--ink); }
+  .setting label { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+  .setting p { margin: 4px 0 0 36px; font-size: 12px; color: var(--muted); }
+  /* Bottom status line: the open session's state, then the keys that work right now. */
+  .status { display: flex; flex: none; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .status > span { padding: 1px 12px; border-right: 1px solid var(--line); }
+  .status .state { color: var(--bg); background: var(--muted); }
+  .status .state.busy { background: var(--accent); color: var(--on-accent); }
+  .status .state.idle { background: var(--ok); }
+  .status .keys { margin-left: auto; border-left: 1px solid var(--line); border-right: 0; }
+  .status .keys kbd { background: none; padding: 0; margin-left: 10px; }
+  .status .keys kbd:first-child { margin-left: 0; }
+
   .layout { display: flex; }
-  .search { padding: 8px 12px; border-bottom: 1px solid var(--line); }
-  .search input { width: 100%; font: inherit; font-size: 13px; padding: 0 8px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
-  .search input:focus { outline: none; border-color: var(--accent); }
-  .search-note { padding: 10px 12px; font-size: 12px; color: var(--muted); }
-  .item.hit { padding-left: 12px; }
-  .item .snip { color: var(--muted); font-size: 12px; margin-top: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
-  .item .snip .role { color: var(--ink); }
-  mark { background: var(--hl); color: inherit; border-radius: 2px; }
-  aside { width: 280px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
-  .new { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
-  .new input[type=text] { flex: 1; min-width: 0; font: 12px var(--mono); padding: 0 8px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  aside { width: 300px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  .new { padding: 10px 12px 0; display: flex; flex-direction: column; gap: 8px; }
+  .new input[type=text] { flex: 1; min-width: 0; font-size: 12px; padding: 0 8px; height: 26px; border: 1px solid var(--line); background: var(--bg); }
   .new input[type=text]:focus { outline: none; border-color: var(--accent); }
   .open-row { display: flex; gap: 6px; }
   .open-row[hidden] { display: none; }
-  .open-row button { height: 30px; flex: none; }
-  #sessions { flex: 1; overflow-y: auto; }
-  .new > button { text-align: left; border-style: dashed; color: var(--muted); height: 30px; }
+  .open-row button { height: 26px; flex: none; }
+  .new > button { text-align: left; border-style: dashed; color: var(--muted); height: 26px; }
   .new > button:hover { color: var(--ink); }
+  .search { padding: 10px 12px; }
+  .search label { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px; border: 1px solid var(--line); background: var(--bg); color: var(--accent-ink); cursor: text; }
+  .search label:focus-within { border-color: var(--accent); }
+  .search input { flex: 1; min-width: 0; border: 0; background: none; padding: 0; outline: none; font-size: 12px; }
+  .search input::placeholder { color: var(--muted); }
+  .search input::-webkit-search-cancel-button { filter: grayscale(1) brightness(1.6); }
+  .search-note { padding: 4px 12px 8px; font-size: 12px; color: var(--muted); }
+  #sessions { flex: 1; overflow-y: auto; padding-bottom: 12px; }
   .ctx-warn { color: var(--warn); }
-  .ws-head { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: 34px; background: var(--soft); border-block: 1px solid var(--line); margin-top: -1px;
-             font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
-  .ws-head .caret { width: 12px; color: var(--muted); font-weight: 400; font-size: 12px; }
+  /* The tree: project ▾ workspace ▾ session, by indentation only. */
+  .ws-head { display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 24px; cursor: pointer; user-select: none; color: var(--link); }
+  .ws-head:hover { background: var(--soft); }
+  .ws-head .caret { width: 10px; color: var(--muted); flex: none; }
   .ws-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ws-head .count { color: var(--muted); font-weight: 400; font-size: 12px; font-variant-numeric: tabular-nums; }
-  .ws-head button { font-size: 12px; padding: 0 8px; font-weight: 400; height: 22px; }
-  .ws-head button.x { border: 0; background: none; color: var(--muted); padding: 0 4px; visibility: hidden; }
+  .ws-head .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ws-head button { font-size: 12px; padding: 0 6px; height: 18px; line-height: 16px; color: var(--muted); }
+  .ws-head button:hover:not(:disabled) { color: var(--ink); }
+  .ws-head button.x { border: 0; padding: 0 4px; visibility: hidden; }
   .ws-head:hover button.x { visibility: visible; }
-  .ws-head.current .name { color: var(--accent); }
-  /* Level 2: a workspace (the project directory, or one of its worktrees) inside a project. */
-  .ws-head.sub { position: static; background: none; border: 0; margin: 0; height: 30px; padding-left: 22px; font-weight: 500; }
-  .ws-head.sub:hover { background: var(--soft); }
-  .ws-head .branch { font: 12px var(--mono); color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
-  .ws-head .dirty { color: var(--warn); font-weight: 400; font-size: 12px; flex: none; }
-  .ws-head .gone { color: var(--err); font-weight: 400; font-size: 12px; flex: none; }
+  .ws-head.current > .name { text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+  .ws-head.sub { padding-left: 26px; color: var(--ink); }
+  .ws-head .branch { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; font-size: 12px; }
+  .ws-head .dirty { color: var(--warn); font-size: 12px; flex: none; }
+  .ws-head .gone { color: var(--err); font-size: 12px; flex: none; }
   .ws-head.sub button { visibility: hidden; }
   .ws-head.sub:hover button, .ws-head.sub.current button { visibility: visible; }
-  .ws-empty { padding: 4px 12px 8px 40px; font-size: 12px; color: var(--muted); }
-  .item { display: block; padding: 8px 12px 8px 26px; color: var(--ink); cursor: pointer; }
-  .in-ws .item { padding-left: 40px; }
-  dialog { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); padding: 18px 20px; width: 420px; box-shadow: 0 8px 32px rgb(0 0 0 / .18); }
-  dialog::backdrop { background: rgb(0 0 0 / .25); }
+  .ws-head .spend { font-size: 12px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  .ws-head .spend.near { color: var(--warn); }
+  .ws-head .spend.over { color: var(--err); }
+  .ws-empty { padding: 0 12px 4px 54px; font-size: 12px; color: var(--muted); }
+  .item { display: block; padding: 3px 12px 3px 26px; color: var(--ink); cursor: pointer; }
+  .in-ws .item { padding-left: 54px; }
+  .item:hover { background: var(--soft); text-decoration: none; }
+  .item.active { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
+  .item .title { display: flex; gap: 6px; align-items: center; }
+  .item .title .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .item:not(.active):not(.hit) .sub { display: none; }
+  .item.hit { padding: 6px 12px; border-top: 1px solid var(--line); }
+  .item .snip { color: var(--muted); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
+  .item .snip .role { color: var(--ink); }
+  mark { background: var(--hl); color: var(--bright); }
+  .badge { font-size: 12px; color: var(--muted); flex: none; }
+
+  dialog { border: 1px solid var(--accent); border-radius: 0; background: var(--panel); color: var(--ink); padding: 0; width: 440px; }
+  dialog::backdrop { background: rgb(0 0 0 / .55); }
   dialog [hidden] { display: none !important; }
-  dialog h3 { margin: 0 0 4px; font-size: 16px; }
-  dialog p { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
-  dialog form { display: flex; flex-direction: column; gap: 10px; max-width: none; align-items: stretch; }
+  dialog h3 { margin: 0 -18px 4px; padding: 1px 18px; font-size: 13px; font-weight: 400; background: var(--accent); color: var(--on-accent); }
+  dialog p { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+  dialog form { display: flex; flex-direction: column; gap: 10px; max-width: none; align-items: stretch; padding: 0 18px 14px; }
   dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-  dialog label.radio { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
-  dialog input[type=text], dialog select { font: 13px var(--mono); padding: 0 8px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
-  dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
-  dialog .row button { height: 32px; }
+  dialog label.radio { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); }
+  dialog input[type=text], dialog select { font-size: 12px; padding: 0 8px; height: 26px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); }
+  dialog input[type=text]:focus, dialog select:focus { outline: none; border-color: var(--accent); }
+  dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  dialog .row button { height: 26px; }
   dialog .hint { font-size: 12px; color: var(--muted); }
   dialog .err-text { font-size: 12px; }
   dialog .pair { display: flex; gap: 6px; }
   dialog .pair select { flex: 1; }
   dialog .pair input { width: 110px; }
   dialog .pair input[hidden] { display: none; }
-  .ws-head .spend { font-weight: 400; font-size: 12px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
-  .ws-head .spend.near { color: var(--warn); }
-  .ws-head .spend.over { color: var(--err); }
-  .item:hover { background: var(--soft); text-decoration: none; }
-  .item.active { background: var(--soft); box-shadow: inset 3px 0 0 var(--accent); }
-  .item .title { display: flex; gap: 6px; align-items: center; font-size: 13px; }
-  .item .title .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-  .badge { font-size: 12px; color: var(--muted); flex: none; }
+  dialog code { color: var(--link); }
+
   .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .chat-head { padding: 0 18px; height: 44px; flex: none; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; font-size: 13px; }
+  .chat-head { padding: 0 22px; height: 34px; flex: none; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
   .chat-head .dot.none { visibility: hidden; }
-  .chat-head .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
-  #head-links { display: flex; gap: 6px; font-size: 13px; white-space: nowrap; color: var(--muted); }
+  .chat-head .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+  #head-links { display: flex; gap: 12px; align-items: center; font-size: 12px; white-space: nowrap; color: var(--muted); }
   #head-links a { color: var(--muted); }
   #head-links a:hover { color: var(--ink); }
-  .mode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap;
-          border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
-  .mode.auto { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+  #head-links button { padding: 0; }
+  .mode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .mode.auto { color: var(--accent-ink); }
   .mode[hidden] { display: none; }
   .note { color: var(--muted); font-size: 12px; }
-  main { flex: 1; overflow-y: auto; padding: 24px 0; }
-  #log { max-width: 760px; margin: 0 auto; padding: 0 18px; display: flex; flex-direction: column; gap: 12px; }
+  main { flex: 1; overflow-y: auto; padding: 18px 0; }
+  #log { max-width: 960px; margin: 0 auto; padding: 0 22px; display: flex; flex-direction: column; gap: 12px; }
   .msg { white-space: pre-wrap; word-break: break-word; }
-  .user { align-self: flex-end; max-width: 80%; background: var(--soft); border: 1px solid transparent; padding: 8px 12px; border-radius: 10px; }
-  .user .tag { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; text-align: right; }
-  .user.queued { border-style: dashed; border-color: var(--muted); }
+  /* Your message is the prompt line; the agent answers indented under a rail. */
+  .user { font-weight: 700; color: var(--bright); padding-left: 2ch; text-indent: -2ch; }
+  .user::before { content: "> "; color: var(--muted); font-weight: 400; }
+  .user .tag { display: block; text-indent: 0; font-size: 12px; font-weight: 400; color: var(--muted); }
+  .user.queued { color: var(--muted); }
+  .user.queued::before { content: "… "; }
   .user.dropped { color: var(--muted); text-decoration: line-through; }
+  .assistant { padding-left: 2ch; border-left: 1px solid var(--line); }
   button.stop { border-color: var(--err); color: var(--err); }
   button.stop[hidden] { display: none; }
   .md { white-space: normal; line-height: 1.7; }
   .md > :first-child { margin-top: 0; }
   .md > :last-child { margin-bottom: 0; }
   .md p, .md ul, .md ol, .md blockquote, .md pre, .md .table-wrap { margin: 0 0 10px; }
-  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 18px 0 8px; line-height: 1.35; font-weight: 600; }
-  .md h1 { font-size: 1.4em; } .md h2 { font-size: 1.25em; } .md h3 { font-size: 1.1em; } .md h4, .md h5, .md h6 { font-size: 1em; }
-  .md ul, .md ol { padding-left: 1.6em; }
-  .md li { margin: 2px 0; }
-  .md li > ul, .md li > ol, .md li > p { margin: 4px 0; }
-  .md blockquote { padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
-  .md hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
-  .md code { font: 0.85em var(--mono); background: var(--soft); border-radius: 4px; padding: 0 4px; }
-  .md pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; font: 12px/1.5 var(--mono); white-space: pre; }
-  .md pre code { font: inherit; background: none; padding: 0; }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 16px 0 6px; line-height: 1.4; font-size: 1em; font-weight: 700; color: var(--bright); }
+  .md h1::before { content: "# "; } .md h2::before { content: "## "; } .md h3::before { content: "### "; }
+  .md h1::before, .md h2::before, .md h3::before { color: var(--muted); font-weight: 400; }
+  .md ul, .md ol { padding-left: 2.4ch; }
+  .md li { margin: 1px 0; }
+  .md li::marker { color: var(--muted); }
+  .md li > ul, .md li > ol, .md li > p { margin: 2px 0; }
+  .md blockquote { padding: 0 0 0 1.5ch; border-left: 1px solid var(--muted); color: var(--muted); }
+  .md hr { border: none; border-top: 1px dashed var(--line); margin: 12px 0; }
+  .md code { color: var(--link); }
+  .md strong { color: var(--bright); }
+  .md pre { background: var(--panel); border-left: 1px solid var(--line); padding: 8px 12px; overflow-x: auto; font-size: 12px; line-height: 1.5; white-space: pre; }
+  .md pre code { color: var(--ink); }
   .md .table-wrap { overflow-x: auto; }
-  .md table { border-collapse: collapse; font-size: 13px; }
-  .md th, .md td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; vertical-align: top; }
-  .md th { background: var(--soft); font-weight: 600; }
-  /* Consecutive tool calls form one timeline: a thin rail, one line per call, details on click. */
-  .tools > .list { display: flex; flex-direction: column; border-left: 1px solid var(--line); margin-left: 4px; padding-left: 6px; }
-  .tools > summary { cursor: pointer; list-style: none; font-size: 12px; color: var(--muted); padding: 2px 8px; border-radius: 6px; width: fit-content; }
+  .md table { border-collapse: collapse; width: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 2px 10px; text-align: left; vertical-align: top; }
+  .md th { color: var(--ink); font-weight: 700; }
+  /* Tool calls: one line each, ✓ / ✗ / ⋯ / ? in front, details on click. */
+  .tools > .list { display: flex; flex-direction: column; }
+  .tools > summary { cursor: pointer; list-style: none; font-size: 12px; color: var(--muted); padding: 0 6px; width: fit-content; }
   .tools > summary::-webkit-details-marker { display: none; }
   .tools > summary::before { content: "▸ "; }
-  .tools[open] > summary { margin-bottom: 2px; }
   .tools[open] > summary::before { content: "▾ "; }
-  .tools > summary:hover { background: var(--soft); color: var(--ink); }
+  .tools > summary:hover { color: var(--ink); }
   .tools > summary .fails { color: var(--err); }
-  .tool summary { cursor: pointer; padding: 2px 8px; border-radius: 6px; font: 12px/1.7 var(--mono); color: var(--muted); list-style: none; display: flex; gap: 8px; }
+  .tool summary { cursor: pointer; padding: 0 6px; font-size: 12px; line-height: 1.75; color: var(--muted); list-style: none; display: flex; gap: 1ch; }
   .tool summary::-webkit-details-marker { display: none; }
-  .tool summary::before { content: "▸"; width: 10px; flex: none; }
-  .tool[open] summary::before { content: "▾"; }
+  .tool summary::before { content: "·"; width: 1ch; flex: none; }
+  .tool.ok summary::before { content: "✓"; color: var(--ok); }
+  .tool.error summary::before { content: "✗"; color: var(--err); }
+  .tool.running summary::before { content: "⋯"; color: var(--accent-ink); }
+  .tool.waiting summary::before { content: "?"; color: var(--accent-ink); }
   .tool summary:hover { background: var(--soft); color: var(--ink); }
+  .tool[open] summary { color: var(--ink); }
   .tool summary .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tool summary .state { flex: none; }
   .tool.running summary, .tool.waiting summary { color: var(--ink); }
-  .tool.running summary .state, .tool.waiting summary .state { color: var(--warn); }
-  .tool.error summary, .tool.error summary .state { color: var(--err); }
-  .tool .body { margin: 2px 0 8px 18px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; }
-  .tool pre { margin: 0; padding: 8px 10px; max-height: 360px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
-  .tool pre + pre { border-top: 1px solid var(--line); }
+  .tool.running summary .state, .tool.waiting summary .state { color: var(--muted); }
+  .tool.error summary .state { color: var(--err); }
+  .tool .body { margin: 2px 0 8px 3ch; border-left: 1px solid var(--line); overflow: hidden; }
+  .tool pre { margin: 0; padding: 6px 12px; max-height: 360px; overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+  .tool pre + pre { border-top: 1px dashed var(--line); }
   .tool .input { color: var(--muted); }
-  /* A call waiting for approval is the one thing on the page that needs you: give it room. */
+  /* A call waiting for approval is the one thing on the page that needs you. */
   .tool.waiting { margin: 6px 0; }
-  .tool.waiting .body { border-color: var(--warn); }
-  .tool.waiting .input { color: var(--ink); font-size: 13px; padding: 12px; }
-  .approval { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--warn-bg); color: var(--warn); font-size: 13px; }
+  .tool.waiting .body { margin-left: 0; border-left: 2px solid var(--accent); background: var(--panel); }
+  .tool.waiting .input { color: var(--ink); font-size: 13px; padding: 10px 12px; }
+  .tool.waiting .input::before { content: "$ "; color: var(--accent-ink); }
+  .approval { display: flex; align-items: center; gap: 14px; padding: 4px 12px 8px; color: var(--muted); font-size: 12px; }
   .approval span { flex: 1; }
+  .approval button { border: 0; padding: 0; background: none; color: var(--muted); }
+  .approval button:hover:not(:disabled) { background: none; color: var(--ink); }
+  .approval button kbd { color: var(--bg); background: var(--muted); margin-right: 5px; }
+  .approval button:hover:not(:disabled) kbd { background: var(--ink); }
   .tool.danger .body { border-color: var(--err); }
-  .tool.danger .approval { color: var(--err); }
-  .tool.danger button.primary { background: var(--err); border-color: var(--err); }
-  button.link { border: 0; background: none; color: var(--muted); padding: 4px 6px; }
-  button.link:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
+  .tool.danger .approval span { color: var(--err); }
+  button.link { border: 0; background: none; color: var(--muted); padding: 2px 6px; }
+  button.link:hover:not(:disabled) { color: var(--ink); text-decoration: underline; background: none; }
   .end { color: var(--muted); font-size: 12px; padding: 0 0 8px; }
+  .end::before { content: "── "; }
   .end.bad { color: var(--err); }
-  .err { color: var(--err); white-space: pre-wrap; font: 12px/1.5 var(--mono); border-left: 2px solid var(--err); padding: 2px 0 2px 10px; }
+  .err { color: var(--err); white-space: pre-wrap; font-size: 12px; border-left: 1px solid var(--err); padding: 2px 0 2px 12px; }
   .empty { color: var(--muted); text-align: center; margin-top: 18vh; }
-  .start { margin: 18vh auto 0; width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 8px; }
-  .start h2 { font-size: 20px; font-weight: 600; margin: 0; }
-  .start p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
-  .start button { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 12px 16px; }
-  .start button .name { font-size: 16px; font-weight: 600; }
-  .start button .path { color: var(--muted); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .start { margin: 14vh auto 0; width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 6px; }
+  .start h2 { font-size: 13px; font-weight: 700; margin: 0; }
+  .start h2::before { content: "> "; color: var(--muted); font-weight: 400; }
+  .start p { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+  .start button { display: flex; flex-direction: column; gap: 0; text-align: left; padding: 6px 12px; font-size: 13px; }
+  .start button:hover:not(:disabled) { border-color: var(--accent); }
+  .start button .path { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
   .start .keys { margin-top: 16px; font-size: 12px; color: var(--muted); }
-  kbd { font: 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel); }
   .no-session .chat-head, .no-session footer { display: none; }
-  .menu { position: fixed; z-index: 10; min-width: 180px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-          box-shadow: 0 4px 16px rgb(0 0 0 / .12); display: flex; flex-direction: column; }
-  .menu button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 4px; font-size: 13px; }
-  .menu button:hover:not(:disabled) { background: var(--soft); }
-  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
-  .toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 11; padding: 6px 14px; border-radius: 6px;
-           background: var(--ink); color: var(--panel); font-size: 13px; pointer-events: none; }
-  #head-links button { font-size: 12px; padding: 1px 8px; }
-  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 18px; }
-  form { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
-  form button { height: 40px; border-radius: 6px; padding: 0 16px; }
-  textarea { flex: 1; resize: none; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-height: 40px; max-height: 200px; }
-  textarea:focus { outline: none; border-color: var(--accent); }
-  textarea:disabled { opacity: .6; }
+  .menu { position: fixed; z-index: 10; min-width: 190px; padding: 3px 0; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 6px 24px rgb(0 0 0 / .5); display: flex; flex-direction: column; }
+  .menu button { border: 0; text-align: left; padding: 2px 14px; font-size: 12px; }
+  .menu button:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 3px 0; }
+  .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 11; padding: 2px 12px; background: var(--ink); color: var(--bg); font-size: 12px; pointer-events: none; }
+  footer { border-top: 1px solid var(--line); padding: 10px 22px; }
+  form { max-width: 960px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-start; }
+  form::before { content: ">"; color: var(--muted); padding-top: 5px; }
+  form.busy::before { color: var(--accent-ink); }
+  form button { height: 30px; padding: 0 14px; }
+  textarea { flex: 1; resize: none; font: inherit; background: transparent; border: 0; padding: 5px 0; min-height: 30px; max-height: 200px; caret-color: var(--accent-ink); }
+  textarea::placeholder { color: var(--muted); }
+  textarea:focus { outline: none; }
+  textarea:disabled { opacity: .5; }
   /* Pasted images waiting to be sent, and the ones shown in a sent message. */
-  .attachments { max-width: 860px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .attachments { max-width: 960px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 8px; padding-left: 2ch; }
   .attachments[hidden] { display: none; }
-  .attachment { position: relative; width: 64px; height: 64px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg); }
+  .attachment { position: relative; width: 64px; height: 64px; border: 1px solid var(--line); overflow: hidden; background: var(--bg); }
   .attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .attachment button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 0;
-                       background: rgb(0 0 0 / .6); color: #fff; font-size: 12px; line-height: 18px; }
-  footer.dragging textarea { border-color: var(--accent); border-style: dashed; }
-  .user .imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-  .user .imgs:not(:last-child) { margin-bottom: 6px; }
-  .user .imgs img { max-width: 200px; max-height: 160px; border-radius: 6px; border: 1px solid var(--line); display: block; cursor: zoom-in; }
+  .attachment button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border: 0; background: rgb(0 0 0 / .7); color: #fff; font-size: 12px; line-height: 18px; }
+  footer.dragging { outline: 1px dashed var(--accent); outline-offset: -4px; }
+  .user .imgs { display: flex; flex-wrap: wrap; gap: 6px; text-indent: 0; margin: 4px 0; }
+  .user .imgs img { max-width: 200px; max-height: 160px; border: 1px solid var(--line); display: block; cursor: zoom-in; }
 </style>
 </head>
 <body>
 <div class="topbar">
+  <nav class="tabs" id="tabs"><a data-tab="chat" href="#"><kbd>1</kbd>会话</a><a data-tab="stats" href="#stats"><kbd>2</kbd>统计</a><a data-tab="iterations" href="#iterations"><kbd>3</kbd>迭代记录</a><a data-tab="settings" href="#settings"><kbd>4</kbd>设置</a></nav>
   <h1>raw-coding-agent</h1>
-  <nav class="tabs" id="tabs"><a data-tab="chat" href="#">会话</a><a data-tab="stats" href="#stats">统计</a><a data-tab="iterations" href="#iterations">迭代记录</a><a data-tab="settings" href="#settings">设置</a></nav>
 </div>
 <div class="view frame" id="view-stats" hidden></div>
 <div class="view frame" id="view-iterations" hidden></div>
@@ -213,8 +254,12 @@
   <div class="settings-wrap">
     <h2>设置</h2>
     <div class="setting">
-      <label><input type="checkbox" id="set-auto"> 新会话自动批准 bash</label>
+      <label><input type="checkbox" class="switch" id="set-auto"> 新会话自动批准 bash</label>
       <p>开启后，新建的会话里 agent 的 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
+    </div>
+    <div class="setting">
+      <div class="row"><b>外观</b><span class="seg" id="set-theme"><button type="button" data-theme="">跟随系统</button><button type="button" data-theme="light">浅色</button><button type="button" data-theme="dark">深色</button></span></div>
+      <p style="margin-left:0">只影响这个浏览器。</p>
     </div>
   </div>
 </div>
@@ -227,7 +272,7 @@
         <button id="ws-open" type="button" title="弹出系统的文件夹选择框">选择…</button>
       </div>
     </div>
-    <div class="search"><input type="search" id="search" placeholder="搜索会话：标题、消息、回复" autocomplete="off"></div>
+    <div class="search"><label>/<input type="search" id="search" placeholder="搜索标题、消息、回复" autocomplete="off"></label></div>
     <div id="sessions"></div>
   </aside>
   <section class="chat">
@@ -236,7 +281,7 @@
       <span class="title" id="head-title"></span>
       <span class="meta grow" id="meta"></span>
       <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
-        <input type="checkbox" id="mode-auto"> <span id="mode-text">每次询问</span>
+        <input type="checkbox" class="switch" id="mode-auto"> <span id="mode-text">每次询问</span>
       </label>
       <span id="head-links"></span>
     </div>
@@ -251,6 +296,7 @@
     </footer>
   </section>
 </div>
+<div class="status" id="status"><span class="state" id="st-state">IDLE</span><span id="st-ctx" hidden></span><span id="st-cost" hidden></span><span class="keys" id="st-keys"></span></div>
 <dialog id="ws-dialog">
   <form method="dialog" id="ws-dialog-form">
     <h3 id="ws-dialog-title">新建工作区</h3>
@@ -337,6 +383,8 @@ function setBusy(value) {
   sendBtn.disabled = input.disabled = !current;
   $("root").classList.toggle("no-session", !current);
   sendBtn.textContent = value ? "插话" : "发送";
+  $("form").classList.toggle("busy", value);
+  renderStatus();
   $("stop").hidden = !value;
   if ($("fork")) $("fork").disabled = value; // the running turn isn't saved yet
   $("stop").disabled = false;
@@ -587,6 +635,7 @@ async function refreshSessions() {
   try { [sessionList, projects] = await Promise.all([api("/api/sessions"), api("/api/projects")]); } catch (e) { return; }
   currentWorkspace = sessionList.find((s) => s.id === current)?.workspace ?? currentWorkspace;
   renderSidebar();
+  renderStatus();
 }
 
 function renderSidebar() {
@@ -1075,8 +1124,13 @@ const handlers = {
     card.open = true;
     card._state.textContent = "等待批准";
     const bar = el("div", "approval");
-    const allow = el("button", "primary", "允许"), deny = el("button", "", "拒绝");
-    const always = el("button", "link", "本会话不再询问");
+    const keyButton = (key, label, className) => {
+      const btn = el("button", className);
+      btn.append(el("kbd", "", key), label);
+      return btn;
+    };
+    const allow = keyButton("y", "允许", "allow"), deny = keyButton("n", "拒绝", "deny");
+    const always = keyButton("a", "本会话不再询问", "always");
     always.title = "允许这次调用，并把本会话切换为自动批准";
     allow.type = deny.type = always.type = "button";
     const session = current;
@@ -1089,10 +1143,11 @@ const handlers = {
     deny.onclick = () => answer(false);
     // Switching the session to auto also approves this pending call (server side).
     always.onclick = () => { disable(); setApprovalMode("auto"); };
-    bar.append(el("span", "", danger ? "可能删除或覆盖文件，确认后再允许" : "这个调用需要你的批准"), always, deny, allow);
+    bar.append(el("span", "", danger ? "可能删除或覆盖文件，确认后再允许" : "这个调用需要你的批准"), allow, deny, always);
     card._body.append(bar);
     card._approval = bar;
     card._approvalId = e.id;
+    renderStatus();
     if (!replaying) card.scrollIntoView({ block: "nearest" });
   },
   approval_resolved(e) {
@@ -1104,6 +1159,7 @@ const handlers = {
       card._state.textContent = e.allow ? "已允许，运行中…" : "已拒绝";
       card.open = false;
     }
+    renderStatus();
   },
   forked(e) {
     const note = el("div", "note", `↳ 从「${e.fromTitle || e.from}」fork 而来（包含它的前 ${e.turns} 轮），之后的对话只属于这个会话 · `);
@@ -1207,10 +1263,11 @@ function openSession(id) {
     queuedBubbles = [];
     logBox.replaceChildren(el("div", "empty", "给 agent 一个任务开始吧。"));
     $("head-title").textContent = info.title || "（未命名）";
-    $("meta").textContent = `${info.model} · ${info.workspace}`;
+    $("meta").textContent = info.model;
+    $("head-title").title = info.workspace;
     currentWorkspace = info.workspace;
     const links = $("head-links");
-    const fork = el("button", "", "Fork");
+    const fork = el("button", "link", "fork");
     fork.type = "button";
     fork.id = "fork";
     fork.title = "复制这个会话的历史，在新会话里继续（原会话不受影响）";
@@ -1219,12 +1276,11 @@ function openSession(id) {
       const r = fork.getBoundingClientRect();
       sessionMenu({ preventDefault() {}, clientX: r.left, clientY: r.bottom + 4 }, { ...info, workspace: currentWorkspace });
     };
-    const limitsBtn = el("button", "", "额度");
+    const limitsBtn = el("button", "link", "额度");
     limitsBtn.type = "button";
     limitsBtn.title = "本会话的每轮步数、每轮花费和累计花费上限";
     limitsBtn.onclick = () => openLimitsDialog().catch((e) => alert(e.message));
-    links.replaceChildren(fork, limitsBtn, link("#stats/" + current, "本会话统计"), document.createTextNode("·"),
-      link(rawUrl(current, "events.jsonl"), "原始事件", true));
+    links.replaceChildren(fork, limitsBtn, link("#stats/" + current, "统计"), link(rawUrl(current, "events.jsonl"), "事件 ↗", true));
     showMode(info.approvalMode);
     setBusy(info.busy);
     replaying = true;
@@ -1327,6 +1383,62 @@ input.addEventListener("keydown", (ev) => {
 });
 input.addEventListener("input", () => { input.style.height = ""; input.style.height = input.scrollHeight + "px"; });
 
+// ---------- status line, keyboard ----------
+// The approval card still waiting for an answer (the newest one), if any.
+function pendingApproval() {
+  const cards = [...logBox.querySelectorAll(".tool.waiting")].filter((c) => c._approval && !c._approval.querySelector("button:disabled"));
+  return cards.at(-1) ?? null;
+}
+
+function renderStatus() {
+  const s = sessionList.find((x) => x.id === current);
+  const state = $("st-state");
+  state.textContent = !current ? "NO SESSION" : busy ? "RUNNING" : "IDLE";
+  state.className = "state" + (!current ? "" : busy ? " busy" : " idle");
+  $("st-ctx").hidden = $("st-cost").hidden = !s;
+  if (s) {
+    $("st-ctx").textContent = `上下文 ${fmt.k(s.totals.contextTokens)} tok`;
+    $("st-cost").textContent = `${s.turns} 轮 · ${fmt.usd(s.totals.costUsd)}`;
+  }
+  const keys = [["1-4", "标签"], ["/", "搜索"]];
+  if (pendingApproval()) keys.unshift(["y", "允许"], ["n", "拒绝"], ["a", "不再询问"]);
+  if (busy) keys.push(["esc", "停止"]);
+  $("st-keys").replaceChildren(...keys.flatMap(([k, label]) => [el("kbd", "", k), " " + label]));
+}
+
+const TAB_KEYS = { 1: "chat", 2: "stats", 3: "iterations", 4: "settings" };
+// Also called from the stats / iteration frames, which get the key presses while they have focus.
+function switchTab(key) {
+  const a = $("tabs").querySelector(`a[data-tab="${TAB_KEYS[key]}"]`);
+  if (a) a.click();
+}
+
+function typing(ev) {
+  return ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing || document.querySelector("dialog[open]") ||
+    ev.target.closest?.("input, textarea, select, [contenteditable]");
+}
+
+document.addEventListener("keydown", (ev) => {
+  if (typing(ev)) return;
+  if (TAB_KEYS[ev.key]) return switchTab(ev.key);
+  if (ev.key === "/") {
+    ev.preventDefault();
+    if ($("root").hidden) {
+      switchTab("1");
+      setTimeout(() => $("search").focus()); // the chat view shows on the hashchange
+    } else {
+      $("search").focus();
+    }
+    return;
+  }
+  const card = $("root").hidden ? null : pendingApproval();
+  const button = card && { y: ".allow", n: ".deny", a: ".always" }[ev.key.toLowerCase()];
+  if (button) {
+    ev.preventDefault();
+    card._approval.querySelector(button).click();
+  }
+});
+
 // ---------- settings ----------
 let settings = null;
 async function loadSettings() {
@@ -1343,6 +1455,19 @@ $("set-auto").addEventListener("change", async (ev) => {
     alert(e.message);
   }
 });
+
+function showTheme() {
+  const theme = localStorage.getItem("rca.theme") || "";
+  for (const b of $("set-theme").children) b.classList.toggle("on", b.dataset.theme === theme);
+}
+$("set-theme").addEventListener("click", (ev) => {
+  const theme = ev.target.closest("button")?.dataset.theme;
+  if (theme === undefined) return;
+  if (theme) localStorage.setItem("rca.theme", theme); else localStorage.removeItem("rca.theme");
+  applyTheme(theme); // the frames follow through the storage event
+  showTheme();
+});
+showTheme();
 
 // ---------- tabs ----------
 // The address says which tab shows: #stats[/<session>], #iterations[/<commit>], #settings, otherwise #<session> in the chat.
