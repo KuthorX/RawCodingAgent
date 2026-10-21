@@ -29,11 +29,24 @@ export class WorkspaceError extends Error {
   }
 }
 
-function slug(name: string, now = new Date()): string {
-  const s = name.trim().replace(/\s+/g, "-").replace(/[^\w.-]/g, "").replace(/^[.-]+/, "");
-  if (s) return s.slice(0, 60);
+// The name the user typed gives both the directory and the new branch. "fix login" → fix-login on agent/fix-login;
+// a name with slashes is a full branch name: "feat/login" → feat-login on feat/login.
+// Keep in sync with branchPreview() in gui/index.html.
+export function workspaceNames(name: string, now = new Date()): { dir: string; branch: string } {
+  const s = name
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^\w./-]/g, "")
+    .split("/")
+    .map((part) => part.replace(/^[.-]+/, ""))
+    .filter(Boolean)
+    .join("/")
+    .slice(0, 60)
+    .replace(/\/$/, "");
+  if (s) return { dir: s.replace(/\//g, "-"), branch: s.includes("/") ? s : `agent/${s}` };
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(now.getMonth() + 1)}${p(now.getDate())}-${Math.random().toString(16).slice(2, 5)}`;
+  const dir = `${p(now.getMonth() + 1)}${p(now.getDate())}-${Math.random().toString(16).slice(2, 5)}`;
+  return { dir, branch: `agent/${dir}` };
 }
 
 // <repo>.worktrees/<name>, next to the main checkout: outside the repository, so the main checkout's
@@ -82,7 +95,7 @@ export async function describeProject(project: Project, store: ProjectStore): Pr
 
 export interface CreateOptions {
   name?: string;
-  // Check out this existing branch instead of creating agent/<name>. It is never deleted with the worktree.
+  // Check out this existing branch instead of creating a new one (see workspaceNames). It is never deleted with the worktree.
   branch?: string;
   // Start point of the new branch (default: the repository's default branch, see defaultBaseRef).
   base?: string;
@@ -113,7 +126,7 @@ export function copyWorktreeInclude(from: string, to: string): string[] {
 export async function createWorkspace(project: Project, store: ProjectStore, options: CreateOptions, now = new Date()): Promise<Created> {
   const { repo, subdir, worktrees } = await gitContext(project);
   const mainRoot = worktrees.find((w) => w.main)?.path ?? repo;
-  const name = slug(options.name ?? "", now);
+  const { dir: name, branch: newBranch } = workspaceNames(options.name ?? "", now);
   const root = worktreeRoot(mainRoot, name);
   if (existsSync(root)) throw new WorkspaceError(409, `目录 "${root}" 已存在，换个名字`);
 
@@ -126,7 +139,7 @@ export async function createWorkspace(project: Project, store: ProjectStore, opt
     if (holder) throw new WorkspaceError(409, `分支 "${branch}" 已经在 ${holder.path} 里检出了`);
     await run(git(repo, ["worktree", "add", root, branch]));
   } else {
-    branch = `agent/${name}`;
+    branch = newBranch;
     if (!(await isValidBranchName(repo, branch))) throw new WorkspaceError(400, `"${branch}" 不是合法的分支名`);
     if ((await localBranches(repo)).includes(branch)) throw new WorkspaceError(409, `分支 "${branch}" 已存在，换个名字或选"使用已有分支"`);
     base = options.base?.trim() || (await defaultBaseRef(repo));

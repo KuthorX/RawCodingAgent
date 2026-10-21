@@ -6,7 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { parseWorktreeList, samePath } from "../src/workspace/git.ts";
 import { normalizePath, ProjectStore } from "../src/workspace/store.ts";
-import { createWorkspace, describeProject, headOf, removeWorkspace, worktreeRoot } from "../src/workspace/worktrees.ts";
+import { createWorkspace, describeProject, headOf, removeWorkspace, workspaceNames, worktreeRoot } from "../src/workspace/worktrees.ts";
 import { tempWorkspace } from "./helpers.ts";
 
 const sh = (cwd: string, ...args: string[]) =>
@@ -93,6 +93,19 @@ test("create a workspace: new branch next to the repo, .worktreeinclude copied, 
     ["fix-login", false, "agent/fix-login", true],
   ]);
   await assert.rejects(createWorkspace(project, store, { name: "fix login" }), /已存在/);
+});
+
+test("a workspace name with slashes is the full branch name", async () => {
+  assert.deepEqual(workspaceNames("fix login"), { dir: "fix-login", branch: "agent/fix-login" });
+  assert.deepEqual(workspaceNames("feat/login page"), { dir: "feat-login-page", branch: "feat/login-page" });
+  assert.deepEqual(workspaceNames(" /feat//.x/ "), { dir: "feat-x", branch: "feat/x" });
+  assert.match(workspaceNames("").branch, /^agent\/\d{4}-[0-9a-f]+$/);
+  const dir = repo();
+  const store = stores();
+  const { workspace } = await createWorkspace(store.add(dir), store, { name: "feat/login" });
+  assert.equal(workspace.branch, "feat/login");
+  assert.equal(workspace.name, "feat-login");
+  assert.equal(workspace.root, samePath(worktreeRoot(dir, "feat-login")));
 });
 
 test("create a workspace on an existing branch; it survives removal", async () => {

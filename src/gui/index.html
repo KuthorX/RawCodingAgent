@@ -224,7 +224,7 @@
   <form method="dialog" id="ws-dialog-form">
     <h3 id="ws-dialog-title">新建工作区</h3>
     <p id="ws-dialog-desc"></p>
-    <label>名字（目录名，留空自动生成）<input type="text" id="wsd-name" autocomplete="off"></label>
+    <label>名字（留空自动生成；带 / 的如 feat/login 就是分支全名，目录名 feat-login）<input type="text" id="wsd-name" autocomplete="off"></label>
     <label class="radio"><input type="radio" name="wsd-mode" value="new" checked> 新建分支 <code id="wsd-branch-preview">agent/…</code></label>
     <label id="wsd-base-row">从哪里开始<input type="text" id="wsd-base" autocomplete="off"></label>
     <label class="radio" id="wsd-existing-radio"><input type="radio" name="wsd-mode" value="existing"> 使用已有分支（删除工作区时不会删除这条分支）</label>
@@ -656,9 +656,11 @@ $("limits-form").addEventListener("submit", async (ev) => {
 // ---------- new workspace / fork into a new workspace ----------
 let dialogState = null; // { project, forkFrom? }
 
+// Same rule as workspaceNames() on the server: a name with "/" is the full branch name, otherwise agent/<name>.
 function branchPreview() {
-  const name = $("wsd-name").value.trim().replace(/\s+/g, "-").replace(/[^\w.-]/g, "");
-  $("wsd-branch-preview").textContent = `agent/${name || "<自动生成>"}`;
+  const name = $("wsd-name").value.trim().replace(/\s+/g, "-").replace(/[^\w./-]/g, "")
+    .split("/").map((p) => p.replace(/^[.-]+/, "")).filter(Boolean).join("/").slice(0, 60).replace(/\/$/, "");
+  $("wsd-branch-preview").textContent = name.includes("/") ? name : `agent/${name || "<自动生成>"}`;
 }
 
 function syncDialogMode() {
