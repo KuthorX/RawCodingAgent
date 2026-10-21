@@ -37,6 +37,16 @@ input.switch::before { content: ""; position: absolute; top: 2px; left: 2px; wid
 input.switch:checked { background: var(--accent); border-color: var(--accent); }
 input.switch:checked::before { transform: translateX(12px); background: var(--on-accent); }
 :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* ask() / notice() in common.js */
+dialog.ui { border: 1px solid var(--line); border-radius: 0; background: var(--panel); color: var(--ink); padding: 0; width: 420px; max-width: calc(100vw - 32px); }
+dialog.ui::backdrop { background: rgb(0 0 0 / .45); }
+dialog.ui h3 { margin: 0; padding: 1px 16px; font-size: 13px; font-weight: 400; background: var(--sel); color: var(--ink); }
+dialog.ui.danger { border-color: var(--err); }
+dialog.ui.danger h3 { background: var(--err); color: var(--bg); }
+dialog.ui p { margin: 0; padding: 14px 16px; font-size: 13px; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+dialog.ui .row { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 0 16px 14px; }
+dialog.ui .row button { height: 26px; min-width: 64px; }
+dialog.ui button.danger { background: var(--err); border-color: var(--err); color: var(--bg); }
 kbd { font: inherit; font-size: 12px; color: var(--ink); background: var(--sel); padding: 0 5px; border-radius: 2px; }
 .topbar { display: flex; align-items: center; gap: 12px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .topbar h1 { font-size: 13px; margin: 0; font-weight: 600; white-space: nowrap; }

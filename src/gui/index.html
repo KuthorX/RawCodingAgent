@@ -416,10 +416,11 @@ function settleQueued(count, label, className) {
 async function stopTurn() {
   if (!busy || !current) return;
   $("stop").disabled = true;
-  try { await api(`/api/sessions/${current}/stop`, {}); } catch (e) { alert(e.message); }
+  try { await api(`/api/sessions/${current}/stop`, {}); } catch (e) { notice(e); }
 }
 $("stop").onclick = stopTurn;
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") stopTurn(); });
+// Esc in an open dialog only closes the dialog.
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !document.querySelector("dialog[open]")) stopTurn(); });
 
 // ---------- session list ----------
 const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '["__other__"]'));
@@ -517,25 +518,25 @@ function sessionMenu(ev, s) {
     ["复制 session id", () => copyText(s.id, " session id")],
     ["复制工作区路径", () => copyText(s.workspace, "工作区路径")],
     null,
-    ["Fork（同一工作区）", () => forkSession(s.id).catch((e) => alert(e.message))],
+    ["Fork（同一工作区）", () => forkSession(s.id).catch(notice)],
   ];
   const project = projectOf(s.workspace);
   if (project?.repo) items.push(["Fork 到新工作区…", () => openWorkspaceDialog(project, { forkFrom: s })]);
-  items.push(["设置额度…", () => openLimitsDialog(s.id).catch((e) => alert(e.message))]);
+  items.push(["设置额度…", () => openLimitsDialog(s.id).catch(notice)]);
   items.push(null, s.archived ? ["取消归档", () => archiveSession(s, false)] : ["归档", () => archiveSession(s, true)], ["删除…", () => deleteSession(s)]);
   showMenu(ev, items);
 }
 
 async function archiveSession(s, archived) {
-  try { await api(`/api/sessions/${s.id}/archive`, { archived }); } catch (e) { return alert(e.message); }
+  try { await api(`/api/sessions/${s.id}/archive`, { archived }); } catch (e) { return notice(e); }
   toast(archived ? "已归档，可以在侧栏的「已归档」标签里找到" : "已取消归档");
   refreshSessions();
   if (searchQuery) runSearch();
 }
 
 async function deleteSession(s) {
-  if (!confirm(`删除会话「${s.title || s.id}」？\n它的消息、trace 和图片都会被删除，不能恢复。只想从列表里收起来可以用“归档”。`)) return;
-  try { await api(`/api/sessions/${s.id}/delete`, {}); } catch (e) { return alert(e.message); }
+  if (!(await ask(`删除会话「${s.title || s.id}」？\n它的消息、trace 和图片都会被删除，不能恢复。只想从列表里收起来可以用“归档”。`, { title: "删除会话", ok: "删除", danger: true }))) return;
+  try { await api(`/api/sessions/${s.id}/delete`, {}); } catch (e) { return notice(e); }
   toast("已删除会话");
   if (s.id === current) location.hash = "";
   refreshSessions();
@@ -578,8 +579,8 @@ function projectGroup(p, sessions) {
   ]));
   if (p.repo) head.append(smallButton("+ 工作区", "新建一个 git worktree（独立的分支和目录）", () => openWorkspaceDialog(p)));
   head.append(smallButton("×", "从列表移除项目（不删除文件、工作区和会话）", async () => {
-    if (!confirm(`从列表移除项目 ${p.path}？\n不会删除任何文件、worktree 或会话，它的会话会归到“其他”。`)) return;
-    await api("/api/projects/remove", { path: p.path }).catch((e) => alert(e.message));
+    if (!(await ask(`从列表移除项目 ${p.path}？\n不会删除任何文件、worktree 或会话，它的会话会归到“其他”。`, { title: "移除项目", ok: "移除" }))) return;
+    await api("/api/projects/remove", { path: p.path }).catch(notice);
     refreshSessions();
   }, "x"));
   frag.append(head);
@@ -617,7 +618,7 @@ function workspaceGroup(p, w, sessions) {
 function workspaceMenu(ev, p, w) {
   const items = [["复制路径", () => copyText(w.path, "路径")]];
   if (w.branch) items.push(["复制分支名", () => copyText(w.branch, "分支名")]);
-  if (!w.missing) items.push(["在文件管理器中打开", () => api("/api/projects/reveal", { path: w.path }).catch((e) => alert(e.message))]);
+  if (!w.missing) items.push([`在${FILE_MANAGER}中打开`, () => api("/api/projects/reveal", { path: w.path }).catch(notice)]);
   items.push(["设置工作区额度…", () => openBudgetDialog(p, w)]);
   if (!w.main) items.push(null, ["删除工作区…", () => deleteWorkspace(p, w)]);
   showMenu(ev, items);
@@ -625,14 +626,14 @@ function workspaceMenu(ev, p, w) {
 
 async function deleteWorkspace(p, w) {
   const branchNote = !w.branch ? "" : w.managed ? `\n分支 ${w.branch} 已合并时一起删除，有未合并的提交就保留。` : `\n分支 ${w.branch} 不会被删除。`;
-  if (!confirm(`删除工作区 ${w.name}？\n会删除目录 ${w.root}${branchNote}\n这个工作区的会话记录会保留（归到“其他”）。`)) return;
+  if (!(await ask(`删除工作区 ${w.name}？\n会删除目录 ${w.root}${branchNote}\n这个工作区的会话记录会保留（归到“其他”）。`, { title: "删除工作区", ok: "删除", danger: true }))) return;
   let res;
   try {
     res = await api("/api/projects/workspaces/remove", { project: p.path, root: w.root });
   } catch (e) {
-    if (!e.message.startsWith("409") || !e.message.includes("未提交")) return alert(e.message);
-    if (!confirm(`${e.message.replace(/^409 /, "")}。\n仍然删除？这些改动会丢失。`)) return;
-    try { res = await api("/api/projects/workspaces/remove", { project: p.path, root: w.root, force: true }); } catch (e2) { return alert(e2.message); }
+    if (!e.message.startsWith("409") || !e.message.includes("未提交")) return notice(e);
+    if (!(await ask(`${e.message.replace(/^409 /, "")}。\n仍然删除？这些改动会丢失。`, { title: "有未提交的改动", ok: "仍然删除", danger: true }))) return;
+    try { res = await api("/api/projects/workspaces/remove", { project: p.path, root: w.root, force: true }); } catch (e2) { return notice(e2); }
   }
   toast(res.note ?? (res.branchDeleted ? `已删除工作区和分支 ${res.branch}` : "已删除工作区"));
   refreshSessions();
@@ -973,7 +974,7 @@ async function createSession(workspace) {
     const meta = await api("/api/sessions", { workspace, approvalMode });
     collapsed.delete("w:" + meta.workspace);
     location.hash = meta.id;
-  } catch (e) { alert(e.message); }
+  } catch (e) { notice(e); }
 }
 
 // One button: opens the typed path, or shows the OS folder chooser when the field is empty.
@@ -986,7 +987,7 @@ async function openWorkspace() {
     $("ws-open").textContent = "选择…";
     collapsed.delete("p:" + p.path);
     refreshSessions();
-  } catch (e) { alert(e.message); }
+  } catch (e) { notice(e); }
 }
 $("ws-open").onclick = openWorkspace;
 $("ws-path").addEventListener("input", () => { $("ws-open").textContent = $("ws-path").value.trim() ? "打开" : "选择…"; });
@@ -1002,7 +1003,7 @@ async function pickWorkspace() {
     collapsed.delete("p:" + p.path);
     refreshSessions();
   } catch (e) {
-    alert(e.message);
+    notice(e);
   } finally {
     button.disabled = false;
     button.textContent = "选择…";
@@ -1168,7 +1169,7 @@ const handlers = {
     const disable = () => { allow.disabled = deny.disabled = always.disabled = true; };
     const answer = (value) => {
       disable();
-      api(`/api/sessions/${session}/approve`, { id: e.id, allow: value }).catch((err) => alert(err.message));
+      api(`/api/sessions/${session}/approve`, { id: e.id, allow: value }).catch(notice);
     };
     allow.onclick = () => answer(true);
     deny.onclick = () => answer(false);
@@ -1253,18 +1254,15 @@ async function setApprovalMode(mode) {
     await api(`/api/sessions/${current}/settings`, { approvalMode: mode });
     refreshSessions();
   } catch (e) {
-    alert(e.message);
+    notice(e);
   }
 }
 
-$("mode-auto").addEventListener("change", (ev) => {
+$("mode-auto").addEventListener("change", async (ev) => {
   const auto = ev.target.checked;
-  if (auto && !confirm("开启后，本会话里 agent 的 bash 命令将直接执行，不再询问。确定吗？")) {
-    ev.target.checked = false;
-    return;
-  }
-  // The checkbox snaps back until the server confirms via the approval_mode event.
+  // The switch snaps back until the server confirms via the approval_mode event.
   ev.target.checked = !auto;
+  if (auto && !(await ask("开启后，本会话里 agent 的 bash 命令将直接执行，不再询问。", { title: "自动批准 bash", ok: "开启" }))) return;
   setApprovalMode(auto ? "auto" : "ask");
 });
 
@@ -1310,7 +1308,7 @@ function openSession(id) {
     const limitsBtn = el("button", "link", "额度");
     limitsBtn.type = "button";
     limitsBtn.title = "本会话的每轮步数、每轮花费和累计花费上限";
-    limitsBtn.onclick = () => openLimitsDialog().catch((e) => alert(e.message));
+    limitsBtn.onclick = () => openLimitsDialog().catch(notice);
     links.replaceChildren(fork, limitsBtn, link("#stats/" + current, "统计"), link(rawUrl(current, "events.jsonl"), "事件 ↗", true));
     showMode(info.approvalMode);
     setBusy(info.busy);
@@ -1483,7 +1481,7 @@ $("set-auto").addEventListener("change", async (ev) => {
     toast("已保存");
   } catch (e) {
     ev.target.checked = !ev.target.checked;
-    alert(e.message);
+    notice(e);
   }
 });
 
@@ -1539,7 +1537,7 @@ function route() {
   } else if (FRAME_TABS[tab]) {
     showFrame(tab, sub);
   } else {
-    loadSettings().catch((e) => alert(e.message));
+    loadSettings().catch(notice);
   }
 }
 

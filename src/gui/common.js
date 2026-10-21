@@ -33,6 +33,42 @@ async function api(path, body) {
   return data;
 }
 
+// In-page replacements for alert() / confirm(), in the same look as the rest. Enter confirms, Esc cancels;
+// a dangerous confirmation starts on "取消", so Enter alone never deletes anything.
+function uiDialog(message, { title, ok, cancel, danger }) {
+  return new Promise((resolve) => {
+    const box = el("dialog", "ui" + (danger ? " danger" : ""));
+    const row = el("div", "row");
+    const button = (label, value, className) => {
+      const b = el("button", className, label);
+      b.type = "button";
+      b.onclick = () => box.close(value);
+      row.append(b);
+      return b;
+    };
+    const no = cancel ? button(cancel, "cancel", "") : null;
+    const yes = button(ok, "ok", danger ? "danger" : "primary");
+    box.append(el("h3", "", title), el("p", "", message), row);
+    box.addEventListener("close", () => {
+      box.remove();
+      resolve(box.returnValue === "ok");
+    });
+    document.body.append(box);
+    box.showModal();
+    (danger && no ? no : yes).focus();
+  });
+}
+
+// confirm(): resolves true when confirmed.
+function ask(message, { title = "确认", ok = "确定", danger = false } = {}) {
+  return uiDialog(message, { title, ok, cancel: "取消", danger });
+}
+
+// alert() for a failed request; the HTTP status in front of the message ("409 …") is left out.
+function notice(err, title = "出错了") {
+  return uiDialog(String(err?.message ?? err).replace(/^\d{3} /, ""), { title, ok: "知道了" });
+}
+
 function rawUrl(session, file, line) {
   return withToken("/raw", { session, file, ...(line ? { line: String(line) } : {}) }) + (line ? `#L${line}` : "");
 }
@@ -44,7 +80,7 @@ function revealButton(session, file, label = "定位") {
   const btn = el("button", "small", label);
   btn.type = "button";
   btn.title = `在${FILE_MANAGER}中显示 ${file}`;
-  btn.onclick = () => api(`/api/sessions/${session}/reveal`, { name: file }).catch((e) => alert(e.message));
+  btn.onclick = () => api(`/api/sessions/${session}/reveal`, { name: file }).catch(notice);
   return btn;
 }
 
