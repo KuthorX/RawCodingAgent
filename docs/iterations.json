@@ -193,6 +193,13 @@
       "problem": "长任务经常在 100 步时被打断，而跑飞的一轮其实已经有单轮成本上限和重复调用检查兜底。",
       "change": "AGENT_MAX_STEPS 改成和成本上限一样：0 或不设表示不限（默认），正整数才设上限；单独设过步数的会话不受影响。",
       "commits": ["b18baa2"]
+    },
+    {
+      "module": "workspace",
+      "title": "工作区名字里的 / 保留为分支名",
+      "problem": "新建工作区填 feat/xxx，斜杠被去掉，变成 agent/featxxx 这样不像样的分支。",
+      "change": "名字带 / 时就是分支全名（feat/login），目录名把 / 换成 -（feat-login）；不带 / 的名字仍是 agent/<名字>。对话框里的分支预览同一规则。",
+      "commits": ["fe2d033"]
     }
   ]
 }
