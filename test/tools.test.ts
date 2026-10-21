@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test } from "node:test";
 import { truncateOutput } from "../src/agent/truncate.ts";
@@ -23,6 +23,25 @@ test("paths outside the workspace are rejected", async () => {
   const workspace = tempWorkspace();
   await assert.rejects(readFileTool.run({ path: "../etc/passwd" }, { workspace }), ToolError);
   await assert.rejects(writeFileTool.run({ path: "/tmp/x", content: "" }, { workspace }), ToolError);
+});
+
+test("symbolic links can't lead the file tools out of the workspace", async () => {
+  const workspace = tempWorkspace();
+  const outside = tempWorkspace();
+  writeFileSync(join(outside, "secret.txt"), "token");
+  symlinkSync(outside, join(workspace, "out"));
+  symlinkSync(join(outside, "secret.txt"), join(workspace, "secret-link.txt"));
+  await assert.rejects(readFileTool.run({ path: "out/secret.txt" }, { workspace }), /symbolic link/);
+  await assert.rejects(readFileTool.run({ path: "secret-link.txt" }, { workspace }), /symbolic link/);
+  // Creating a file through the link is refused too, even though the file doesn't exist yet.
+  await assert.rejects(writeFileTool.run({ path: "out/new/x.txt", content: "x" }, { workspace }), /symbolic link/);
+  await assert.rejects(editFileTool.run({ path: "out/secret.txt", old_string: "token", new_string: "x" }, { workspace }), /symbolic link/);
+  assert.equal(readFileSync(join(outside, "secret.txt"), "utf8"), "token");
+  assert.equal(existsSync(join(outside, "new")), false);
+  // A link that stays inside the workspace is fine.
+  writeFileSync(join(workspace, "real.txt"), "ok");
+  symlinkSync(join(workspace, "real.txt"), join(workspace, "alias.txt"));
+  assert.match(await readFileTool.run({ path: "alias.txt" }, { workspace }), /ok/);
 });
 
 test("missing or mistyped arguments raise ToolError", async () => {
