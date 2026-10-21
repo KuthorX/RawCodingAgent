@@ -59,6 +59,14 @@
   .search input { flex: 1; min-width: 0; border: 0; background: none; padding: 0; outline: none; font-size: 12px; }
   .search input::placeholder { color: var(--muted); }
   .search input::-webkit-search-cancel-button { filter: grayscale(1) brightness(1.6); }
+  .side-tabs { display: flex; padding: 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+  .side-tabs button { border: 0; padding: 2px 10px; color: var(--muted); box-shadow: inset 0 -2px 0 transparent; }
+  .side-tabs button:hover:not(:disabled) { background: none; color: var(--ink); }
+  .side-tabs button.on { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+  .side-tabs .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .side-tabs[hidden] { display: none; }
+  .item.flat { padding-left: 12px; }
+  .item .where { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .search-note { padding: 4px 12px 8px; font-size: 12px; color: var(--muted); }
   #sessions { flex: 1; overflow-y: auto; padding-bottom: 12px; }
   .ctx-warn { color: var(--warn); }
@@ -224,10 +232,10 @@
   .menu hr { border: 0; border-top: 1px solid var(--line); margin: 3px 0; }
   .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 11; padding: 2px 12px; background: var(--ink); color: var(--bg); font-size: 12px; pointer-events: none; }
   footer { border-top: 1px solid var(--line); padding: 10px 22px; }
-  form { max-width: 960px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-start; }
-  form::before { content: ">"; color: var(--muted); padding-top: 5px; }
-  form.busy::before { color: var(--accent-ink); }
-  form button { height: 30px; padding: 0 14px; }
+  #form { max-width: 960px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-start; }
+  #form::before { content: ">"; color: var(--muted); padding-top: 5px; }
+  #form.busy::before { color: var(--accent-ink); }
+  #form button { height: 30px; padding: 0 14px; }
   textarea { flex: 1; resize: none; font: inherit; background: transparent; border: 0; padding: 5px 0; min-height: 30px; max-height: 200px; caret-color: var(--accent-ink); }
   textarea::placeholder { color: var(--muted); }
   textarea:focus { outline: none; }
@@ -273,6 +281,7 @@
       </div>
     </div>
     <div class="search"><label>/<input type="search" id="search" placeholder="搜索标题、消息、回复" autocomplete="off"></label></div>
+    <div class="side-tabs" id="side-tabs"><button type="button" data-list="active">会话</button><button type="button" data-list="archived">已归档 <span class="n" id="archived-count"></span></button></div>
     <div id="sessions"></div>
   </aside>
   <section class="chat">
@@ -315,7 +324,7 @@
 </dialog>
 <dialog id="limits-dialog">
   <form method="dialog" id="limits-form">
-    <h3>本会话的额度</h3>
+    <h3 id="ld-title">本会话的额度</h3>
     <p id="ld-spent"></p>
     <label>每轮最多步数（模型调用次数）
       <span class="pair"><select id="ld-steps-mode"><option value="default"></option><option value="none">不限</option><option value="custom">自定义</option></select>
@@ -512,13 +521,14 @@ function sessionMenu(ev, s) {
   ];
   const project = projectOf(s.workspace);
   if (project?.repo) items.push(["Fork 到新工作区…", () => openWorkspaceDialog(project, { forkFrom: s })]);
+  items.push(["设置额度…", () => openLimitsDialog(s.id).catch((e) => alert(e.message))]);
   items.push(null, s.archived ? ["取消归档", () => archiveSession(s, false)] : ["归档", () => archiveSession(s, true)], ["删除…", () => deleteSession(s)]);
   showMenu(ev, items);
 }
 
 async function archiveSession(s, archived) {
   try { await api(`/api/sessions/${s.id}/archive`, { archived }); } catch (e) { return alert(e.message); }
-  toast(archived ? "已归档，可以在侧栏底部的「已归档」里找回" : "已取消归档");
+  toast(archived ? "已归档，可以在侧栏的「已归档」标签里找到" : "已取消归档");
   refreshSessions();
   if (searchQuery) runSearch();
 }
@@ -644,7 +654,12 @@ function renderSidebar() {
   if (!current) renderStart();
   $("ws-form").hidden = projects.length > 0 && !wsFormOpen;
   $("ws-add").hidden = projects.length === 0;
+  const archived = sessionList.filter((s) => s.archived);
+  $("archived-count").textContent = archived.length || "";
+  $("side-tabs").hidden = Boolean(searchQuery);
+  for (const b of $("side-tabs").children) b.classList.toggle("on", b.dataset.list === sideList);
   if (searchQuery) return renderSearch(box);
+  if (sideList === "archived") return renderArchived(box, archived);
   const active = sessionList.filter((s) => !s.archived);
   if (projects.length === 0) box.append(el("div", "ws-empty", "点上方「选择…」或输入路径，打开第一个项目"));
   for (const p of projects) box.append(projectGroup(p, active));
@@ -659,17 +674,33 @@ function renderSidebar() {
     box.append(head);
     if (!collapsed.has(key)) for (const s of others) box.append(sessionItem(s));
   }
-  const archived = sessionList.filter((s) => s.archived);
-  if (archived.length) {
-    const head = el("div", "ws-head");
-    head.title = "归档的会话不在项目里显示；右键可以取消归档或删除";
-    head.append(el("span", "caret", showArchived ? "▾" : "▸"), el("span", "name", "已归档"), el("span", "count", String(archived.length)));
-    head.onclick = () => { showArchived = !showArchived; localStorage.setItem("rca.showArchived", showArchived ? "1" : ""); renderSidebar(); };
-    box.append(head);
-    if (showArchived) for (const s of archived) box.append(sessionItem(s));
+}
+
+let sideList = "active";
+$("side-tabs").addEventListener("click", (ev) => {
+  const list = ev.target.closest("button")?.dataset.list;
+  if (!list) return;
+  sideList = list;
+  renderSidebar();
+});
+
+// "learn-ai", "learn-ai / feat-login", or the bare path when no project has the directory.
+function whereOf(path) {
+  const project = projectOf(path);
+  const ws = project?.workspaces.find((w) => w.path === path);
+  return !project ? path : ws.main ? project.name : `${project.name} / ${ws.name}`;
+}
+
+// Archived sessions, newest first, each with where it belongs; right-click to restore or delete.
+function renderArchived(box, archived) {
+  if (archived.length === 0) return box.append(el("div", "search-note", "没有归档的会话。在会话上右键 →「归档」可以把它收到这里。"));
+  for (const s of archived) {
+    const item = sessionItem(s);
+    item.classList.add("flat");
+    item.append(el("div", "where", `${shortTime(s.updatedAt)} · ${whereOf(s.workspace)}`));
+    box.append(item);
   }
 }
-let showArchived = localStorage.getItem("rca.showArchived") === "1";
 
 // ---------- search ----------
 // Matches titles, your messages and the agent's replies (not tool calls), across all sessions including archived ones.
@@ -728,10 +759,7 @@ function renderSearch(box) {
     name.append(highlight(hit.title || "（未命名）"));
     title.append(name);
     if (hit.archived) title.append(el("span", "badge", "已归档"));
-    const project = projectOf(hit.workspace);
-    const ws = project?.workspaces.find((w) => w.path === hit.workspace);
-    const where = !project ? hit.workspace : ws.main ? project.name : `${project.name} / ${ws.name}`;
-    item.append(title, el("div", "sub", `${shortTime(hit.updatedAt)} · ${where}`));
+    item.append(title, el("div", "sub", `${shortTime(hit.updatedAt)} · ${whereOf(hit.workspace)}`));
     for (const m of hit.matches) {
       const snip = el("div", "snip");
       snip.append(el("span", "role", m.role === "user" ? "你：" : "agent："), highlight(m.snippet));
@@ -786,12 +814,15 @@ $("budget-form").addEventListener("submit", async (ev) => {
 });
 
 let defaultLimits = null; // { maxSteps, maxTurnCostUsd } from .env
-async function openLimitsDialog() {
+let limitsTarget = null; // session id the dialog edits
+async function openLimitsDialog(id = current) {
   const [info, defaults, stats] = await Promise.all([
-    api(`/api/sessions/${current}`),
+    api(`/api/sessions/${id}`),
     defaultLimits ?? api("/api/projects/limits"),
-    api(`/api/sessions/${current}/stats`),
+    api(`/api/sessions/${id}/stats`),
   ]);
+  limitsTarget = id;
+  $("ld-title").textContent = id === current ? "本会话的额度" : `额度 · ${info.title || "（未命名）"}`;
   defaultLimits = defaults;
   const limits = info.limits ?? {};
   const pick = (mode, input, value, defaultLabel) => {
@@ -803,7 +834,7 @@ async function openLimitsDialog() {
   pick($("ld-steps-mode"), $("ld-steps"), limits.maxSteps, defaults.maxSteps === null ? "不限" : `${defaults.maxSteps} 步`);
   pick($("ld-cost-mode"), $("ld-cost"), limits.maxTurnCostUsd, defaults.maxTurnCostUsd === null ? "不限" : `$${defaults.maxTurnCostUsd}`);
   $("ld-budget").value = typeof info.budgetUsd === "number" ? String(info.budgetUsd) : "";
-  $("ld-spent").textContent = `本会话已花 $${stats.totals.costUsd.toFixed(4)}（${stats.totals.turns} 轮）。修改从下一轮开始生效。项目和工作区的额度在侧栏右键设置。`;
+  $("ld-spent").textContent = `已花 $${stats.totals.costUsd.toFixed(4)}（${stats.totals.turns} 轮）。修改从下一轮开始生效。项目和工作区的额度在侧栏右键设置。`;
   $("ld-effective").className = "hint";
   $("ld-effective").textContent = info.budget ? `当前最紧的累计额度：${info.budget.label.trim()}，还剩 $${Math.max(0, info.budget.remainingUsd).toFixed(4)}` : "没有累计额度限制。";
   $("limits-dialog").showModal();
@@ -829,7 +860,7 @@ $("limits-form").addEventListener("submit", async (ev) => {
       if (n === null) throw new Error("每轮花费要填一个数字，不限请选“不限”");
       limits.maxTurnCostUsd = n;
     }
-    await api(`/api/sessions/${current}/settings`, { limits, budgetUsd: parseUsd($("ld-budget").value, "累计花费") });
+    await api(`/api/sessions/${limitsTarget}/settings`, { limits, budgetUsd: parseUsd($("ld-budget").value, "累计花费") });
     $("limits-dialog").close();
     toast("额度已保存，从下一轮开始生效");
   } catch (e) { $("ld-effective").textContent = e.message; $("ld-effective").className = "err-text"; }
