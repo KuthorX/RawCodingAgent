@@ -192,7 +192,6 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       const images = parseImages(body.images);
       if (!text && images.length === 0) throw new HttpError(400, '"text" must be a non-empty string (or attach images)');
       const runner = manager.get(id);
-      if (images.length > 0 && runner.isBusy) throw new HttpError(409, "agent 正在运行，图片要等这一轮结束（或停止）后再发送");
       const saved = images.map((img) => manager.store.saveAttachment(id, img.data, img.mediaType));
       let sent;
       try {

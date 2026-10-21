@@ -44,7 +44,7 @@ export interface TurnControl {
   // Aborted when the user stops the turn.
   signal?: AbortSignal;
   // Messages the user sent while the turn was running; injected before the next model call.
-  takeInterjections?: () => string[];
+  takeInterjections?: () => UserMessage[];
 }
 
 const INTERRUPTED_RESULT = "not executed: the user stopped the turn";
@@ -222,7 +222,7 @@ async function loop(
     // D18: user messages sent mid-turn join the context at the next step boundary.
     const interjections = step > 1 ? (control.takeInterjections?.() ?? []) : [];
     if (interjections.length > 0) {
-      messages = [...messages, ...interjections.map((content) => ({ role: "user" as const, content }))];
+      messages = [...messages, ...interjections];
       deps.onEvent?.({ type: "interjection_delivered", count: interjections.length });
     }
 

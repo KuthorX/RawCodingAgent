@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentDeps } from "../agent/loop.ts";
 import { runTurn, TurnAbortedError } from "../agent/loop.ts";
 import type { ApprovalMode, Confirm } from "../agent/permissions.ts";
-import type { ImageAttachment, Message } from "../types.ts";
+import type { ImageAttachment, Message, UserMessage } from "../types.ts";
 import type { SessionEvent } from "./events.ts";
 import { titleFrom, type SessionMeta, type SessionStore } from "./store.ts";
 
@@ -36,6 +36,12 @@ function isInterrupted(events: SessionEvent[]): boolean {
   return lastUser !== -1 && !events.slice(lastUser).some((e) => e.type === "turn_end" || e.type === "error");
 }
 
+// Interjections that arrived too late for their turn start the next one as a single message.
+function mergeMessages(queue: UserMessage[]): UserMessage {
+  const images = queue.flatMap((m) => m.images ?? []);
+  return { role: "user", content: queue.map((m) => m.content).filter(Boolean).join("\n\n"), ...(images.length ? { images } : {}) };
+}
+
 // Owns one persisted conversation: history, replayable event log, approvals, and the running turn.
 export class SessionRunner {
   readonly deps: AgentDeps;
@@ -44,7 +50,7 @@ export class SessionRunner {
   private log: SessionEvent[];
   private running: Promise<void> | null = null;
   private controller: AbortController | null = null;
-  private queue: string[] = [];
+  private queue: UserMessage[] = [];
   private readonly store: SessionStore;
   private readonly listeners = new Set<Listener>();
   private readonly pending = new Map<string, (allow: boolean) => void>();
@@ -86,20 +92,19 @@ export class SessionRunner {
 
   // Idle: starts a turn. Busy: queues the text as an interjection, delivered before the next model call
   // (or as the next turn if the current one ends first). `done` resolves when the session is idle again.
-  // Images can only start a turn: interjections are plain text injected between steps.
   send(text: string, images: (ImageAttachment & { name: string })[] = []): { queued: boolean; done: Promise<void> } {
-    if (this.running && images.length > 0) throw new SendRejected("agent 正在运行，图片要等这一轮结束（或停止）后再发送");
+    const message: UserMessage = { role: "user", content: text, ...(images.length ? { images: images.map(({ path, mediaType }) => ({ path, mediaType })) } : {}) };
+    const names = images.length ? { images: images.map((i) => i.name) } : {};
     if (this.running) {
-      this.queue = [...this.queue, text];
-      this.emit({ type: "user", text, queued: true });
+      this.queue = [...this.queue, message];
+      this.emit({ type: "user", text, queued: true, ...names });
       return { queued: true, done: this.running };
     }
     const budget = this.budget?.(this.meta);
     if (budget && budget.remainingUsd <= 0) throw new SendRejected(`${budget.label}的额度已经用完，调高或取消上限后才能继续`);
     if (!this.meta.title) this.meta = this.store.updateMeta(this.id, { title: titleFrom(text) || "（图片）" });
-    this.emit({ type: "user", text, ...(images.length ? { images: images.map((i) => i.name) } : {}) });
-    const first: Message = { role: "user", content: text, ...(images.length ? { images: images.map(({ path, mediaType }) => ({ path, mediaType })) } : {}) };
-    const done = this.drain(first).finally(() => {
+    this.emit({ type: "user", text, ...names });
+    const done = this.drain(message).finally(() => {
       // Always leave the busy state, even if persistence fails, so the session never gets stuck.
       this.running = null;
       this.controller = null;
@@ -172,13 +177,13 @@ export class SessionRunner {
   }
 
   // Runs a turn, then keeps going while interjections arrived too late to join it.
-  private async drain(first: Extract<Message, { role: "user" }>): Promise<void> {
-    let input: Extract<Message, { role: "user" }> | null = first;
+  private async drain(first: UserMessage): Promise<void> {
+    let input: UserMessage | null = first;
     while (input !== null) {
       this.controller = new AbortController();
       const final = await this.run(input, this.controller.signal);
       const stopped = this.controller.signal.aborted;
-      input = !stopped && this.queue.length > 0 ? { role: "user", content: this.queue.join("\n\n") } : null;
+      input = !stopped && this.queue.length > 0 ? mergeMessages(this.queue) : null;
       this.queue = [];
       // Clear busy before announcing the end, so a client reacting to it can send immediately.
       if (input === null) {
@@ -189,7 +194,7 @@ export class SessionRunner {
     }
   }
 
-  private async run(input: Extract<Message, { role: "user" }>, signal: AbortSignal): Promise<Extract<SessionEvent, { type: "turn_end" | "error" }>> {
+  private async run(input: UserMessage, signal: AbortSignal): Promise<Extract<SessionEvent, { type: "turn_end" | "error" }>> {
     const control = {
       signal,
       takeInterjections: () => {

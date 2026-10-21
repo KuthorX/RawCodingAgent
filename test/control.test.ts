@@ -42,7 +42,7 @@ test("stopping between tool calls answers the remaining calls without running th
 
 test("interjections are injected before the next model call", async () => {
   const provider = new ManualProvider();
-  let queue = ["actually, use two.txt"];
+  let queue = [{ role: "user" as const, content: "actually, use two.txt" }];
   const turn = runTurn([], "go", makeDeps(provider), {
     takeInterjections: () => {
       const taken = queue;

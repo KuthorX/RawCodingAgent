@@ -5,8 +5,9 @@ import { test } from "node:test";
 import { loadConfig } from "../src/config.ts";
 import { toOpenAIMessages } from "../src/providers/openai.ts";
 import { SessionRunner } from "../src/session/runner.ts";
+import type { SessionEvent } from "../src/session/events.ts";
 import type { Message } from "../src/types.ts";
-import { reply, ScriptedProvider, tempWorkspace, testRuntime } from "./helpers.ts";
+import { ManualProvider, reply, ScriptedProvider, tempWorkspace, testRuntime } from "./helpers.ts";
 
 const PNG = Buffer.from("89504e470d0a1a0a", "hex"); // just the signature; nothing decodes it here
 
@@ -55,17 +56,44 @@ test("runner: attached images reach the model, events name them, and a fork gets
   assert.ok(existsSync(saved.path));
 });
 
-test("runner: images can't be sent as an interjection", async () => {
-  let release: () => void = () => {};
-  const gate = new Promise<void>((r) => (release = r));
-  const provider = { name: "slow", model: "slow", complete: async () => { await gate; return reply("done"); } };
+test("runner: an interjection can carry images, delivered at the next step", async () => {
+  const provider = new ManualProvider();
   const runtime = testRuntime(provider);
-  const meta = runtime.store.create("/tmp", "m");
+  const meta = runtime.store.create(tempWorkspace(), "m");
+  const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
+  const events: SessionEvent[] = [];
+  runner.subscribe((e) => events.push(e));
+  const { done } = runner.send("start");
+  await provider.requested(1);
+  const img = runtime.store.saveAttachment(meta.id, PNG, "image/png");
+  assert.equal(runner.send("", [img]).queued, true);
+  assert.deepEqual(events.at(-1), { type: "user", text: "", queued: true, images: [img.name] });
+  provider.respond(reply("", [{ id: "a", name: "write_file", input: { path: "x.txt", content: "x" } }]));
+  await provider.requested(2);
+  assert.deepEqual(provider.requests[1]!.messages.at(-1), { role: "user", content: "", images: [{ path: img.path, mediaType: "image/png" }] });
+  provider.respond(reply("ok"));
+  await done;
+});
+
+test("runner: late interjections with images merge into the next turn", async () => {
+  const provider = new ManualProvider();
+  const runtime = testRuntime(provider);
+  const meta = runtime.store.create(tempWorkspace(), "m");
   const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
   const { done } = runner.send("start");
-  const img = runtime.store.saveAttachment(meta.id, PNG, "image/png");
-  assert.throws(() => runner.send("look", [img]), /图片要等这一轮结束/);
-  release();
+  await provider.requested(1);
+  const a = runtime.store.saveAttachment(meta.id, PNG, "image/png");
+  const b = runtime.store.saveAttachment(meta.id, PNG, "image/png");
+  runner.send("first", [a]);
+  runner.send("", [b]);
+  provider.respond(reply("done")); // the turn ends without another step, so they start the next one
+  await provider.requested(2);
+  assert.deepEqual(provider.requests[1]!.messages.at(-1), {
+    role: "user",
+    content: "first",
+    images: [a, b].map(({ path, mediaType }) => ({ path, mediaType })),
+  });
+  provider.respond(reply("ok"));
   await done;
 });
 
