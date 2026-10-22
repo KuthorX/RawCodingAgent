@@ -235,6 +235,20 @@
       "problem": "自建任务通过率在 95% 左右，已经分不出改动的好坏，也没法和外部结果对照。",
       "change": "npm run eval:swe：从官方镜像复制代码、同路径挂回容器，只把 bash 换成在容器里执行的版本；在容器里以开始前的提交为基准取补丁（--binary），在新容器里按官方顺序打补丁、跑实例自带的评测脚本，用固定版本的 swebench 包解析日志。--validate 用参考答案验证评分链路。试跑 Django 6 题解决 3 题，$0.16；两道步数用完的题占了 84% 的花费。",
       "commits": ["a86eadd"]
+    },
+    {
+      "module": "gui",
+      "title": "从手机和其他电脑访问（Tailscale）",
+      "problem": "网页只监听 127.0.0.1，离开这台电脑就看不到 agent 在做什么、也批不了审批。直接监听局域网地址没有 HTTPS（浏览器限制多、token 会被同网段嗅探），也到不了外网。",
+      "change": "--remote：读 tailscale status 拿本机 tailnet 名和所属账号，另开一个只给远程用的本地端口，用 tailscale serve --bg 在 tailnet 名上提供 HTTPS 并转发过去；局域网和外网都能用。算本机还是远程看请求进的是哪个端口，不看 Host（serve 原样转发 Host，独立审查发现按 Host 判断能被冒充成本机）。远程请求要过四层：tailnet Host、Tailscale-User-Login 等于本机账号、写请求同源、配对得到的设备 cookie。配对码只能在本机页面生成（二维码，5 分钟一次性），设备可撤销并立即断开推送；系统选择框和在 Finder 中显示只在本机可用。没用前台 serve：macOS 1.104 上进程被 kill 后配置不清，端口一直被占；--bg 退出时关掉，进程号记在 .remote-serve-<端口>.json，强杀留下的配置下次能认出来，别人的配置、另一个在跑的实例或 Funnel 则拒绝启动。",
+      "commits": ["fc61c39"]
+    },
+    {
+      "module": "gui",
+      "title": "手机布局",
+      "problem": "配上远程访问后在手机上打开，侧栏和对话挤在一起、文字一字一行；右键菜单和悬停才出现的按钮在触屏上用不了，iOS 聚焦输入框还会放大页面。",
+      "change": "720px 以下一次一栏：会话列表，打开会话后是对话，\"‹\" 回到列表；表格横向滑动，统计瀑布图每个 span 两行，提交详情盖住整页。触屏上长按打开菜单（iOS Safari 没有 contextmenu 事件），悬停按钮常显，Enter 换行、点发送才发出；输入框 16px、高度用 dvh。",
+      "commits": ["a65fda5"]
     }
   ]
 }
