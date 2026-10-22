@@ -270,6 +270,13 @@
       "problem": "手机不装 Tailscale 就打不开。公网入口意味着任何人都能连过来，而页面能让 agent 执行 bash；先单独做了技术评估（Funnel、Cloudflare Tunnel + Access、VPS + frp、端到端加密中继），选了边缘先登录、陌生人到不了 Mac 的 Cloudflare 方案，代价是 Cloudflare 能看到明文。",
       "change": "--public：再开一个只给 cloudflared 的本地端口（默认 4318），cloudflared 作为系统服务由用户自己配。每个请求先验 Cf-Access-Jwt-Assertion（node:crypto 手写 RS256 验签，只认 RS256 防算法混淆；iss、aud、exp/nbf 带 60 秒容差、邮箱白名单；不认识的密钥 ID 最多每分钟重取一次，取不到返回 503），再要配对过的设备。配对码和设备凭证绑定生成它的入口。从公网新建或 fork 的会话从每次询问开始（独立审查发现最初漏了 fork）。.audit.jsonl 记远程的写请求和被拒请求（用 close 事件，上传中途断开的也记下）。前端：请求失败时用 redirect: manual 探一次，确认 Access 登录过期就整页刷新，草稿存进 sessionStorage 刷新后恢复，一分钟内不重复刷新；iOS 回到前台超过 10 秒、bfcache 恢复或网络恢复时重连推送。还没用真实域名和 Cloudflare 账号实测。",
       "commits": ["7bfc1c4", "78c0098"]
+    },
+    {
+      "module": "gui",
+      "title": "通知、上下文压缩和会话模型切换",
+      "problem": "会话结束后只能从灯的静态状态判断结果；长会话没有自动或手动压缩入口；侧栏只显示配置模型的泛化名称，无法查看和切换实际可用模型 ID。",
+      "change": "增加浏览器 turn 状态通知，支持全局开关和右键菜单里的会话级三态覆盖；设置里新增默认 400000 token 自动压缩阈值，输入 /compact 可手动压缩并保留摘要与最近用户消息；通过 OpenAI 兼容 /models 拉取模型 ID，在会话顶部展示并允许切换；相关状态和设置持久化。",
+      "commits": ["4aae3ce"]
     }
   ]
 }
