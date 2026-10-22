@@ -263,6 +263,13 @@
       "problem": "配上远程访问后在手机上打开，侧栏和对话挤在一起、文字一字一行；右键菜单和悬停才出现的按钮在触屏上用不了，iOS 聚焦输入框还会放大页面。",
       "change": "720px 以下一次一栏：会话列表，打开会话后是对话，\"‹\" 回到列表；表格横向滑动，统计瀑布图每个 span 两行，提交详情盖住整页。触屏上长按打开菜单（iOS Safari 没有 contextmenu 事件），悬停按钮常显，Enter 换行、点发送才发出；输入框 16px、高度用 dvh。",
       "commits": ["a65fda5"]
+    },
+    {
+      "module": "gui",
+      "title": "从公网访问（Cloudflare Tunnel + Access）",
+      "problem": "手机不装 Tailscale 就打不开。公网入口意味着任何人都能连过来，而页面能让 agent 执行 bash；先单独做了技术评估（Funnel、Cloudflare Tunnel + Access、VPS + frp、端到端加密中继），选了边缘先登录、陌生人到不了 Mac 的 Cloudflare 方案，代价是 Cloudflare 能看到明文。",
+      "change": "--public：再开一个只给 cloudflared 的本地端口（默认 4318），cloudflared 作为系统服务由用户自己配。每个请求先验 Cf-Access-Jwt-Assertion（node:crypto 手写 RS256 验签，只认 RS256 防算法混淆；iss、aud、exp/nbf 带 60 秒容差、邮箱白名单；不认识的密钥 ID 最多每分钟重取一次，取不到返回 503），再要配对过的设备。配对码和设备凭证绑定生成它的入口。从公网新建或 fork 的会话从每次询问开始（独立审查发现最初漏了 fork）。.audit.jsonl 记远程的写请求和被拒请求（用 close 事件，上传中途断开的也记下）。前端：请求失败时用 redirect: manual 探一次，确认 Access 登录过期就整页刷新，草稿存进 sessionStorage 刷新后恢复，一分钟内不重复刷新；iOS 回到前台超过 10 秒、bfcache 恢复或网络恢复时重连推送。还没用真实域名和 Cloudflare 账号实测。",
+      "commits": ["7bfc1c4", "78c0098"]
     }
   ]
 }
