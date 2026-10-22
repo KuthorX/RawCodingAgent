@@ -241,7 +241,13 @@
   .menu button:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
   .menu hr { border: 0; border-top: 1px solid var(--line); margin: 3px 0; }
   .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 11; padding: 2px 12px; background: var(--ink); color: var(--bg); font-size: 12px; pointer-events: none; }
-  footer { border-top: 1px solid var(--line); padding: 10px 22px; }
+  footer { position: relative; border-top: 1px solid var(--line); padding: 10px 22px; }
+  .slash-menu { position: absolute; z-index: 8; left: 22px; right: 22px; bottom: calc(100% + 6px); max-width: 960px; margin: 0 auto; padding: 3px 0; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 6px 24px rgb(0 0 0 / .35); }
+  .slash-menu[hidden] { display: none; }
+  .slash-menu button { display: flex; align-items: baseline; gap: 12px; width: 100%; border: 0; padding: 5px 10px; text-align: left; background: none; color: var(--ink); }
+  .slash-menu button:hover, .slash-menu button.selected { background: var(--sel); }
+  .slash-menu .command { color: var(--accent-ink); font-family: inherit; }
+  .slash-menu .description { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #form { max-width: 960px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-start; }
   #form::before { content: ">"; color: var(--muted); padding-top: 5px; }
   #form.busy::before { color: var(--accent-ink); }
@@ -284,6 +290,7 @@
     #log { padding: 0 12px; }
     main { padding: 12px 0; }
     footer { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+    .slash-menu { left: 10px; right: 10px; }
     /* Below 16px iOS zooms the page in on focus. */
     textarea, input[type=text], input[type=search], select { font-size: 16px !important; }
     .new input[type=text], .search label { height: 34px; }
@@ -353,6 +360,7 @@
     </div>
     <main id="scroller"><div id="log"></div></main>
     <footer id="footer">
+      <div class="slash-menu" id="slash-menu" role="listbox" hidden></div>
       <div class="attachments" id="attachments" hidden></div>
       <form id="form">
         <textarea id="input" rows="1" placeholder="描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片"></textarea>
@@ -533,6 +541,7 @@ function sessionItem(s) {
   item.href = "#" + s.id;
   const title = el("div", "title");
   if (s.busy) title.append(el("span", "dot busy"));
+  if (s.compacting) title.append(el("span", "badge", "压缩中"));
   title.append(el("span", "name", s.title || "（未命名）"));
   if (s.forkedFrom) {
     const badge = el("span", "badge", "fork");
@@ -1386,6 +1395,11 @@ const handlers = {
     showMode(e.mode);
     append(el("div", "note", e.mode === "auto" ? "权限已切换为：自动批准（之后的 bash 不再询问）" : "权限已切换为：每次询问"));
   },
+  compaction_start(e) {
+    append(el("div", "note", e.manual ? "正在压缩上下文…" : "正在自动压缩上下文…"));
+    if (e.manual) setBusy(true);
+    if (!replaying) refreshSessions();
+  },
   tool_result(e) {
     const card = toolCards.get(e.call.id);
     if (!card) return;
@@ -1631,6 +1645,65 @@ footer.addEventListener("drop", (ev) => {
   if (!ev.dataTransfer.files.length) return;
   ev.preventDefault();
   addImages([...ev.dataTransfer.files]);
+});
+
+const SLASH_COMMANDS = [
+  { command: "/compact", description: "压缩当前会话上下文" },
+];
+const slashMenu = $("slash-menu");
+let slashMatches = [];
+let slashSelected = 0;
+
+function hideSlashMenu() {
+  slashMenu.hidden = true;
+  slashMatches = [];
+  slashSelected = 0;
+}
+
+function renderSlashMenu() {
+  if (input.selectionStart !== input.value.length || !/^\/[^\s/]*$/.test(input.value)) return hideSlashMenu();
+  const query = input.value.toLowerCase();
+  slashMatches = SLASH_COMMANDS.filter((item) => item.command.startsWith(query));
+  if (slashMatches.length === 0) return hideSlashMenu();
+  slashSelected = Math.min(slashSelected, slashMatches.length - 1);
+  slashMenu.replaceChildren(...slashMatches.map((item, index) => {
+    const button = el("button", index === slashSelected ? "selected" : "");
+    button.type = "button";
+    button.role = "option";
+    button.ariaSelected = index === slashSelected ? "true" : "false";
+    button.append(el("span", "command", item.command), el("span", "description", item.description));
+    button.onmousedown = (ev) => ev.preventDefault();
+    button.onclick = () => completeSlash(index);
+    return button;
+  }));
+  slashMenu.hidden = false;
+}
+
+function completeSlash(index = slashSelected) {
+  const item = slashMatches[index];
+  if (!item) return;
+  input.value = item.command + " ";
+  input.style.height = "";
+  input.style.height = input.scrollHeight + "px";
+  input.focus();
+  hideSlashMenu();
+}
+
+input.addEventListener("input", renderSlashMenu);
+input.addEventListener("blur", () => setTimeout(hideSlashMenu, 120));
+input.addEventListener("keydown", (ev) => {
+  if (slashMenu.hidden || slashMatches.length === 0) return;
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault();
+    slashSelected = (slashSelected + (ev.key === "ArrowDown" ? 1 : -1) + slashMatches.length) % slashMatches.length;
+    renderSlashMenu();
+  } else if (ev.key === "Tab") {
+    ev.preventDefault();
+    completeSlash();
+  } else if (ev.key === "Escape") {
+    ev.preventDefault();
+    hideSlashMenu();
+  }
 });
 
 $("form").addEventListener("submit", async (ev) => {

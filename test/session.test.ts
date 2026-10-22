@@ -69,9 +69,9 @@ test("manual compaction of an empty session still completes", async () => {
 
   await runner.compact();
 
-  assert.deepEqual(seen, ["compacted"]);
+  assert.deepEqual(seen, ["compaction_start", "compacted"]);
   assert.equal(runner.isBusy, false);
-  assert.equal(runtime.store.loadEvents(meta.id)[0]?.type, "compacted");
+  assert.equal(runtime.store.loadEvents(meta.id)[0]?.type, "compaction_start");
 });
 
 test("a turn interrupted by a crash is closed with an error on reload", () => {

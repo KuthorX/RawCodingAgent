@@ -12,6 +12,7 @@ export type SessionEvent =
   | { type: "approval_request"; id: string; call: ToolCall }
   | { type: "approval_resolved"; id: string; allow: boolean }
   | { type: "approval_mode"; mode: ApprovalMode }
+  | { type: "compaction_start"; manual?: boolean }
   | { type: "compacted"; beforeTokens: number; afterTokens: number; manual?: boolean }
   // continues: queued interjections start the next turn right away, so the session stays busy.
   | { type: "turn_end"; finishReason: FinishReason; steps: number; continues?: boolean }

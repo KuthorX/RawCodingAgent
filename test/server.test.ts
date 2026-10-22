@@ -107,7 +107,9 @@ test("manual compaction of an empty session does not leave it busy", async () =>
   }
   const info = JSON.parse((await call("GET", `/api/sessions/${id}`)).body) as { busy: boolean };
   assert.equal(info.busy, false);
-  assert.match((await call("GET", `/api/sessions/${id}/file?name=events.jsonl`)).body, /"type":"compacted"/);
+  const events = (await call("GET", `/api/sessions/${id}/file?name=events.jsonl`)).body;
+  assert.match(events, /"type":"compaction_start"/);
+  assert.match(events, /"type":"compacted"/);
 });
 
 test("notification events use one multiplexed stream", async () => {

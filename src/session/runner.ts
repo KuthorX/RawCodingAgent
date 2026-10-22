@@ -64,6 +64,7 @@ export class SessionRunner {
   private history: Message[];
   private log: SessionEvent[];
   private running: Promise<void> | null = null;
+  private compacting = false;
   private controller: AbortController | null = null;
   private queue: UserMessage[] = [];
   private readonly store: SessionStore;
@@ -94,12 +95,12 @@ export class SessionRunner {
     return this.meta.id;
   }
 
-  get info(): SessionMeta & { busy: boolean } {
-    return { ...this.meta, busy: this.isBusy };
+  get info(): SessionMeta & { busy: boolean; compacting: boolean } {
+    return { ...this.meta, busy: this.isBusy, compacting: this.compacting };
   }
 
   get isBusy(): boolean {
-    return this.running !== null;
+    return this.running !== null || this.compacting;
   }
 
   // Full input and output of one tool call, for a card the event stream sent trimmed. content is null while it runs.
@@ -150,11 +151,13 @@ export class SessionRunner {
   compact(focus = ""): Promise<void> {
     if (this.running) throw new SendRejected("session is busy");
     this.controller = new AbortController();
+    this.compacting = true;
+    this.safely(() => this.emit({ type: "compaction_start", manual: true }));
     const done = this.compactHistory(focus, true, this.controller.signal).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       this.safely(() => this.emit({ type: "error", message }));
       throw err;
-    }).finally(() => { this.running = null; this.controller = null; });
+    }).finally(() => { this.compacting = false; this.running = null; this.controller = null; });
     this.running = done;
     return this.running;
   }
@@ -244,12 +247,16 @@ export class SessionRunner {
       this.controller = new AbortController();
       const limit = this.compactionTokens?.() ?? 0;
       if (limit > 0 && estimateTokens(this.history) + estimateTokens([input]) >= limit) {
+        this.compacting = true;
+        this.safely(() => this.emit({ type: "compaction_start" }));
         try {
           await this.compactHistory("", false, this.controller.signal);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.safely(() => this.emit({ type: "error", message }));
           return;
+        } finally {
+          this.compacting = false;
         }
       }
       const final = await this.run(input, this.controller.signal);
