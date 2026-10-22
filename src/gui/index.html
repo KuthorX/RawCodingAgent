@@ -103,12 +103,23 @@
   .ws-head .spend.near { color: var(--warn); }
   .ws-head .spend.over { color: var(--err); }
   .ws-empty { padding: 0 12px 4px 54px; font-size: 12px; color: var(--muted); }
-  .item { display: block; padding: 3px 12px 3px 26px; color: var(--ink); cursor: pointer; }
+  /* The row is a two-column grid: the link, then the quick archive/restore button. The button sits outside
+     the link (an <a> may not contain a button) and keeps its column when hidden, so nothing jumps on hover.
+     The link's ::after stretches over the whole row, so the space beside the button still opens the session. */
+  .item { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px; align-items: start; padding: 3px 12px 3px 26px; color: var(--ink); cursor: pointer; }
   .in-ws .item { padding-left: 54px; }
+  .item > .body { display: block; min-width: 0; color: inherit; }
+  .item > .body::after { content: ""; position: absolute; inset: 0; }
   .item:hover { background: var(--soft); text-decoration: none; }
+  .item > .body:hover { text-decoration: none; }
   .item.active { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
   .item .title { display: flex; gap: 6px; align-items: center; }
   .item .title .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item > .act { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; align-self: start; width: 20px; height: 20px; padding: 0; border: 0; background: none; color: var(--muted); visibility: hidden; }
+  /* The archived list has no other action, so its restore icon stays visible; elsewhere it waits for hover/focus. */
+  .item:hover > .act, .item:focus-within > .act, .item.active > .act, .item.flat > .act { visibility: visible; }
+  .item > .act:hover { background: none; color: var(--ink); }
+  .item > .act svg { display: block; width: 13px; height: 13px; }
   .item .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .item:not(.active):not(.hit) .sub { display: none; }
   .item.hit { padding: 6px 12px; border-top: 1px solid var(--line); }
@@ -271,9 +282,11 @@
   .user .imgs img { max-width: 200px; max-height: 160px; border: 1px solid var(--line); display: block; cursor: zoom-in; }
   .back { display: none; }
 
-  /* Touch screens: nothing appears on hover, and a long press opens the menus (see onMenu). */
+  /* Touch screens: nothing appears on hover, and a long press opens the menus (see onMenu). The archive
+     button is always shown and gets a bigger target, since there is no pointer to hover with. */
   @media (hover: none) {
-    .ws-head button.x, .ws-head.sub button { visibility: visible; }
+    .ws-head button.x, .ws-head.sub button, .item > .act { visibility: visible; }
+    .item > .act { width: 26px; height: 26px; }
     .item, .ws-head { -webkit-touch-callout: none; user-select: none; }
     .menu button { padding: 8px 16px; font-size: 13px; }
     .status .keys { display: none; }
@@ -554,10 +567,49 @@ function shortTime(iso) {
     : `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-// Two lines per session; the full numbers are in the tooltip.
-function sessionItem(s) {
-  const item = el("a", "item" + (s.id === current ? " active" : ""));
-  item.href = "#" + s.id;
+// An archive box, or with an up arrow in the archived list where the same button restores.
+const SVG_NS = "http://www.w3.org/2000/svg";
+function archiveIcon(restore) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.3");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  const paths = ["M2.5 2.5h11v3h-11z", "M3.5 5.5h9v8h-9z", restore ? "M8 11.8V7.6M6.2 9.4 8 7.6l1.8 1.8" : "M6.4 8.3h3.2"];
+  for (const d of paths) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+// One click instead of right-click →「归档」. A sibling of the row's link, so it never opens the session.
+function archiveButton(s) {
+  const btn = el("button", "act");
+  btn.type = "button";
+  btn.title = s.archived ? "取消归档（回到会话列表）" : "归档（收进「已归档」标签）";
+  btn.setAttribute("aria-label", btn.title);
+  btn.append(archiveIcon(Boolean(s.archived)));
+  btn.onclick = () => archiveSession(s, !s.archived);
+  return btn;
+}
+
+// A row's link, kept apart from the row itself: buttons go beside it, never inside an <a>.
+function rowLink(className, id) {
+  const item = el("div", className);
+  const body = el("a", "body");
+  body.href = "#" + id;
+  return { item, body };
+}
+
+// Two lines per session; the full numbers are in the tooltip. extra goes below the link's text and stays
+// part of the link, so the whole row still opens the session.
+function sessionItem(s, extra) {
+  const { item, body } = rowLink("item" + (s.id === current ? " active" : ""), s.id);
   const title = el("div", "title");
   if (s.busy) title.append(el("span", "dot busy"));
   if (s.compacting) title.append(el("span", "badge", "压缩中"));
@@ -570,7 +622,9 @@ function sessionItem(s) {
   if (s.approvalMode === "auto") title.append(el("span", "badge", "自动"));
   const sub = el("div", "sub", `${shortTime(s.updatedAt)} · ${s.turns} 轮 · ${fmt.usd(s.totals.costUsd)}`);
   if (s.totals.contextTokens > CONTEXT_WARN_TOKENS) sub.append(" · ", el("span", "ctx-warn", `上下文 ${fmt.k(s.totals.contextTokens)}`));
-  item.append(title, sub);
+  body.append(title, sub);
+  if (extra) body.append(extra);
+  item.append(body, archiveButton(s));
   onMenu(item, (ev) => sessionMenu(ev, s));
   item.title = [s.title || "（未命名）",
     `${fmt.time(s.updatedAt)} · ${s.turns} 轮 · 上下文 ${fmt.k(s.totals.contextTokens)} · ${fmt.usd(s.totals.costUsd)} · ${s.totals.toolCalls} 次工具调用`,
@@ -894,13 +948,12 @@ function whereOf(path) {
   return !project ? path : ws.main ? project.name : `${project.name} / ${ws.name}`;
 }
 
-// Archived sessions, newest first, each with where it belongs; right-click to restore or delete.
+// Archived sessions, newest first, each with where it belongs; the row's icon restores it, right-click also deletes.
 function renderArchived(box, archived) {
-  if (archived.length === 0) return box.append(el("div", "search-note", "没有归档的会话。在会话上右键 →「归档」可以把它收到这里。"));
+  if (archived.length === 0) return box.append(el("div", "search-note", "没有归档的会话。点会话右侧的归档图标可以把它收到这里。"));
   for (const s of archived) {
-    const item = sessionItem(s);
+    const item = sessionItem(s, el("div", "where", `${shortTime(s.updatedAt)} · ${whereOf(s.workspace)}`));
     item.classList.add("flat");
-    item.append(el("div", "where", `${shortTime(s.updatedAt)} · ${whereOf(s.workspace)}`));
     box.append(item);
   }
 }
@@ -955,19 +1008,19 @@ function renderSearch(box) {
   if (searchHits instanceof Error) return box.append(el("div", "search-note err-text", "搜索失败：" + searchHits.message));
   box.append(el("div", "search-note", searchHits.length ? `${searchHits.length} 个会话匹配${searchHits.length >= 50 ? "（只显示最近的 50 个）" : ""}` : "没有匹配的会话"));
   for (const hit of searchHits) {
-    const item = el("a", "item hit" + (hit.id === current ? " active" : ""));
-    item.href = "#" + hit.id;
+    const { item, body } = rowLink("item hit" + (hit.id === current ? " active" : ""), hit.id);
     const title = el("div", "title");
     const name = el("span", "name");
     name.append(highlight(hit.title || "（未命名）"));
     title.append(name);
     if (hit.archived) title.append(el("span", "badge", "已归档"));
-    item.append(title, el("div", "sub", `${shortTime(hit.updatedAt)} · ${whereOf(hit.workspace)}`));
+    body.append(title, el("div", "sub", `${shortTime(hit.updatedAt)} · ${whereOf(hit.workspace)}`));
     for (const m of hit.matches) {
       const snip = el("div", "snip");
       snip.append(el("span", "role", m.role === "user" ? "你：" : "agent："), highlight(m.snippet));
-      item.append(snip);
+      body.append(snip);
     }
+    item.append(body, archiveButton(hit));
     onMenu(item, (ev) => sessionMenu(ev, hit));
     box.append(item);
   }
