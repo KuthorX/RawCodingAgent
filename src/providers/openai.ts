@@ -5,6 +5,10 @@ import type { CompletionRequest, CompletionResponse, Message, Provider, StopReas
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
+function needsReasoningContent(model: string): boolean {
+  return /deepseek-(?:flash|reasoner)|deepseek-v4-(?:flash|pro)/i.test(model);
+}
+
 const PROVIDER = "openai";
 const MAX_TOKENS = 8192;
 
@@ -31,7 +35,7 @@ function userContent(m: UserMessage, vision: boolean): OpenAI.Chat.Completions.C
   return parts;
 }
 
-export function toOpenAIMessages(system: string, messages: Message[], vision = false): ChatMessage[] {
+export function toOpenAIMessages(system: string, messages: Message[], vision = false, model = ""): ChatMessage[] {
   const out: ChatMessage[] = [{ role: "system", content: system }];
   for (const m of messages) {
     switch (m.role) {
@@ -42,6 +46,7 @@ export function toOpenAIMessages(system: string, messages: Message[], vision = f
         out.push({
           role: "assistant",
           content: m.text || null,
+          ...(needsReasoningContent(model) ? { reasoning_content: m.reasoningContent ?? "" } : m.reasoningContent ? { reasoning_content: m.reasoningContent } : {}),
           ...(m.toolCalls.length > 0
             ? {
                 tool_calls: m.toolCalls.map((c) => ({
@@ -51,7 +56,7 @@ export function toOpenAIMessages(system: string, messages: Message[], vision = f
                 })),
               }
             : {}),
-        });
+        } as ChatMessage & { reasoning_content?: string });
         break;
       case "tool_results":
         // OpenAI protocol: one "tool" message per result.
@@ -124,7 +129,7 @@ export class OpenAIProvider implements Provider {
       {
       model: this.model,
       max_tokens: MAX_TOKENS,
-      messages: toOpenAIMessages(req.system, req.messages, this.vision),
+      messages: toOpenAIMessages(req.system, req.messages, this.vision, this.model),
       ...(req.tools.length > 0
         ? {
             tools: req.tools.map((t) => ({
@@ -139,11 +144,13 @@ export class OpenAIProvider implements Provider {
     const choice = res.choices[0];
     if (!choice) throw new Error("OpenAI-compatible API returned no choices");
 
-    const toolCalls: ToolCall[] = (choice.message.tool_calls ?? []).flatMap((c) =>
+    const message = choice.message as typeof choice.message & { reasoning_content?: unknown };
+    const reasoningContent = typeof message.reasoning_content === "string" ? message.reasoning_content : undefined;
+    const toolCalls: ToolCall[] = (message.tool_calls ?? []).flatMap((c) =>
       c.type === "function" ? [{ id: c.id, name: c.function.name, input: parseArguments(c.function.arguments) }] : [],
     );
     return {
-      message: { role: "assistant", text: choice.message.content ?? "", toolCalls },
+      message: { role: "assistant", text: message.content ?? "", toolCalls, ...(reasoningContent ? { reasoningContent } : {}) },
       stopReason: mapFinishReason(choice.finish_reason),
       usage: {
         inputTokens: res.usage?.prompt_tokens ?? 0,

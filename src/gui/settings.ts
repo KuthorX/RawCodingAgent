@@ -5,30 +5,33 @@ import { isApprovalMode, type ApprovalMode } from "../agent/permissions.ts";
 export interface GuiSettings {
   // Approval mode the "+ 会话" buttons give a new session.
   newSessionApproval: ApprovalMode;
+  defaultModel: string;
   notifications: boolean;
   compactionTokens: number;
 }
 
-const DEFAULTS: GuiSettings = { newSessionApproval: "auto", notifications: false, compactionTokens: 400_000 };
-
 export class SettingsStore {
   private readonly file: string;
+  private readonly defaultModel: string;
 
-  constructor(file: string) {
+  constructor(file: string, defaultModel = "deepseek-chat") {
     this.file = file;
+    this.defaultModel = defaultModel;
   }
 
   get(): GuiSettings {
-    if (!existsSync(this.file)) return { ...DEFAULTS };
+    const defaults: GuiSettings = { newSessionApproval: "auto", defaultModel: this.defaultModel, notifications: false, compactionTokens: 400_000 };
+    if (!existsSync(this.file)) return { ...defaults };
     try {
       const saved = JSON.parse(readFileSync(this.file, "utf8")) as Partial<GuiSettings>;
       return {
-        newSessionApproval: isApprovalMode(saved.newSessionApproval) ? saved.newSessionApproval : DEFAULTS.newSessionApproval,
+        newSessionApproval: isApprovalMode(saved.newSessionApproval) ? saved.newSessionApproval : defaults.newSessionApproval,
+        defaultModel: typeof saved.defaultModel === "string" && saved.defaultModel.trim() ? saved.defaultModel.trim() : defaults.defaultModel,
         notifications: saved.notifications === true,
-        compactionTokens: Number.isInteger(saved.compactionTokens) && (saved.compactionTokens as number) >= 0 ? saved.compactionTokens as number : DEFAULTS.compactionTokens,
+        compactionTokens: Number.isInteger(saved.compactionTokens) && (saved.compactionTokens as number) >= 0 ? saved.compactionTokens as number : defaults.compactionTokens,
       };
     } catch {
-      return { ...DEFAULTS };
+      return { ...defaults };
     }
   }
 

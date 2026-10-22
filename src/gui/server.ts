@@ -316,7 +316,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
         runner.setLimits({ ...(limits !== undefined ? { limits } : {}), ...(budgetUsd !== undefined ? { budgetUsd } : {}) });
       }
       if (body.notifications !== undefined) runner.setNotifications(body.notifications);
-      if (body.model !== undefined) runner.setModel(body.model);
+      if (body.model !== undefined) runner.setModel(await manager.validateModel(body.model));
       return sendJson(res, 200, { ...runner.info, budget: manager.budgetFor(runner.info) });
     }
     case "POST reveal": {
@@ -380,13 +380,16 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
   if (url.pathname === "/api/settings") {
     if (req.method === "GET") return sendJson(res, 200, manager.settings.get());
     if (req.method === "POST") {
-      return readJson(req).then((body) => {
+      return readJson(req).then(async (body) => {
         if (body.newSessionApproval !== undefined && !isApprovalMode(body.newSessionApproval)) throw new HttpError(400, '"newSessionApproval" must be "ask" or "auto"');
+        if (body.defaultModel !== undefined && (typeof body.defaultModel !== "string" || !body.defaultModel.trim())) throw new HttpError(400, '"defaultModel" must be a non-empty string');
         if (body.notifications !== undefined && typeof body.notifications !== "boolean") throw new HttpError(400, '"notifications" must be a boolean');
         if (body.compactionTokens !== undefined && (typeof body.compactionTokens !== "number" || !Number.isInteger(body.compactionTokens) || body.compactionTokens < 0)) throw new HttpError(400, '"compactionTokens" must be an integer >= 0');
-        if (body.newSessionApproval === undefined && body.notifications === undefined && body.compactionTokens === undefined) throw new HttpError(400, "nothing to change");
+        if (body.newSessionApproval === undefined && body.defaultModel === undefined && body.notifications === undefined && body.compactionTokens === undefined) throw new HttpError(400, "nothing to change");
+        const defaultModel = body.defaultModel === undefined ? undefined : await manager.validateModel(body.defaultModel);
         sendJson(res, 200, manager.settings.update({
           ...(body.newSessionApproval !== undefined ? { newSessionApproval: body.newSessionApproval } : {}),
+          ...(defaultModel !== undefined ? { defaultModel } : {}),
           ...(body.notifications !== undefined ? { notifications: body.notifications } : {}),
           ...(body.compactionTokens !== undefined ? { compactionTokens: body.compactionTokens } : {}),
         }));

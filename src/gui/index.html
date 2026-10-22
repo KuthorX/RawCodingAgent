@@ -33,6 +33,8 @@
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.on { background: var(--sel); color: var(--ink); }
   .setting label { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+  .setting input[type=number], .setting select { height: 26px; min-width: 150px; padding: 0 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font: inherit; }
+  .setting input[type=number]:focus, .setting select:focus { outline: none; border-color: var(--accent); }
   .setting p { margin: 4px 0 0 36px; font-size: 12px; color: var(--muted); }
   .setting p.flat { margin-left: 0; }
   .devices { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
@@ -139,6 +141,8 @@
   .chat-head { padding: 0 22px; height: 34px; flex: none; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
   .chat-head .dot.none { visibility: hidden; }
   .chat-head .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+  .chat-head select { max-width: 240px; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font: inherit; }
+  .chat-head select:focus { outline: none; border-color: var(--accent); }
   #head-links { display: flex; gap: 12px; align-items: center; font-size: 12px; white-space: nowrap; color: var(--muted); }
   #head-links a { color: var(--muted); }
   #head-links a:hover { color: var(--ink); }
@@ -318,9 +322,16 @@
       <p>开启后，新建的会话里 agent 的 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
     </div>
     <div class="setting">
+      <label>新会话默认模型 <select id="set-model"></select></label>
+      <p>只显示模型服务实际返回的 ID；已有会话的模型不受影响。</p>
+    </div>
+    <div class="setting">
       <label><input type="checkbox" class="switch" id="set-notify"> turn 状态网页通知</label>
-      <label>自动压缩阈值 <input type="number" id="set-compact" min="0" step="1000" inputmode="numeric"> token（0 关闭）</label>
       <p>通知需要浏览器授权；会话右键菜单可以覆盖全局通知设置。</p>
+    </div>
+    <div class="setting">
+      <label>自动压缩阈值 <input type="number" id="set-compact" min="0" step="1000" inputmode="numeric"> token（0 关闭）</label>
+      <p>达到阈值后，agent 会先压缩当前会话上下文；也可以输入 /compact 手动执行。</p>
     </div>
     <div class="setting">
       <div class="row"><b>外观</b><span class="seg" id="set-theme"><button type="button" data-theme="">跟随系统</button><button type="button" data-theme="light">浅色</button><button type="button" data-theme="dark">深色</button></span></div>
@@ -503,17 +514,25 @@ const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '[
 let currentWorkspace = null;
 let availableModels = null;
 
-async function loadModelSelect(currentModel) {
+async function loadAvailableModels() {
   try {
     availableModels ??= (await api("/api/models")).models;
   } catch {
     availableModels ??= [];
   }
-  const select = $("model-select");
+  return availableModels;
+}
+
+async function loadModelOptions(select, currentModel) {
+  await loadAvailableModels();
   const models = [...new Set([currentModel, ...availableModels].filter(Boolean))];
   select.replaceChildren(...models.map((model) => { const option = el("option", "", model); option.value = model; return option; }));
   select.value = currentModel;
   select.hidden = models.length === 0;
+}
+
+function loadModelSelect(currentModel) {
+  loadModelOptions($("model-select"), currentModel).catch(() => {});
 }
 
 $("model-select").addEventListener("change", async (ev) => {
@@ -1796,6 +1815,7 @@ async function ensureNotificationPermission() {
 async function loadSettings() {
   settings ??= await api("/api/settings");
   $("set-auto").checked = settings.newSessionApproval === "auto";
+  await loadModelOptions($("set-model"), settings.defaultModel);
   $("set-notify").checked = settings.notifications;
   $("set-compact").value = settings.compactionTokens;
   syncNotificationStreams();
@@ -1809,6 +1829,12 @@ $("set-auto").addEventListener("change", async (ev) => {
     ev.target.checked = !ev.target.checked;
     notice(e);
   }
+});
+$("set-model").addEventListener("change", async (ev) => {
+  try {
+    settings = await api("/api/settings", { defaultModel: ev.target.value });
+    toast(`新会话默认模型已切换：${settings.defaultModel}`);
+  } catch (e) { await loadSettings(); notice(e); }
 });
 $("set-notify").addEventListener("change", async (ev) => {
   if (ev.target.checked && !(await ensureNotificationPermission())) { ev.target.checked = false; return; }

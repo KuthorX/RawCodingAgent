@@ -166,6 +166,13 @@ export class SessionManager {
     return this.runtime.listModels?.() ?? Promise.resolve([this.runtime.model]);
   }
 
+  async validateModel(model: string): Promise<string> {
+    const normalized = model.trim();
+    if (!normalized) throw new HttpError(400, "model must not be empty");
+    if (!(await this.listModels()).includes(normalized)) throw new HttpError(400, `model "${normalized}" is not available`);
+    return normalized;
+  }
+
   get(id: string): SessionRunner {
     const existing = this.runners.get(id);
     if (existing) return existing;
@@ -185,7 +192,7 @@ export class SessionManager {
     const path = normalizePath(workspace);
     if (!statSync(path, { throwIfNoEntry: false })?.isDirectory()) throw new HttpError(400, `"${path}" is not a directory`);
     await this.ensureKnown(path);
-    const meta = this.store.create(path, this.runtime.model, approvalMode ?? this.runtime.defaultApprovalMode);
+    const meta = this.store.create(path, this.settings.get().defaultModel, approvalMode ?? this.runtime.defaultApprovalMode);
     this.get(meta.id);
     return meta;
   }

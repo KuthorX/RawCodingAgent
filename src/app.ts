@@ -56,7 +56,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     store,
     // .workspaces.json is the list from before projects had worktrees; it becomes .projects.json.
     projects: new ProjectStore(resolve(dataDir, ".projects.json"), resolve(dataDir, ".worktrees.json"), resolve(dataDir, ".workspaces.json")),
-    settings: new SettingsStore(resolve(dataDir, ".settings.json")),
+    settings: new SettingsStore(resolve(dataDir, ".settings.json"), provider.model),
     model: provider.model,
     listModels: () => provider.listModels(),
     pricing,

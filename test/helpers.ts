@@ -31,12 +31,16 @@ export function reply(
 // Replays scripted responses and records every request it received.
 export class ScriptedProvider implements Provider {
   readonly name = "scripted";
-  readonly model = "scripted";
+  model = "scripted";
   readonly requests: CompletionRequest[] = [];
   private readonly script: CompletionResponse[];
 
   constructor(script: CompletionResponse[]) {
     this.script = [...script];
+  }
+
+  setModel(model: string): void {
+    this.model = model;
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResponse> {
@@ -67,7 +71,7 @@ export function testRuntime(provider: Provider): Runtime {
   return {
     store,
     projects: new ProjectStore(join(tempWorkspace(), "projects.json"), join(tempWorkspace(), "worktrees.json")),
-    settings: new SettingsStore(join(tempWorkspace(), "settings.json")),
+    settings: new SettingsStore(join(tempWorkspace(), "settings.json"), provider.model),
     model: provider.model,
     pricing: DEFAULT_PRICING,
     promptRules: [],

@@ -21,6 +21,16 @@ test("openai: system first, tool calls stringified, one tool message per result"
   assert.deepEqual(out[3], { role: "tool", tool_call_id: "t1", content: "ERROR: boom" });
 });
 
+test("openai: preserves DeepSeek reasoning content for thinking models", () => {
+  const out = toOpenAIMessages("sys", [{ role: "assistant", text: "", reasoningContent: "private chain", toolCalls: [] }]);
+  assert.deepEqual(out[1], { role: "assistant", content: null, reasoning_content: "private chain" });
+});
+
+test("openai: thinking models accept old assistant history without reasoning content", () => {
+  const out = toOpenAIMessages("sys", [{ role: "assistant", text: "old answer", toolCalls: [] }], false, "deepseek-flash");
+  assert.deepEqual(out[1], { role: "assistant", content: "old answer", reasoning_content: "" });
+});
+
 test("openai: malformed arguments are flagged, not thrown", () => {
   assert.deepEqual(parseArguments('{"a":1}'), { a: 1 });
   assert.deepEqual(parseArguments(""), {});

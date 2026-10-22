@@ -27,6 +27,8 @@ export type Message =
       role: "assistant";
       text: string;
       toolCalls: ToolCall[];
+      // DeepSeek thinking models require this opaque reasoning trace on the next request.
+      reasoningContent?: string;
     }
   | { role: "tool_results"; results: ToolResult[] };
 
