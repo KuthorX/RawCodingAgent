@@ -33,6 +33,15 @@
   .seg button.on { background: var(--sel); color: var(--ink); }
   .setting label { display: flex; gap: 10px; align-items: center; cursor: pointer; }
   .setting p { margin: 4px 0 0 36px; font-size: 12px; color: var(--muted); }
+  .setting p.flat { margin-left: 0; }
+  .devices { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
+  .devices li { display: flex; gap: 10px; align-items: center; padding: 3px 0; border-top: 1px dashed var(--line); }
+  .devices li span { flex: 1; color: var(--muted); }
+  .devices li b { font-weight: 400; color: var(--ink); margin-right: 8px; }
+  .devices li button { color: var(--err); }
+  dialog.ui .qr { display: block; width: 220px; margin: 12px auto 4px; background: #fff; }
+  dialog.ui .qr svg { display: block; width: 100%; height: auto; }
+  dialog.ui code.link { display: block; margin: 0 16px; font-size: 11px; word-break: break-all; color: var(--muted); }
   /* Bottom status line: the open session's state, then the keys that work right now. */
   .status { display: flex; flex: none; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; }
   .status > span { padding: 1px 12px; border-right: 1px solid var(--line); }
@@ -268,6 +277,11 @@
     <div class="setting">
       <div class="row"><b>外观</b><span class="seg" id="set-theme"><button type="button" data-theme="">跟随系统</button><button type="button" data-theme="light">浅色</button><button type="button" data-theme="dark">深色</button></span></div>
       <p style="margin-left:0">只影响这个浏览器。</p>
+    </div>
+    <div class="setting" id="set-remote">
+      <div class="row"><b>远程访问</b><button type="button" id="pair-new" hidden>配对新设备</button></div>
+      <p class="flat" id="remote-status"></p>
+      <ul class="devices" id="devices"></ul>
     </div>
   </div>
 </div>
@@ -618,7 +632,7 @@ function workspaceGroup(p, w, sessions) {
 function workspaceMenu(ev, p, w) {
   const items = [["复制路径", () => copyText(w.path, "路径")]];
   if (w.branch) items.push(["复制分支名", () => copyText(w.branch, "分支名")]);
-  if (!w.missing) items.push([`在${FILE_MANAGER}中打开`, () => api("/api/projects/reveal", { path: w.path }).catch(notice)]);
+  if (!w.missing && !REMOTE) items.push([`在${FILE_MANAGER}中打开`, () => api("/api/projects/reveal", { path: w.path }).catch(notice)]);
   items.push(["设置工作区额度…", () => openBudgetDialog(p, w)]);
   if (!w.main) items.push(null, ["删除工作区…", () => deleteWorkspace(p, w)]);
   showMenu(ev, items);
@@ -980,17 +994,24 @@ async function createSession(workspace) {
 // One button: opens the typed path, or shows the OS folder chooser when the field is empty.
 async function openWorkspace() {
   const path = $("ws-path").value.trim();
-  if (!path) return pickWorkspace();
+  if (!path) return REMOTE ? notice("从其他设备打开时不能弹出选择框，请输入项目在主机上的路径（支持 ~）") : pickWorkspace();
   try {
     const p = await api("/api/projects", { path });
     $("ws-path").value = "";
-    $("ws-open").textContent = "选择…";
+    $("ws-open").textContent = openLabel();
     collapsed.delete("p:" + p.path);
     refreshSessions();
   } catch (e) { notice(e); }
 }
 $("ws-open").onclick = openWorkspace;
-$("ws-path").addEventListener("input", () => { $("ws-open").textContent = $("ws-path").value.trim() ? "打开" : "选择…"; });
+// Remotely there is no OS chooser to fall back to (it would open on the host's screen).
+const openLabel = () => (REMOTE || $("ws-path").value.trim() ? "打开" : "选择…");
+$("ws-path").addEventListener("input", () => { $("ws-open").textContent = openLabel(); });
+if (REMOTE) {
+  $("ws-open").textContent = openLabel();
+  $("ws-open").title = "";
+  $("ws-path").placeholder = "项目在主机上的路径";
+}
 
 // The server shows the OS folder chooser (a web page can't read absolute paths itself).
 async function pickWorkspace() {
@@ -1329,6 +1350,8 @@ function openSession(id) {
     $("dot").className = "dot";
     if (source.readyState !== EventSource.CLOSED) return;
     const res = await fetch(withToken(`/events/${id}`)).catch(() => null);
+    // This device was revoked on the host (the server ended the stream).
+    if (REMOTE && res?.status === 401) return void (location.href = "/pair");
     const data = await res?.json().catch(() => ({}));
     if (current !== id) return;
     logBox.replaceChildren(el("div", "err", "无法打开这个会话：" + (data?.error || "连接失败，请确认服务仍在运行")));
@@ -1485,6 +1508,64 @@ $("set-auto").addEventListener("change", async (ev) => {
   }
 });
 
+// Remote access (--remote): the address, paired devices, and pairing codes (created only on the host).
+async function loadRemote(info) {
+  info ??= await api("/api/remote");
+  $("pair-new").hidden = !info.enabled || REMOTE;
+  if (!info.enabled) {
+    $("remote-status").textContent = "未开启。用 npm run gui -- --remote 启动后，同一个 Tailscale 账号下的其他设备（手机、另一台电脑）可以通过 HTTPS 打开这个界面。";
+    $("devices").replaceChildren();
+    return;
+  }
+  $("remote-status").replaceChildren(
+    "地址 ", el("code", "", info.url + "/"), `，只允许 ${info.owner} 访问，设备需先配对。` + (REMOTE ? "配对码只能在主机上生成。" : ""),
+  );
+  $("devices").replaceChildren(...(info.devices.length ? info.devices.map((d) => deviceRow(d, info.you)) : [el("li", "", "还没有配对的设备。")]));
+}
+
+function deviceRow(device, you) {
+  const li = el("li");
+  const text = el("span");
+  text.append(el("b", "", device.name + (device.id === you ? "（当前设备）" : "")), `配对于 ${fmt.time(device.createdAt)} · 最近 ${fmt.time(device.lastSeenAt)}`);
+  const revoke = el("button", "small", "撤销");
+  revoke.type = "button";
+  revoke.onclick = async () => {
+    const msg = device.id === you ? "撤销后这台设备会立即断开，需要在主机上重新配对。" : `"${device.name}" 会立即断开，之后需要重新配对。`;
+    if (!(await ask(msg, { title: "撤销设备", ok: "撤销", danger: true }))) return;
+    try { await loadRemote(await api("/api/remote/revoke", { id: device.id })); } catch (e) { notice(e); }
+  };
+  li.append(text, revoke);
+  return li;
+}
+
+$("pair-new").onclick = async () => {
+  let pairing;
+  try { pairing = await api("/api/remote/pairing", {}); } catch (e) { return notice(e); }
+  const box = el("dialog", "ui");
+  const qr = el("div", "qr");
+  qr.innerHTML = pairing.svg; // generated by the server from our own link
+  const left = el("p");
+  const row = el("div", "row");
+  const copy = el("button", "", "复制链接");
+  const close = el("button", "primary", "完成");
+  copy.type = close.type = "button";
+  copy.onclick = () => navigator.clipboard.writeText(pairing.link).then(() => toast("已复制"), notice);
+  close.onclick = () => box.close();
+  row.append(copy, close);
+  box.append(el("h3", "", "配对新设备"), el("p", "", "用手机扫码，或把链接发到要配对的设备上打开。那台设备要登录同一个 Tailscale 账号。"), qr, el("code", "link", pairing.link), left, row);
+  const tick = () => {
+    const s = Math.max(0, Math.round((pairing.expiresAt - Date.now()) / 1000));
+    left.textContent = s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} 后失效，只能用一次。` : "已失效，请重新生成。";
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+  // Pick up the new device once it has paired.
+  const poll = setInterval(() => loadRemote().catch(() => {}), 3000);
+  box.addEventListener("close", () => { clearInterval(timer); clearInterval(poll); box.remove(); loadRemote().catch(() => {}); });
+  document.body.append(box);
+  box.showModal();
+};
+
 function showTheme() {
   const theme = localStorage.getItem("rca.theme") || "";
   for (const b of $("set-theme").children) b.classList.toggle("on", b.dataset.theme === theme);
@@ -1554,6 +1635,7 @@ if (requireToken($("root"))) {
   window.addEventListener("hashchange", route);
   route();
   loadSettings().catch(() => {});
+  loadRemote().catch(() => {});
   // Load the other tabs in the background, so even the first switch is instant.
   setTimeout(() => { for (const tab of Object.keys(FRAME_TABS)) frameFor(tab, ""); }, 1500);
 }

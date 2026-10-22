@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配对 · raw-coding-agent</title>
+<link rel="stylesheet" href="/common.css">
+<script src="/theme.js"></script>
+<style>
+  .pair { max-width: 420px; margin: 0 auto; padding: 32px 20px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+  .pair p { margin: 0; color: var(--muted); }
+  .pair label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+  .pair input { height: 32px; font: inherit; }
+  .pair button { height: 32px; }
+  .pair .err { color: var(--err); }
+</style>
+</head>
+<body>
+<div class="topbar"><h1>raw-coding-agent · 配对设备</h1></div>
+<div class="pair" id="pair">
+  <p>这台设备还没有访问权限（或者已经被撤销）。在主机的"设置 → 远程访问"里点"配对新设备"，扫码或打开那里显示的链接。在主机本机上打开 tailnet 地址也算一台远程设备。</p>
+  <label>配对码<input type="text" id="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="链接 # 后面的部分，或整个链接"></label>
+  <label>设备名称<input type="text" id="name" maxlength="60"></label>
+  <button type="button" class="primary" id="go">配对</button>
+  <p class="err" id="err"></p>
+</div>
+<script src="/common.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+function guessName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return "iPhone";
+  if (/iPad/.test(ua)) return "iPad";
+  if (/Android/.test(ua)) return "Android";
+  if (/Mac/.test(ua)) return "Mac";
+  if (/Windows/.test(ua)) return "Windows";
+  return "浏览器";
+}
+
+// Accepts the bare code or the whole link the host showed.
+const codeOf = (text) => text.trim().replace(/^.*#/, "");
+
+async function pair() {
+  $("err").textContent = "";
+  $("go").disabled = true;
+  try {
+    await api("/api/pair", { code: codeOf($("code").value), name: $("name").value });
+    location.replace("/");
+  } catch (e) {
+    $("err").textContent = String(e.message).replace(/^\d{3} /, "");
+    $("go").disabled = false;
+  }
+}
+
+if (!REMOTE) {
+  $("pair").replaceChildren(el("p", "", "这个页面给其他设备用。在主机上请直接打开终端里打印的地址。"));
+} else {
+  // Out of the address bar and history: the code is single use, but no reason to leave it lying around.
+  const takeCode = () => {
+    if (location.hash.length > 1) $("code").value = location.hash.slice(1);
+    history.replaceState(null, "", "/pair");
+  };
+  takeCode();
+  // Opening the link while already on /pair (e.g. after a redirect here) only changes the hash.
+  addEventListener("hashchange", takeCode);
+  $("name").value = guessName();
+  $("go").onclick = pair;
+  for (const input of [$("code"), $("name")]) input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") pair(); });
+}
+</script>
+</body>
+</html>

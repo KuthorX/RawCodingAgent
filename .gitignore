@@ -9,3 +9,5 @@ node_modules/
 .settings.json
 .swebench-cache/
 .swebench-venv/
+.devices.json
+.remote-serve-*.json

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { request } from "node:http";
 import { after, before, test } from "node:test";
 import { SessionManager } from "../src/gui/manager.ts";
-import { createGuiServer, listen } from "../src/gui/server.ts";
+import { createGuiServers, listen } from "../src/gui/server.ts";
 import { reply, ScriptedProvider, testRuntime } from "./helpers.ts";
 
 const TOKEN = "test-token";
@@ -16,7 +16,7 @@ let nextPick: () => Promise<string | null> = async () => null;
 before(async () => {
   runtime = testRuntime(new ScriptedProvider([reply("hello")]));
   workspace = runtime.store.root;
-  const server = createGuiServer(new SessionManager(runtime), TOKEN, { pickFolder: () => nextPick() });
+  const server = createGuiServers(new SessionManager(runtime), TOKEN, { pickFolder: () => nextPick() }).local;
   port = await listen(server, 0);
   close = () => server.close();
 });

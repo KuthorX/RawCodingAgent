@@ -11,6 +11,8 @@ import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.t
 import { commitDetail, loadIterations } from "./iterations.ts";
 import { revealInFileManager } from "./reveal.ts";
 import { forWire } from "./wire.ts";
+import { identifyLocal, identifyRemote, type Caller, type RemoteAccess } from "./remote/access.ts";
+import { DeviceStreams, handleRemote } from "./remote/routes.ts";
 
 const HOST = "127.0.0.1";
 const APP_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -20,6 +22,7 @@ const PAGES: Record<string, [string, string]> = {
   "/": ["text/html", page("index.html")],
   "/stats": ["text/html", page("stats.html")],
   "/raw": ["text/html", page("raw.html")],
+  "/pair": ["text/html", page("pair.html")],
   "/iterations": ["text/html", page("iterations.html")],
   "/common.css": ["text/css", page("common.css")],
   "/common.js": ["text/javascript", page("common.js")],
@@ -74,8 +77,10 @@ function parseLimits(raw: unknown): TurnLimits {
   return limits;
 }
 
-function streamEvents(req: IncomingMessage, res: ServerResponse, manager: SessionManager, id: string): void {
+// track: registers the open stream once the session is known, returns its cleanup.
+function streamEvents(req: IncomingMessage, res: ServerResponse, manager: SessionManager, id: string, track: () => () => void): void {
   const runner = manager.get(id);
+  const untrack = track();
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
   res.write(`event: hello\ndata: ${JSON.stringify(runner.info)}\n\n`);
   const unsubscribe = runner.subscribe((event) => res.write(`data: ${JSON.stringify(forWire(event))}\n\n`));
@@ -85,11 +90,13 @@ function streamEvents(req: IncomingMessage, res: ServerResponse, manager: Sessio
   req.on("close", () => {
     clearInterval(heartbeat);
     unsubscribe();
+    untrack();
   });
 }
 
 export interface GuiOptions {
   pickFolder?: PickFolder;
+  remote?: RemoteAccess;
 }
 
 // One native dialog at a time: a second click while it is open would stack dialogs.
@@ -272,18 +279,38 @@ interface Context {
   manager: SessionManager;
   token: string;
   pick: () => Promise<string | null>;
+  remote: RemoteAccess | undefined;
+  streams: DeviceStreams;
 }
 
-function route(req: IncomingMessage, res: ServerResponse, url: URL, { manager, token, pick }: Context): Promise<void> | void {
+// Things that act on the host's own screen (native dialogs, the file manager) make no sense from another device.
+function hostOnly(method: string | undefined, path: string): boolean {
+  return method === "POST" && (path === "/api/projects/pick" || path === "/api/projects/reveal" || /^\/api\/sessions\/[^/]+\/reveal$/.test(path));
+}
+
+// The host's own pages prove themselves with the startup token; remote devices with the cookie they got by pairing.
+function authorized(req: IncomingMessage, url: URL, caller: Caller, token: string): boolean {
+  if (caller.kind === "remote") return caller.device !== null;
+  // EventSource and plain links can't send headers, so GET requests may carry the token in the query.
+  const given = (req.headers["x-agent-token"] as string | undefined) ?? (req.method === "GET" ? url.searchParams.get("token") : null);
+  return tokenMatches(token, given);
+}
+
+function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller, context: Context): Promise<void> | void {
+  const { manager, token, pick, remote, streams } = context;
   const asset = req.method === "GET" ? PAGES[url.pathname] : undefined;
   if (asset) return sendText(res, asset[0], asset[1]);
 
-  // EventSource and plain links can't send headers, so GET requests may carry the token in the query.
-  const given = (req.headers["x-agent-token"] as string | undefined) ?? (req.method === "GET" ? url.searchParams.get("token") : null);
-  if (!tokenMatches(token, given)) return sendJson(res, 401, { error: "bad token" });
+  if (url.pathname === "/api/pair") return handleRemote(req, res, url, caller, remote, streams);
+  if (!authorized(req, url, caller, token)) return sendJson(res, 401, { error: caller.kind === "remote" ? "not paired" : "bad token" });
+  if (caller.kind === "remote" && hostOnly(req.method, url.pathname)) return sendJson(res, 403, { error: "only available on the host machine" });
 
   const events = url.pathname.match(/^\/events\/([^/]+)$/);
-  if (req.method === "GET" && events) return streamEvents(req, res, manager, sessionId(events[1]));
+  if (req.method === "GET" && events) {
+    const device = caller.kind === "remote" ? caller.device : null;
+    return streamEvents(req, res, manager, sessionId(events[1]), () => (device ? streams.add(device.id, res) : () => {}));
+  }
+  if (url.pathname.startsWith("/api/remote")) return handleRemote(req, res, url, caller, remote, streams);
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager);
   if (url.pathname.startsWith("/api/projects")) return handleProjects(req, res, url, manager, pick);
   if (url.pathname === "/api/settings") {
@@ -303,26 +330,37 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, { manager, t
   return sendJson(res, 404, { error: "not found" });
 }
 
-export function createGuiServer(manager: SessionManager, token: string, options: GuiOptions = {}): Server {
-  const context: Context = { manager, token, pick: folderPicker(options.pickFolder ?? nativePickFolder) };
-  const server = createServer((req, res) => {
-    const port = (server.address() as AddressInfo).port;
-    // Host check blocks DNS rebinding; the token blocks cross-site requests from other pages.
-    if (req.headers.host !== `${HOST}:${port}` && req.headers.host !== `localhost:${port}`) {
-      return sendJson(res, 403, { error: "forbidden host" });
-    }
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+export interface GuiServers {
+  // The host's own browser: http://127.0.0.1:<port>, startup token.
+  local: Server;
+  // Only `tailscale serve` connects here (with --remote). Which listener a request arrived on, not its Host
+  // header, decides that it is remote: serve passes Host through, so a tailnet peer could claim "127.0.0.1".
+  remote: Server | null;
+}
+
+export function createGuiServers(manager: SessionManager, token: string, options: GuiOptions = {}): GuiServers {
+  const context: Context = {
+    manager,
+    token,
+    pick: folderPicker(options.pickFolder ?? nativePickFolder),
+    remote: options.remote,
+    streams: new DeviceStreams(),
+  };
+  const handler = (via: "local" | "remote") => (req: IncomingMessage, res: ServerResponse) => {
     const fail = (err: unknown) => {
       const status = err instanceof HttpError ? err.status : 500;
       if (!res.headersSent) sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
     };
     try {
-      Promise.resolve(route(req, res, url, context)).catch(fail);
+      // Host check blocks DNS rebinding; the token (or device cookie) blocks cross-site requests from other pages.
+      const caller = via === "local" ? identifyLocal(req, req.socket.localPort ?? 0) : identifyRemote(req, context.remote!);
+      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+      Promise.resolve(route(req, res, url, caller, context)).catch(fail);
     } catch (err) {
       fail(err);
     }
-  });
-  return server;
+  };
+  return { local: createServer(handler("local")), remote: options.remote ? createServer(handler("remote")) : null };
 }
 
 export function listen(server: Server, port: number): Promise<number> {

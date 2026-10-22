@@ -42,6 +42,23 @@ npm run gui -- --cwd ../some-repo        # 可选：顺便把这个目录加入�
 
 服务只监听 `127.0.0.1`，所有接口都要求启动时随机生成的 token，并校验 Host 头。因为页面能触发 bash，不要把这个地址分享出去。
 
+#### 从其他设备访问（Tailscale）
+
+```bash
+npm run gui -- --remote                  # 地址是 https://<本机>.<tailnet>.ts.net/
+npm run gui -- --remote --remote-port 8443
+```
+
+手机、另一台电脑在局域网或外网都能打开这个界面，前提是两边都装了 [Tailscale](https://tailscale.com) 并登录同一个账号，tailnet 开了 MagicDNS 和 HTTPS 证书（管理后台 DNS 页）。同一局域网里 Tailscale 会走直连，不绕外网。
+
+- **怎么连**：启动时读 `tailscale status --json` 拿到本机的 MagicDNS 名和所属账号，在 `127.0.0.1` 上另开一个端口（系统分配）专门给远程用，然后 `tailscale serve --bg --https=<端口> http://127.0.0.1:<这个端口>`：Tailscale 在 tailnet 名上终结 HTTPS（证书自动签发），转发过来。两个端口都只监听 `127.0.0.1`。退出（Ctrl-C、kill、关终端窗口）时 `tailscale serve --https=<端口> off`。进程号和转发目标记在 `.remote-serve-<端口>.json`，进程被强杀留下的配置下次启动能认出来（记录的进程已经不在），直接覆盖；这个端口上有别的 serve 配置、另一个实例正在用、或者开了 Funnel（公网）时拒绝启动，不会覆盖。用 `nohup` 启动时关终端不会退出，也就不会关掉 serve。没用前台模式的 `tailscale serve`：macOS 版（1.104）前台进程被 kill 后配置不会清掉，端口一直被占着。
+- **谁能进**：请求从哪个端口进来决定它算本机还是远程，不看 Host 头（serve 原样转发 Host，tailnet 里的人可以自称 `127.0.0.1`）。本机端口：Host 只能是 `127.0.0.1` / `localhost`，要启动 token。远程端口四层检查，缺一不可：Host 必须是本机的 tailnet 名（防 DNS rebinding）；`Tailscale-User-Login` 必须是本机所属账号（serve 会替换客户端自带的这个头；tagged 设备和别人共享过来的设备要么没有、要么不是你，都拒绝）；非 GET 请求的 `Origin` 必须是 tailnet 地址；最后还要有配对得到的设备凭证。启动 token 在远程不算数。
+- **配对**：在主机的"设置 → 远程访问"点"配对新设备"，显示二维码和链接（`https://…/pair#<配对码>`，码放在 `#` 后面，不进请求行和日志），5 分钟内有效，只能用一次。配对码只能在主机上生成（这就是"人在主机旁"的证明）。手机扫码打开，换到一个设备凭证，存成 `__Host-` 前缀、`HttpOnly; Secure; SameSite=Strict` 的 cookie，有效一年。一分钟内 10 次错误的配对码会锁到这一分钟结束。在主机本机上打开 tailnet 地址也算远程设备，同样要配对。
+- **设备**：记在 `.devices.json`（只存凭证的 sha256，文件权限 600；多个实例共用时会读到彼此的改动，但在 A 实例撤销的设备，连在 B 实例上的会话推送要等它下一个请求才断；文件读不了时改名成 `.devices.json.bad`，设备要重新配对）。"设置 → 远程访问"列出所有设备和最近访问时间，可以撤销：撤销后这台设备正在看的会话推送立即断开，跳回配对页。已配对的设备也能撤销别的设备（都是同一个账号），手机丢了就在主机上把它撤销。
+- **同一个 tailnet 名上的其他服务**：cookie 不区分端口，同一个 `*.ts.net` 名下 serve 的其他端口也会收到设备凭证，不要和不信任的服务共用这台机器的 tailnet 名。
+- **远程不能用的**：系统文件夹选择框和"在 Finder 中显示"会出现在主机的屏幕上，远程时不提供（接口返回 403），打开项目要输入主机上的路径。
+- **没做的**：不支持 Funnel（公网，没有身份头）、Headscale（不支持 serve）、tagged 的主机；没有专门的手机布局。
+
 ### 终端
 
 ```bash
@@ -162,7 +179,8 @@ src/
     settings.ts         网页的设置（.settings.json）
     http.ts / reveal.ts HTTP 工具、在文件管理器中显示
     pick-folder.ts      弹出系统文件夹选择框
-    *.html / common.*   主页面（会话 / 设置，统计和迭代记录以 iframe 嵌入）、统计、迭代记录、原文件
+    remote/             --remote：tailscale 状态与 serve（tailscale.ts）、来访者校验（access.ts）、设备与配对码（devices.ts）、接口（routes.ts）
+    *.html / common.*   主页面（会话 / 设置，统计和迭代记录以 iframe 嵌入）、统计、迭代记录、原文件、配对页
 eval/tasks/             10 个练习任务（repo / check / solution / task.json）
 test/                   loop、tools、协议转换、trace、会话、HTTP 接口、eval
 ```

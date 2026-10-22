@@ -1,6 +1,8 @@
 "use strict";
 // Shared by all pages: token handling, API calls, DOM helpers, source-file links.
 const TOKEN = new URLSearchParams(location.search).get("token");
+// Opened from another device through `tailscale serve` (--remote): no token, a device cookie set by pairing instead.
+const REMOTE = location.hostname !== "127.0.0.1" && location.hostname !== "localhost";
 const FILES = ["trace.jsonl", "events.jsonl", "messages.json", "meta.json"];
 
 function el(tag, className, text) {
@@ -18,17 +20,19 @@ function link(href, text, newTab) {
 }
 
 function withToken(path, params = {}) {
-  const query = new URLSearchParams({ token: TOKEN, ...params });
-  return `${path}?${query}`;
+  const query = new URLSearchParams({ ...(TOKEN ? { token: TOKEN } : {}), ...params });
+  return query.size ? `${path}?${query}` : path;
 }
 
 async function api(path, body) {
   const res = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "x-agent-token": TOKEN, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: { ...(TOKEN ? { "x-agent-token": TOKEN } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
+  // Never paired, or revoked on the host.
+  if (REMOTE && res.status === 401) top.location.href = "/pair";
   if (!res.ok) throw new Error(`${res.status} ${data.error || res.statusText}`);
   return data;
 }
@@ -76,7 +80,9 @@ function rawUrl(session, file, line) {
 // What the OS calls its file manager.
 const FILE_MANAGER = /Mac/.test(navigator.platform) ? "Finder" : /Win/.test(navigator.platform) ? "资源管理器" : "文件管理器";
 
+// Nothing from another device: the file manager would open on the host's screen.
 function revealButton(session, file, label = "定位") {
+  if (REMOTE) return document.createDocumentFragment();
   const btn = el("button", "small", label);
   btn.type = "button";
   btn.title = `在${FILE_MANAGER}中显示 ${file}`;
@@ -116,7 +122,7 @@ const EMBEDDED = window.top !== window;
 function asTab(tab) {
   const target = () => "#" + tab + (location.hash.length > 1 ? "/" + location.hash.slice(1) : "");
   if (!EMBEDDED) {
-    if (!TOKEN) return () => {}; // requireToken() explains
+    if (!TOKEN && !REMOTE) return () => {}; // requireToken() explains
     location.replace(withToken("/") + target());
     return false;
   }
@@ -138,7 +144,7 @@ function openChat(id) {
 }
 
 function requireToken(target) {
-  if (TOKEN) return true;
+  if (TOKEN || REMOTE) return true;
   target.replaceChildren(el("div", "banner", "缺少 token：请使用终端里打印的完整地址打开。"));
   return false;
 }
