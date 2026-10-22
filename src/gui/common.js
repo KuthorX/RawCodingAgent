@@ -1,7 +1,8 @@
 "use strict";
 // Shared by all pages: token handling, API calls, DOM helpers, source-file links.
 const TOKEN = new URLSearchParams(location.search).get("token");
-// Opened from another device through `tailscale serve` (--remote): no token, a device cookie set by pairing instead.
+// Opened from another device (--remote through `tailscale serve`, --public through Cloudflare): no token, a device
+// cookie set by pairing instead.
 const REMOTE = location.hostname !== "127.0.0.1" && location.hostname !== "localhost";
 // A touch screen without a mouse (phones, tablets): no hover, no keyboard shortcuts.
 const TOUCH = matchMedia("(hover: none)").matches;
@@ -26,12 +27,40 @@ function withToken(path, params = {}) {
   return query.size ? `${path}?${query}` : path;
 }
 
+// Opened through Cloudflare Access (--public) and its sign-in has expired: Access then redirects every request
+// to its login page on another origin, which fetch and EventSource only see as a network error. A request that
+// doesn't follow redirects shows it. Only the whole page can sign in again.
+async function accessExpired() {
+  if (!REMOTE) return false;
+  const res = await fetch("/api/remote", { redirect: "manual", cache: "no-store" }).catch(() => null);
+  return res?.type === "opaqueredirect";
+}
+
+// Reloads the page to go through the Access login; the returned promise never settles, the page is going away.
+// Pages save what they'd lose on the "rca:signin" event. Not again within a minute: if the reload didn't
+// help (e.g. Access misconfigured so that only full page loads pass), don't loop.
+const SIGNIN_RETRY_MS = 60_000;
+function signInAgain() {
+  const last = Number(sessionStorage.getItem("rca.signin") || 0);
+  if (Date.now() - last < SIGNIN_RETRY_MS) return Promise.reject(new Error("Cloudflare Access 登录已过期，请刷新页面重新登录"));
+  sessionStorage.setItem("rca.signin", String(Date.now()));
+  top.dispatchEvent(new Event("rca:signin"));
+  top.location.reload();
+  return new Promise(() => {});
+}
+
 async function api(path, body) {
-  const res = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { ...(TOKEN ? { "x-agent-token": TOKEN } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { ...(TOKEN ? { "x-agent-token": TOKEN } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (err) {
+    if (await accessExpired()) return signInAgain();
+    throw err;
+  }
   const data = await res.json().catch(() => ({}));
   // Never paired, or revoked on the host.
   if (REMOTE && res.status === 401) top.location.href = "/pair";

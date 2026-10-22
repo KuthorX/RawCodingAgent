@@ -143,14 +143,14 @@ before(async () => {
   workspace = runtime.store.root;
   const devices = new DeviceStore(join(tempWorkspace(), "devices.json"));
   const servers = createGuiServers(new SessionManager(runtime), TOKEN, {
-    remote: { origin: ORIGIN, owner: OWNER, devices },
+    remote: { devices, tailnet: { origin: ORIGIN, owner: OWNER } },
     pickFolder: async () => (picks++, null),
   });
   port = await listen(servers.local, 0);
-  remotePort = await listen(servers.remote!, 0);
+  remotePort = await listen(servers.tailnet!, 0);
   close = () => {
     servers.local.close();
-    servers.remote!.close();
+    servers.tailnet!.close();
   };
 });
 after(() => close());
@@ -277,7 +277,8 @@ test("remote: revoking a device ends its open event streams and its access", asy
 test("without --remote: a tailnet Host is refused and remote access reports off", async () => {
   const runtime = testRuntime(new ScriptedProvider([]));
   const servers = createGuiServers(new SessionManager(runtime), TOKEN);
-  assert.equal(servers.remote, null);
+  assert.equal(servers.tailnet, null);
+  assert.equal(servers.public, null);
   const server = servers.local;
   const local = await listen(server, 0);
   try {

@@ -168,14 +168,15 @@ export class SessionStore {
   // A new session with the source's history (messages + replayable events) up to its last finished turn,
   // so a turn running in another process is left out. The trace starts empty: stats count the fork's own work.
   // `workspace`: continue in another directory (a new worktree); default: the source's own workspace.
-  fork(sourceId: string, options: { workspace?: string; now?: Date } = {}): SessionMeta {
+  // `approvalMode`: default: the source's.
+  fork(sourceId: string, options: { workspace?: string; approvalMode?: ApprovalMode; now?: Date } = {}): SessionMeta {
     const now = options.now ?? new Date();
     const source = this.getMeta(sourceId);
     const events = this.loadEvents(sourceId);
     const lastEnd = events.findLastIndex((e) => (e.type === "turn_end" || e.type === "error") && !e.continues);
     const kept = events.slice(0, lastEnd + 1);
     const meta: SessionMeta = {
-      ...this.create(options.workspace ?? source.workspace, source.model, source.approvalMode, now),
+      ...this.create(options.workspace ?? source.workspace, source.model, options.approvalMode ?? source.approvalMode, now),
       title: source.title,
       turns: source.turns,
       forkedFrom: { id: source.id, turns: source.turns },

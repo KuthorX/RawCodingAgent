@@ -11,3 +11,4 @@ node_modules/
 .swebench-venv/
 .devices.json
 .remote-serve-*.json
+.audit.jsonl

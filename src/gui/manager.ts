@@ -188,11 +188,11 @@ export class SessionManager {
   // A turn running here hasn't saved its messages yet; forking now would silently drop it.
   // newWorkspace: also create a worktree whose new branch starts at the source workspace's current commit,
   // so the two sessions change files independently. Uncommitted changes don't come along; the count says how many.
-  async fork(id: string, newWorkspace?: { name?: string }): Promise<{ meta: SessionMeta; workspace?: unknown; uncommitted?: number; copied?: string[] }> {
+  async fork(id: string, newWorkspace?: { name?: string }, approvalMode?: ApprovalMode): Promise<{ meta: SessionMeta; workspace?: unknown; uncommitted?: number; copied?: string[] }> {
     if (!this.store.exists(id)) throw new HttpError(404, `session "${id}" not found`);
     if (this.runners.get(id)?.isBusy) throw new HttpError(409, "这个会话正在运行，等这一轮结束后再 fork");
     if (!newWorkspace) {
-      const meta = this.store.fork(id);
+      const meta = this.store.fork(id, { approvalMode });
       this.get(meta.id);
       return { meta };
     }
@@ -201,7 +201,7 @@ export class SessionManager {
     if (!project?.repo) throw new HttpError(400, "原会话的目录不在任何 git 项目里，不能 fork 到新工作区");
     const { commit, dirty } = await asHttp(headOf(source));
     const created = await this.createWorkspace(project, { name: newWorkspace.name, base: commit });
-    const meta = this.store.fork(id, { workspace: created.workspace.path });
+    const meta = this.store.fork(id, { workspace: created.workspace.path, approvalMode });
     this.get(meta.id);
     return { meta, workspace: created.workspace, uncommitted: dirty, copied: created.copied };
   }

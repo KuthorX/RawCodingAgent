@@ -1348,6 +1348,7 @@ $("mode-auto").addEventListener("change", async (ev) => {
 function openSession(id) {
   events?.close();
   attachments = [];
+  restoreDraft(id);
   renderAttachments();
   queuedBubbles = [];
   current = id || null;
@@ -1405,6 +1406,7 @@ function openSession(id) {
   // session, e.g. because another process has it open. Fetch the same URL once to show why.
   events.onerror = async () => {
     $("dot").className = "dot";
+    if (await accessExpired()) return void signInAgain().catch(notice);
     if (source.readyState !== EventSource.CLOSED) return;
     const res = await fetch(withToken(`/events/${id}`)).catch(() => null);
     // This device was revoked on the host (the server ended the stream).
@@ -1417,6 +1419,45 @@ function openSession(id) {
     input.disabled = sendBtn.disabled = true;
   };
   refreshSessions();
+}
+
+// The unsent message survives the reload that signs in to Cloudflare Access again (common.js signInAgain).
+const DRAFT_KEY = "rca.draft";
+addEventListener("rca:signin", () => {
+  if (!current || (!input.value && !attachments.length)) return;
+  const save = (images) => sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ session: current, text: input.value, images }));
+  // Images may not fit in sessionStorage (about 5 MB); keep the text at least.
+  try { save(attachments); } catch { try { save([]); } catch {} }
+});
+function restoreDraft(id) {
+  const draft = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "null");
+  if (!draft || draft.session !== id) return;
+  sessionStorage.removeItem(DRAFT_KEY);
+  input.value = draft.text;
+  attachments = draft.images;
+}
+
+// iOS Safari freezes a page in the background and drops its connections, often without an error event, so the
+// stream can look open while nothing arrives. Coming back after a while (or back online), open it again; the
+// server replays the session, so nothing is missed. Unsent text and images in the input are kept.
+const STALE_AFTER_MS = 10_000;
+let hiddenAt = 0;
+function reconnectEvents() {
+  if (!current || !events) return;
+  const keep = attachments;
+  openSession(current);
+  attachments = keep;
+  renderAttachments();
+}
+if (REMOTE) {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return void (hiddenAt = Date.now());
+    if (hiddenAt && Date.now() - hiddenAt >= STALE_AFTER_MS) reconnectEvents();
+    hiddenAt = 0;
+  });
+  // Restored from the back/forward cache: its connections are gone.
+  addEventListener("pageshow", (ev) => { if (ev.persisted) reconnectEvents(); });
+  addEventListener("online", reconnectEvents);
 }
 
 // ---------- image attachments ----------
@@ -1566,17 +1607,24 @@ $("set-auto").addEventListener("change", async (ev) => {
   }
 });
 
-// Remote access (--remote): the address, paired devices, and pairing codes (created only on the host).
+// Remote access (--remote / --public): the addresses, paired devices, and pairing codes (created only on the host).
+const ENTRY_NAMES = { tailnet: "Tailscale", public: "公网" };
+let remoteInfo = null;
 async function loadRemote(info) {
   info ??= await api("/api/remote");
+  remoteInfo = info;
   $("pair-new").hidden = !info.enabled || REMOTE;
   if (!info.enabled) {
-    $("remote-status").textContent = "未开启。用 npm run gui -- --remote 启动后，同一个 Tailscale 账号下的其他设备（手机、另一台电脑）可以通过 HTTPS 打开这个界面。";
+    $("remote-status").textContent = "未开启。用 npm run gui -- --remote 启动后，同一个 Tailscale 账号下的其他设备（手机、另一台电脑）可以通过 HTTPS 打开这个界面；--public 则通过 Cloudflare Tunnel 从公网打开（配置见 README）。";
     $("devices").replaceChildren();
     return;
   }
+  const lines = [];
+  if (info.tailnet) lines.push(["Tailscale：", el("code", "", info.tailnet.url + "/"), `，只允许 ${info.tailnet.owner}。`]);
+  if (info.public) lines.push(["公网：", el("code", "", info.public.url + "/"), "，先过 Cloudflare Access 登录。"]);
   $("remote-status").replaceChildren(
-    "地址 ", el("code", "", info.url + "/"), `，只允许 ${info.owner} 访问，设备需先配对。` + (REMOTE ? "配对码只能在主机上生成。" : ""),
+    ...lines.flatMap((parts) => [...parts, el("br")]),
+    "设备需先配对。" + (REMOTE ? "配对码只能在主机上生成。" : "") + (info.public ? "从公网新建的会话默认每次询问 bash。" : ""),
   );
   $("devices").replaceChildren(...(info.devices.length ? info.devices.map((d) => deviceRow(d, info.you)) : [el("li", "", "还没有配对的设备。")]));
 }
@@ -1584,7 +1632,8 @@ async function loadRemote(info) {
 function deviceRow(device, you) {
   const li = el("li");
   const text = el("span");
-  text.append(el("b", "", device.name + (device.id === you ? "（当前设备）" : "")), `配对于 ${fmt.time(device.createdAt)} · 最近 ${fmt.time(device.lastSeenAt)}`);
+  const via = device.via ? `${ENTRY_NAMES[device.via]} · ` : "";
+  text.append(el("b", "", device.name + (device.id === you ? "（当前设备）" : "")), `${via}配对于 ${fmt.time(device.createdAt)} · 最近 ${fmt.time(device.lastSeenAt)}`);
   const revoke = el("button", "small", "撤销");
   revoke.type = "button";
   revoke.onclick = async () => {
@@ -1596,32 +1645,62 @@ function deviceRow(device, you) {
   return li;
 }
 
-$("pair-new").onclick = async () => {
-  let pairing;
-  try { pairing = await api("/api/remote/pairing", {}); } catch (e) { return notice(e); }
+const PAIR_HINTS = {
+  tailnet: "用手机扫码，或把链接发到要配对的设备上打开。那台设备要登录同一个 Tailscale 账号。",
+  public: "用手机扫码，或把链接发到要配对的设备上打开。先用 Cloudflare Access 允许的账号登录，再完成配对。",
+};
+
+$("pair-new").onclick = () => {
+  const entries = ["tailnet", "public"].filter((e) => remoteInfo?.[e]);
   const box = el("dialog", "ui");
+  const hint = el("p");
   const qr = el("div", "qr");
-  qr.innerHTML = pairing.svg; // generated by the server from our own link
+  const linkBox = el("code", "link");
   const left = el("p");
   const row = el("div", "row");
   const copy = el("button", "", "复制链接");
   const close = el("button", "primary", "完成");
   copy.type = close.type = "button";
-  copy.onclick = () => navigator.clipboard.writeText(pairing.link).then(() => toast("已复制"), notice);
   close.onclick = () => box.close();
   row.append(copy, close);
-  box.append(el("h3", "", "配对新设备"), el("p", "", "用手机扫码，或把链接发到要配对的设备上打开。那台设备要登录同一个 Tailscale 账号。"), qr, el("code", "link", pairing.link), left, row);
+  // Both entries on: choose which address the code links to (a device pairs per address).
+  const seg = el("span", "seg");
+  seg.style.marginTop = "10px";
+  let pairing = null, latest = 0;
+  const show = async (via) => {
+    for (const b of seg.children) b.classList.toggle("on", b.dataset.via === via);
+    const n = ++latest;
+    let next;
+    try { next = await api("/api/remote/pairing", { via }); } catch (e) { box.close(); return notice(e); }
+    // Switched again while this one was on its way: the later answer wins.
+    if (n !== latest) return;
+    pairing = next;
+    hint.textContent = PAIR_HINTS[via];
+    qr.innerHTML = pairing.svg; // generated by the server from our own link
+    linkBox.textContent = pairing.link;
+    tick();
+  };
+  for (const via of entries) {
+    const b = el("button", "", ENTRY_NAMES[via]);
+    b.type = "button";
+    b.dataset.via = via;
+    b.onclick = () => show(via);
+    seg.append(b);
+  }
+  copy.onclick = () => pairing && navigator.clipboard.writeText(pairing.link).then(() => toast("已复制"), notice);
+  box.append(el("h3", "", "配对新设备"), ...(entries.length > 1 ? [seg] : []), hint, qr, linkBox, left, row);
   const tick = () => {
+    if (!pairing) return;
     const s = Math.max(0, Math.round((pairing.expiresAt - Date.now()) / 1000));
     left.textContent = s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} 后失效，只能用一次。` : "已失效，请重新生成。";
   };
-  tick();
   const timer = setInterval(tick, 1000);
   // Pick up the new device once it has paired.
   const poll = setInterval(() => loadRemote().catch(() => {}), 3000);
   box.addEventListener("close", () => { clearInterval(timer); clearInterval(poll); box.remove(); loadRemote().catch(() => {}); });
   document.body.append(box);
   box.showModal();
+  show(entries[0]);
 };
 
 function showTheme() {

@@ -28,7 +28,7 @@ npm run gui -- --cwd ../some-repo        # 可选：顺便把这个目录加入�
   - 记录在 `.worktrees.json`（只记这里新建的；手动 `git worktree add` 的也会列出来，只是删除时不会删它的分支）。
 - **页面结构**：顶部四个常驻标签：会话、统计、迭代记录、设置，都在同一个页面（`/`）里。地址里的 `#stats/<会话>`、`#iterations/<提交>`、`#settings` 表示当前标签，其他情况 `#<会话>` 是对话。统计和迭代记录各在一个 iframe 里，第一次打开后只是隐藏，所以切回来是瞬时的，滚动位置和展开状态都在。单独打开 `/stats`、`/iterations` 会转到对应标签。
 - **外观与键盘**：终端风格（等宽字体，琥珀色只标出当前标签、运行中和等待批准），有浅色和深色两套，默认跟随系统，可以在"设置"里固定一种（存在浏览器本地）。没在输入框里打字时：`1`–`4` 切换标签，`/` 搜索会话，有待审批时 `y` 允许、`n` 拒绝、`a` 本会话不再询问，`Esc` 停止 agent；底部状态栏显示当前会话的状态和此刻可用的按键。
-- **手机**：屏幕不超过 720px 宽时一次只显示一栏：没打开会话时是会话列表，打开后是对话，左上角"‹"回到列表；统计和迭代记录的表格可以横向滑动，提交详情盖住整页显示。触屏上长按代替右键菜单，鼠标悬停才出现的按钮一直显示，输入框里 Enter 是换行、点"发送"才发出。配合 `--remote` 用（见下面"从其他设备访问"）。
+- **手机**：屏幕不超过 720px 宽时一次只显示一栏：没打开会话时是会话列表，打开后是对话，左上角"‹"回到列表；统计和迭代记录的表格可以横向滑动，提交详情盖住整页显示。触屏上长按代替右键菜单，鼠标悬停才出现的按钮一直显示，输入框里 Enter 是换行、点"发送"才发出。配合 `--remote` / `--public` 用（见下面"从其他设备访问""从公网访问"）。
 - **对话**：点任意历史会话即可继续之前的工作。bash 调用会在页面上请求批准。在会话列表里右键可以复制 session id、复制工作区路径、fork、设置这个会话的额度、归档或删除。
 - **归档与删除**：归档的会话不在项目树里显示，在侧栏的"已归档"标签里（注明属于哪个项目和工作区），仍然能搜到，右键可以取消归档（`meta.json` 的 `archived`）。删除会移除整个会话目录（消息、trace、图片），不能恢复；正在运行的会话要先停止，被别的进程打开的会话不能删。
 - **搜索**：侧栏顶部的搜索框按标题、你发的消息和 agent 的回复搜索（不搜工具调用和输出），不区分大小写，包括已归档的会话；结果显示匹配的片段，Esc 清空。
@@ -58,7 +58,49 @@ npm run gui -- --remote --remote-port 8443
 - **设备**：记在 `.devices.json`（只存凭证的 sha256，文件权限 600；多个实例共用时会读到彼此的改动，但在 A 实例撤销的设备，连在 B 实例上的会话推送要等它下一个请求才断；文件读不了时改名成 `.devices.json.bad`，设备要重新配对）。"设置 → 远程访问"列出所有设备和最近访问时间，可以撤销：撤销后这台设备正在看的会话推送立即断开，跳回配对页。已配对的设备也能撤销别的设备（都是同一个账号），手机丢了就在主机上把它撤销。
 - **同一个 tailnet 名上的其他服务**：cookie 不区分端口，同一个 `*.ts.net` 名下 serve 的其他端口也会收到设备凭证，不要和不信任的服务共用这台机器的 tailnet 名。
 - **远程不能用的**：系统文件夹选择框和"在 Finder 中显示"会出现在主机的屏幕上，远程时不提供（接口返回 403），打开项目要输入主机上的路径。
-- **没做的**：不支持 Funnel（公网，没有身份头）、Headscale（不支持 serve）、tagged 的主机；没有专门的手机布局。
+- **没做的**：不支持 Funnel（没有身份头，公网用下面的 Cloudflare 方案）、Headscale（不支持 serve）、tagged 的主机。
+
+#### 从公网访问（Cloudflare Tunnel + Access）
+
+手机不装 Tailscale 也能打开。选型过程见 [docs/public-access-evaluation.md](docs/public-access-evaluation.md)。代价是 **Cloudflare 能看到明文**（对话、代码、命令输出），因为 HTTPS 在它的边缘终结。
+
+```bash
+npm run gui -- --public                       # cloudflared 转发到 http://127.0.0.1:4318
+npm run gui -- --public --public-port 4400
+npm run gui -- --remote --public              # 两个入口一起开
+```
+
+一次性准备（应用不管 cloudflared，它作为系统服务常驻）：
+
+1. 域名的 DNS 托管在 Cloudflare。
+2. Zero Trust 后台建一个 **Access 应用**（Self-hosted），域名填 `agent.example.com`，策略只放行你自己的邮箱（邮箱验证码或 GitHub 登录）。记下应用的 **AUD tag** 和团队名（`<team>.cloudflareaccess.com`）。
+3. 装 `cloudflared`，`cloudflared tunnel login`、`cloudflared tunnel create rca`、`cloudflared tunnel route dns rca agent.example.com`，`~/.cloudflared/config.yml`：
+
+   ```yaml
+   tunnel: rca
+   credentials-file: /Users/<你>/.cloudflared/<tunnel-id>.json
+   ingress:
+     - hostname: agent.example.com
+       service: http://127.0.0.1:4318
+       originRequest:
+         httpHostHeader: agent.example.com   # 应用要求 Host 是公网域名
+         access:                             # cloudflared 自己也校验 Access 令牌，没有就不转发
+           required: true
+           teamName: <team>
+           audTag: [<AUD tag>]
+     - service: http_status:404
+   ```
+
+   装成 launchd 服务，断线自动重连：`cloudflared service install`（当前用户的 LaunchAgent，登录后启动，用 `~/.cloudflared/` 下的配置）；要开机不登录也启动，用 `sudo cloudflared service install`，它以 root 运行、读 `/etc/cloudflared/config.yml`，需要把配置和凭证文件复制过去并改好 `credentials-file` 路径。
+4. `.env` 里填 `PUBLIC_ORIGIN`、`CF_ACCESS_TEAM_DOMAIN`、`CF_ACCESS_AUD`、`PUBLIC_ALLOWED_EMAILS`（见 `.env.example`）。
+
+- **谁能进**：三层，缺一不可。Cloudflare 边缘：没通过 Access 登录的请求到不了 Mac。应用：校验每个请求的 `Cf-Access-Jwt-Assertion`（RS256，用团队公开的密钥验签，检查签发方、AUD、有效期，邮箱必须在 `PUBLIC_ALLOWED_EMAILS` 里），这样 Access 策略配错了也不会放行；外加和 Tailscale 一样的 Host / Origin 检查。最后还要配对过的设备凭证。公网入口单独一个 `127.0.0.1` 端口，只给 cloudflared 用。启动时先去取一次密钥，团队名填错会直接报错退出；之后遇到不认识的密钥 ID（Cloudflare 轮换密钥）最多每分钟重取一次，取不到返回 503，不会放行。
+- **配对**：同 Tailscale。两个入口都开时，配对对话框里选"Tailscale"或"公网"，生成对应地址的链接。配对码只能从生成它的那个入口兑换，设备凭证也只在配对时的入口有效，同一台手机走两个入口要各配对一次。设备列表里标出是从哪个入口配对的。
+- **新建的会话默认每次询问**：从公网新建或 fork 的会话，不管设置里"新会话自动批准 bash"、被 fork 的会话怎么选，都从"每次询问"开始，需要时在对话页顶部手动切成自动。这只是更稳妥的默认值，不是权限边界：配对过的设备仍然可以切成自动，也可以给已经是自动的会话发消息。
+- **审计日志**：两个远程入口上所有改动类的请求（POST）和所有被拒绝的请求，按行记在 `.audit.jsonl`（文件权限 600）：时间、入口、账号（tailnet 登录名或 Access 邮箱）、设备、方法、路径（不含查询参数）、状态码；客户端中途断开（比如上传到一半）的记 `"aborted": true`。只读请求不记。
+- **登录过期**：Access 登录默认 24 小时过期，之后浏览器的后台请求会被重定向到 Cloudflare 登录页，页面里只看到网络错误。页面发现请求失败时用不跟随重定向的请求探一次，确认是登录过期就整页刷新，走一遍 Access 登录再回来；输入框里没发出去的文字（和放得下的图片）刷新后还在。一分钟内不会再自动刷新第二次，避免配置有误时反复刷新。
+- **iOS 切回前台**：iOS Safari 把页面放到后台会掐断推送连接，常常没有任何错误事件。远程打开的页面在离开超过 10 秒后回到前台、从往返缓存恢复、或网络恢复时，重新连接当前会话的推送（服务端会重放整个会话，不会漏消息；输入框里没发出去的文字和图片保留）。
+- **没做的**：断线后只补发缺的事件（现在每次重连都重放整个会话）；Mac 睡眠时远程打不开，需要插电并防止睡眠（`caffeinate -s`）。
 
 ### 终端
 
@@ -180,7 +222,7 @@ src/
     settings.ts         网页的设置（.settings.json）
     http.ts / reveal.ts HTTP 工具、在文件管理器中显示
     pick-folder.ts      弹出系统文件夹选择框
-    remote/             --remote：tailscale 状态与 serve（tailscale.ts）、来访者校验（access.ts）、设备与配对码（devices.ts）、接口（routes.ts）
+    remote/             --remote / --public：tailscale 状态与 serve（tailscale.ts）、Cloudflare Access 令牌校验（cf-access.ts）、来访者校验（access.ts）、设备与配对码（devices.ts）、审计日志（audit.ts）、接口（routes.ts）
     *.html / common.*   主页面（会话 / 设置，统计和迭代记录以 iframe 嵌入）、统计、迭代记录、原文件、配对页
 eval/tasks/             10 个练习任务（repo / check / solution / task.json）
 test/                   loop、tools、协议转换、trace、会话、HTTP 接口、eval

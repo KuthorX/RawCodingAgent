@@ -6,16 +6,32 @@ import type { Device, DeviceStore } from "./devices.ts";
 const DEVICE_COOKIE = "__Host-rca_device";
 const COOKIE_MAX_AGE_S = 365 * 24 * 3600;
 
-// Remote access through `tailscale serve`: it terminates HTTPS on the tailnet name and proxies to our remote
-// listener on 127.0.0.1, replacing any client-sent Tailscale-User-Login with the caller's real login (tagged callers get none).
-export interface RemoteAccess {
-  // e.g. "https://my-mac.tailnet.ts.net" or "https://my-mac.tailnet.ts.net:8443"
-  origin: string;
-  owner: string;
-  devices: DeviceStore;
+export type Entry = "tailnet" | "public";
+
+// Checks the Cloudflare Access token of a public request; resolves to the signed-in account.
+export interface TokenVerifier {
+  verify(token: string | undefined): Promise<{ email: string }>;
 }
 
-export type Caller = { kind: "local" } | { kind: "remote"; device: Device | null };
+// The ways in from other devices. Each has its own 127.0.0.1 listener that only its proxy points at;
+// both share one list of paired devices, but a device (and a pairing code) only works through the entry it was made for.
+export interface RemoteEntries {
+  devices: DeviceStore;
+  // `tailscale serve`: HTTPS on the tailnet name, replacing any client-sent Tailscale-User-Login with the
+  // caller's real login (tagged callers get none). e.g. "https://my-mac.tailnet.ts.net".
+  tailnet?: { origin: string; owner: string };
+  // A Cloudflare Tunnel whose hostname is behind Cloudflare Access, e.g. "https://agent.example.com".
+  public?: { origin: string; verifier: TokenVerifier };
+}
+
+// who: the tailnet login or the Access email, for the audit log.
+export type Caller = { kind: "local" } | { kind: "remote"; via: Entry; who: string; device: Device | null };
+
+// The paired device, if the cookie belongs to one paired through this same entry.
+function deviceOf(req: IncomingMessage, entries: RemoteEntries, via: Entry): Device | null {
+  const device = entries.devices.authenticate(cookie(req, DEVICE_COOKIE));
+  return device && (!device.via || device.via === via) ? device : null;
+}
 
 function cookie(req: IncomingMessage, name: string): string | undefined {
   for (const part of (req.headers.cookie ?? "").split(";")) {
@@ -32,15 +48,31 @@ export function identifyLocal(req: IncomingMessage, port: number): Caller {
   return { kind: "local" };
 }
 
-// Everything on the listener `tailscale serve` proxies to.
-export function identifyRemote(req: IncomingMessage, remote: RemoteAccess): Caller {
-  if (req.headers.host !== new URL(remote.origin).host) throw new HttpError(403, "forbidden host");
-  // A missing login means a tagged device or a request that bypassed serve: refuse it, don't treat it as the owner.
-  if (req.headers["tailscale-user-login"] !== remote.owner) throw new HttpError(403, "only the owner of this machine's tailnet account");
-  // Cookies are SameSite=Strict, but check Origin too so no other page can post to us.
+// Host (DNS rebinding) and, for writes, Origin: cookies are SameSite=Strict, but no other page may post to us.
+function checkOrigin(req: IncomingMessage, origin: string): void {
+  if (req.headers.host !== new URL(origin).host) throw new HttpError(403, "forbidden host");
   const safe = req.method === "GET" || req.method === "HEAD";
-  if (!safe && req.headers.origin !== remote.origin) throw new HttpError(403, "forbidden origin");
-  return { kind: "remote", device: remote.devices.authenticate(cookie(req, DEVICE_COOKIE)) };
+  if (!safe && req.headers.origin !== origin) throw new HttpError(403, "forbidden origin");
+}
+
+// Everything on the listener `tailscale serve` proxies to.
+export function identifyTailnet(req: IncomingMessage, entries: RemoteEntries): Caller {
+  const tailnet = entries.tailnet!;
+  checkOrigin(req, tailnet.origin);
+  // A missing login means a tagged device or a request that bypassed serve: refuse it, don't treat it as the owner.
+  const login = req.headers["tailscale-user-login"];
+  if (login !== tailnet.owner) throw new HttpError(403, "only the owner of this machine's tailnet account");
+  return { kind: "remote", via: "tailnet", who: login, device: deviceOf(req, entries, "tailnet") };
+}
+
+// Everything on the listener cloudflared forwards to. Access has already signed the user in at the edge;
+// its token is checked again here, so a policy mistake on Cloudflare's side doesn't open the door.
+export async function identifyPublic(req: IncomingMessage, entries: RemoteEntries): Promise<Caller> {
+  const pub = entries.public!;
+  checkOrigin(req, pub.origin);
+  const token = req.headers["cf-access-jwt-assertion"];
+  const { email } = await pub.verifier.verify(typeof token === "string" ? token : undefined);
+  return { kind: "remote", via: "public", who: email, device: deviceOf(req, entries, "public") };
 }
 
 export function deviceCookie(token: string): string {

@@ -11,7 +11,8 @@ import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.t
 import { commitDetail, loadIterations } from "./iterations.ts";
 import { revealInFileManager } from "./reveal.ts";
 import { forWire } from "./wire.ts";
-import { identifyLocal, identifyRemote, type Caller, type RemoteAccess } from "./remote/access.ts";
+import { identifyLocal, identifyPublic, identifyTailnet, type Caller, type Entry, type RemoteEntries } from "./remote/access.ts";
+import type { AuditLog } from "./remote/audit.ts";
 import { DeviceStreams, handleRemote } from "./remote/routes.ts";
 
 const HOST = "127.0.0.1";
@@ -96,7 +97,9 @@ function streamEvents(req: IncomingMessage, res: ServerResponse, manager: Sessio
 
 export interface GuiOptions {
   pickFolder?: PickFolder;
-  remote?: RemoteAccess;
+  remote?: RemoteEntries;
+  // Records what remote callers change or get refused (only used with remote).
+  audit?: AuditLog;
 }
 
 // One native dialog at a time: a second click while it is open would stack dialogs.
@@ -159,9 +162,12 @@ async function handleProjects(
 }
 
 // Routes: /api/sessions[/search|/:id[/message|approve|settings|archive|delete|stop|fork|stats|reveal|file|attachment|tool]]
-async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager): Promise<void> {
+async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager, caller: Caller): Promise<void> {
   const [, , , rawId, action] = url.pathname.split("/");
   const method = req.method ?? "GET";
+  // Sessions created or forked from the public internet start out asking before each bash command, whatever the
+  // global default or the forked session says. A safer default only: the device may still switch a session to auto.
+  const startMode = caller.kind === "remote" && caller.via === "public" ? "ask" : undefined;
 
   if (!rawId) {
     if (method === "GET") return sendJson(res, 200, manager.list());
@@ -171,7 +177,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
         throw new HttpError(400, '"approvalMode" must be "ask" or "auto"');
       }
       if (typeof body.workspace !== "string" || !body.workspace.trim()) throw new HttpError(400, '"workspace" path is required');
-      return sendJson(res, 201, await manager.create(body.workspace, body.approvalMode));
+      return sendJson(res, 201, await manager.create(body.workspace, startMode ?? body.approvalMode));
     }
     throw new HttpError(405, "method not allowed");
   }
@@ -225,7 +231,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       const nw = body.newWorkspace;
       if (nw !== undefined && (typeof nw !== "object" || nw === null)) throw new HttpError(400, '"newWorkspace" must be an object');
       const name = typeof (nw as { name?: unknown } | undefined)?.name === "string" ? (nw as { name: string }).name : undefined;
-      return sendJson(res, 201, await manager.fork(id, nw === undefined ? undefined : { name }));
+      return sendJson(res, 201, await manager.fork(id, nw === undefined ? undefined : { name }, startMode));
     }
     case "POST archive": {
       const body = await readJson(req);
@@ -279,7 +285,7 @@ interface Context {
   manager: SessionManager;
   token: string;
   pick: () => Promise<string | null>;
-  remote: RemoteAccess | undefined;
+  remote: RemoteEntries | undefined;
   streams: DeviceStreams;
 }
 
@@ -311,7 +317,7 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
     return streamEvents(req, res, manager, sessionId(events[1]), () => (device ? streams.add(device.id, res) : () => {}));
   }
   if (url.pathname.startsWith("/api/remote")) return handleRemote(req, res, url, caller, remote, streams);
-  if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager);
+  if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager, caller);
   if (url.pathname.startsWith("/api/projects")) return handleProjects(req, res, url, manager, pick);
   if (url.pathname === "/api/settings") {
     if (req.method === "GET") return sendJson(res, 200, manager.settings.get());
@@ -333,9 +339,16 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
 export interface GuiServers {
   // The host's own browser: http://127.0.0.1:<port>, startup token.
   local: Server;
-  // Only `tailscale serve` connects here (with --remote). Which listener a request arrived on, not its Host
-  // header, decides that it is remote: serve passes Host through, so a tailnet peer could claim "127.0.0.1".
-  remote: Server | null;
+  // One per entry, each only its own proxy connects to (`tailscale serve`, cloudflared). Which listener a
+  // request arrived on, not its Host header, decides that it is remote: the proxies pass Host through,
+  // so a remote caller could claim "127.0.0.1".
+  tailnet: Server | null;
+  public: Server | null;
+}
+
+function identify(req: IncomingMessage, via: "local" | Entry, remote: RemoteEntries | undefined): Caller | Promise<Caller> {
+  if (via === "local") return identifyLocal(req, req.socket.localPort ?? 0);
+  return via === "tailnet" ? identifyTailnet(req, remote!) : identifyPublic(req, remote!);
 }
 
 export function createGuiServers(manager: SessionManager, token: string, options: GuiOptions = {}): GuiServers {
@@ -346,21 +359,28 @@ export function createGuiServers(manager: SessionManager, token: string, options
     remote: options.remote,
     streams: new DeviceStreams(),
   };
-  const handler = (via: "local" | "remote") => (req: IncomingMessage, res: ServerResponse) => {
+  const handler = (via: "local" | Entry) => (req: IncomingMessage, res: ServerResponse) => {
+    let caller: Caller | undefined;
+    if (via !== "local") options.audit?.watch(req, res, via, () => caller);
     const fail = (err: unknown) => {
       const status = err instanceof HttpError ? err.status : 500;
       if (!res.headersSent) sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
     };
-    try {
-      // Host check blocks DNS rebinding; the token (or device cookie) blocks cross-site requests from other pages.
-      const caller = via === "local" ? identifyLocal(req, req.socket.localPort ?? 0) : identifyRemote(req, context.remote!);
-      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-      Promise.resolve(route(req, res, url, caller, context)).catch(fail);
-    } catch (err) {
-      fail(err);
-    }
+    // Host check blocks DNS rebinding; the token (or device cookie) blocks cross-site requests from other pages.
+    Promise.resolve()
+      .then(() => identify(req, via, context.remote))
+      .then((who) => {
+        caller = who;
+        return route(req, res, new URL(req.url ?? "/", `http://${req.headers.host}`), who, context);
+      })
+      .catch(fail);
   };
-  return { local: createServer(handler("local")), remote: options.remote ? createServer(handler("remote")) : null };
+  const remote = options.remote;
+  return {
+    local: createServer(handler("local")),
+    tailnet: remote?.tailnet ? createServer(handler("tailnet")) : null,
+    public: remote?.public ? createServer(handler("public")) : null,
+  };
 }
 
 export function listen(server: Server, port: number): Promise<number> {

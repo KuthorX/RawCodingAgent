@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { HttpError } from "../http.ts";
+import type { Entry } from "./access.ts";
 
 export const PAIRING_TTL_MS = 5 * 60_000;
 // Failed pairing attempts allowed per window before every attempt is refused until the window ends. Codes are
@@ -16,6 +17,8 @@ export interface Device {
   name: string;
   createdAt: string;
   lastSeenAt: string;
+  // Which entry it paired through (absent for devices paired before there was more than one).
+  via?: Entry;
 }
 
 interface StoredDevice extends Device {
@@ -26,6 +29,8 @@ interface StoredDevice extends Device {
 export interface PairingCode {
   code: string;
   expiresAt: number;
+  // Only redeemable through this entry (the one whose link was shown).
+  via?: Entry;
 }
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -53,18 +58,18 @@ export class DeviceStore {
     return this.devices.map(({ tokenHash: _, ...device }) => device);
   }
 
-  createPairingCode(): PairingCode {
-    const code = { code: randomBytes(16).toString("base64url"), expiresAt: this.now() + PAIRING_TTL_MS };
+  createPairingCode(via?: Entry): PairingCode {
+    const code = { code: randomBytes(16).toString("base64url"), expiresAt: this.now() + PAIRING_TTL_MS, ...(via ? { via } : {}) };
     this.codes = [...this.codes.filter((c) => c.expiresAt > this.now()), code];
     return code;
   }
 
   // Trades a pairing code (single use) for a new device and its token.
-  redeem(code: unknown, name: unknown): { device: Device; token: string } {
+  redeem(code: unknown, name: unknown, via?: Entry): { device: Device; token: string } {
     const now = this.now();
     this.failures = this.failures.filter((t) => t > now - FAILURE_WINDOW_MS);
     if (this.failures.length >= MAX_FAILURES) throw new HttpError(429, "too many failed pairing attempts; try again later");
-    const match = typeof code === "string" ? this.codes.find((c) => c.expiresAt > now && sameCode(c.code, code)) : undefined;
+    const match = typeof code === "string" ? this.codes.find((c) => c.expiresAt > now && (!c.via || c.via === via) && sameCode(c.code, code)) : undefined;
     if (!match) {
       this.failures = [...this.failures, now];
       throw new HttpError(403, "pairing code is wrong or expired; create a new one on the host");
@@ -73,7 +78,7 @@ export class DeviceStore {
     const token = randomBytes(32).toString("base64url");
     const at = new Date(now).toISOString();
     const label = typeof name === "string" && name.trim() ? name.trim().slice(0, MAX_NAME) : "未命名设备";
-    const stored: StoredDevice = { id: randomBytes(6).toString("hex"), name: label, createdAt: at, lastSeenAt: at, tokenHash: hash(token) };
+    const stored: StoredDevice = { id: randomBytes(6).toString("hex"), name: label, createdAt: at, lastSeenAt: at, ...(via ? { via } : {}), tokenHash: hash(token) };
     this.sync();
     this.devices = [...this.devices, stored];
     this.save();
