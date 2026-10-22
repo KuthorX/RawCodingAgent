@@ -311,6 +311,11 @@
       <p>开启后，新建的会话里 agent 的 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
     </div>
     <div class="setting">
+      <label><input type="checkbox" class="switch" id="set-notify"> turn 状态网页通知</label>
+      <label>自动压缩阈值 <input type="number" id="set-compact" min="0" step="1000" inputmode="numeric"> token（0 关闭）</label>
+      <p>通知需要浏览器授权；会话右键菜单可以覆盖全局通知设置。</p>
+    </div>
+    <div class="setting">
       <div class="row"><b>外观</b><span class="seg" id="set-theme"><button type="button" data-theme="">跟随系统</button><button type="button" data-theme="light">浅色</button><button type="button" data-theme="dark">深色</button></span></div>
       <p style="margin-left:0">只影响这个浏览器。</p>
     </div>
@@ -343,6 +348,7 @@
       <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
         <input type="checkbox" class="switch" id="mode-auto"> <span id="mode-text">每次询问</span>
       </label>
+      <select id="model-select" hidden title="本会话使用的模型"></select>
       <span id="head-links"></span>
     </div>
     <main id="scroller"><div id="log"></div></main>
@@ -412,8 +418,10 @@ const logBox = $("log"), input = $("input"), sendBtn = $("send");
 let current = null;      // session id
 let events = null;       // EventSource for current session
 let busy = false;
+let dotState = "idle";
 let replaying = false;   // true while the server replays stored events after (re)connect
 const toolCards = new Map();
+const notificationStreams = new Map();
 
 // Cards still running or waiting when a turn ends (stopped, or interrupted by a restart) will never get a result.
 function closeStaleCards() {
@@ -439,7 +447,8 @@ function append(node, parent = logBox) {
 // While busy the input stays open: what you send is an interjection the agent sees at its next step.
 function setBusy(value) {
   busy = value;
-  $("dot").className = "dot " + (!current ? "none" : value ? "busy" : "idle");
+  if (value) setDot("busy");
+  else if (dotState === "busy") setDot("ok");
   sendBtn.disabled = input.disabled = !current;
   $("root").classList.toggle("no-session", !current);
   sendBtn.textContent = value ? "插话" : "发送";
@@ -453,6 +462,11 @@ function setBusy(value) {
     : value
       ? "agent 正在工作：输入内容（可粘贴图片）会在它下一步之前送达（插话），Esc 停止"
       : "描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片";
+}
+
+function setDot(state) {
+  dotState = state;
+  $("dot").className = "dot " + (!current ? "none" : state);
 }
 
 // Queued interjection bubbles, oldest first, waiting for delivery.
@@ -478,6 +492,31 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !docum
 // ---------- session list ----------
 const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '["__other__"]'));
 let currentWorkspace = null;
+let availableModels = null;
+
+async function loadModelSelect(currentModel) {
+  try {
+    availableModels ??= (await api("/api/models")).models;
+  } catch {
+    availableModels ??= [];
+  }
+  const select = $("model-select");
+  const models = [...new Set([currentModel, ...availableModels].filter(Boolean))];
+  select.replaceChildren(...models.map((model) => { const option = el("option", "", model); option.value = model; return option; }));
+  select.value = currentModel;
+  select.hidden = models.length === 0;
+}
+
+$("model-select").addEventListener("change", async (ev) => {
+  const model = ev.target.value;
+  if (!current || !model) return;
+  try {
+    const info = await api(`/api/sessions/${current}/settings`, { model });
+    $("meta").textContent = info.model;
+    toast(`模型已切换：${info.model}`);
+    refreshSessions();
+  } catch (e) { notice(e); }
+});
 
 // "22:59" today, "10/18" before that.
 function shortTime(iso) {
@@ -591,11 +630,24 @@ function sessionMenu(ev, s) {
     null,
     ["Fork（同一工作区）", () => forkSession(s.id).catch(notice)],
   ];
+  const notifyLabel = s.notifications === undefined ? "通知：跟随全局" : s.notifications ? "通知：仅此会话开启" : "通知：仅此会话关闭";
+  items.push([notifyLabel, () => setSessionNotifications(s)]);
   const project = projectOf(s.workspace);
   if (project?.repo) items.push(["Fork 到新工作区…", () => openWorkspaceDialog(project, { forkFrom: s })]);
   items.push(["设置额度…", () => openLimitsDialog(s.id).catch(notice)]);
   items.push(null, s.archived ? ["取消归档", () => archiveSession(s, false)] : ["归档", () => archiveSession(s, true)], ["删除…", () => deleteSession(s)]);
   showMenu(ev, items);
+}
+
+async function setSessionNotifications(s) {
+  const next = s.notifications === undefined ? true : s.notifications ? false : null;
+  if (next === true && !(await ensureNotificationPermission())) return;
+  try {
+    await api(`/api/sessions/${s.id}/settings`, { notifications: next });
+    s.notifications = next === null ? undefined : next;
+    toast(next === null ? "本会话通知跟随全局" : next ? "本会话通知已开启" : "本会话通知已关闭");
+    refreshSessions();
+  } catch (e) { notice(e); }
 }
 
 async function archiveSession(s, archived) {
@@ -713,11 +765,49 @@ async function deleteWorkspace(p, w) {
 let sessionList = [];
 let projects = [];
 
+function notificationsEnabled(id) {
+  const session = sessionList.find((s) => s.id === id);
+  return session ? (session.notifications ?? settings?.notifications ?? false) : false;
+}
+
+function notifySessionEvent(id, event) {
+  if (!notificationsEnabled(id) || !("Notification" in window) || Notification.permission !== "granted") return;
+  const session = sessionList.find((s) => s.id === id);
+  const title = session?.title || id;
+  let body;
+  if (event.type === "approval_request") body = "等待你批准工具调用";
+  else if (event.type === "error") body = `turn 异常：${event.message}`;
+  else body = event.finishReason === "end_turn" ? "turn 已正常完成" : `turn 已结束：${event.finishReason}`;
+  const note = new Notification(title, { body, tag: `rca-${id}-${event.type}` });
+  note.onclick = () => { window.focus(); location.hash = id; note.close(); };
+}
+
+function watchNotificationEvent(id, event) {
+  if (["approval_request", "turn_end", "error"].includes(event.type)) notifySessionEvent(id, event);
+}
+
+function syncNotificationStreams() {
+  const wanted = new Set(sessionList.filter((s) => s.id !== current && notificationsEnabled(s.id)).map((s) => s.id));
+  for (const [id, source] of notificationStreams) {
+    if (!wanted.has(id)) { source.close(); notificationStreams.delete(id); }
+  }
+  for (const id of wanted) {
+    if (notificationStreams.has(id)) continue;
+    const source = new EventSource(withToken(`/events/${id}`));
+    let ready = false;
+    source.addEventListener("replay_done", () => { ready = true; });
+    source.onmessage = (msg) => { if (ready) watchNotificationEvent(id, JSON.parse(msg.data)); };
+    source.onerror = () => { if (source.readyState === EventSource.CLOSED) { source.close(); notificationStreams.delete(id); } };
+    notificationStreams.set(id, source);
+  }
+}
+
 async function refreshSessions() {
   try { [sessionList, projects] = await Promise.all([api("/api/sessions"), api("/api/projects")]); } catch (e) { return; }
   currentWorkspace = sessionList.find((s) => s.id === current)?.workspace ?? currentWorkspace;
   renderSidebar();
   renderStatus();
+  syncNotificationStreams();
 }
 
 function renderSidebar() {
@@ -1257,6 +1347,8 @@ const handlers = {
     card._body.append(bar);
     card._approval = bar;
     card._approvalId = e.id;
+    setDot("waiting");
+    if (!replaying) notifySessionEvent(current, e);
     renderStatus();
     if (!replaying) card.scrollIntoView({ block: "nearest" });
   },
@@ -1269,6 +1361,7 @@ const handlers = {
       card._state.textContent = e.allow ? "已允许，运行中…" : "已拒绝";
       card.open = false;
     }
+    if (busy) setDot("busy");
     renderStatus();
   },
   forked(e) {
@@ -1294,13 +1387,22 @@ const handlers = {
   },
   turn_end(e) {
     const ok = e.finishReason === "end_turn";
+    setDot(ok ? "ok" : "error");
+    if (!replaying) notifySessionEvent(current, e);
     const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
     append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
     endTurn(e.continues);
   },
   error(e) {
+    setDot("error");
+    if (!replaying) notifySessionEvent(current, e);
     append(el("div", "err", "错误：" + e.message));
     endTurn(e.continues);
+  },
+  compacted(e) {
+    append(el("div", "note", `上下文已压缩：${fmt.k(e.beforeTokens)} → ${fmt.k(e.afterTokens)} token`));
+    if (e.manual) setBusy(false);
+    if (!replaying) refreshSessions();
   },
 };
 
@@ -1309,6 +1411,7 @@ function endTurn(continues) {
   closeStaleCards();
   foldTools();
   if (continues) {
+    setBusy(true);
     settleQueued(undefined, "插话 · 作为下一轮发送");
     append(el("div", "note", "继续处理插话内容…"));
   } else {
@@ -1352,6 +1455,7 @@ function openSession(id) {
   renderAttachments();
   queuedBubbles = [];
   current = id || null;
+  dotState = "idle";
   toolCards.clear();
   $("head-links").replaceChildren();
   $("mode").hidden = true;
@@ -1359,6 +1463,7 @@ function openSession(id) {
     logBox.replaceChildren();
     $("head-title").textContent = "";
     $("meta").textContent = "";
+    $("model-select").hidden = true;
     setBusy(false);
     refreshSessions();
     return;
@@ -1374,6 +1479,7 @@ function openSession(id) {
     $("meta").textContent = info.model;
     $("head-title").title = info.workspace;
     currentWorkspace = info.workspace;
+    loadModelSelect(info.model);
     const links = $("head-links");
     const fork = el("button", "link", "fork");
     fork.type = "button";
@@ -1405,7 +1511,7 @@ function openSession(id) {
   // EventSource reconnects on its own after a network blip, but gives up (CLOSED) when the server refuses the
   // session, e.g. because another process has it open. Fetch the same URL once to show why.
   events.onerror = async () => {
-    $("dot").className = "dot";
+    setDot("idle");
     if (await accessExpired()) return void signInAgain().catch(notice);
     if (source.readyState !== EventSource.CLOSED) return;
     const res = await fetch(withToken(`/events/${id}`)).catch(() => null);
@@ -1519,6 +1625,8 @@ $("form").addEventListener("submit", async (ev) => {
   const text = input.value.trim();
   const images = attachments.filter(Boolean);
   if ((!text && images.length === 0) || !current) return;
+  const compacting = text === "/compact" || text.startsWith("/compact ");
+  if (compacting) setBusy(true);
   try {
     await api(`/api/sessions/${current}/message`, { text, ...(images.length ? { images } : {}) });
     input.value = "";
@@ -1526,7 +1634,7 @@ $("form").addEventListener("submit", async (ev) => {
     attachments = [];
     renderAttachments();
     refreshSessions();
-  } catch (e) { append(el("div", "err", "发送失败：" + e.message)); }
+  } catch (e) { if (compacting) setBusy(false); append(el("div", "err", "发送失败：" + e.message)); }
 });
 // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
 input.addEventListener("keydown", (ev) => {
@@ -1592,9 +1700,19 @@ document.addEventListener("keydown", (ev) => {
 
 // ---------- settings ----------
 let settings = null;
+async function ensureNotificationPermission() {
+  if (!("Notification" in window)) { toast("当前浏览器不支持网页通知"); return false; }
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") { toast("网页通知权限已被浏览器拒绝"); return false; }
+  return (await Notification.requestPermission()) === "granted";
+}
+
 async function loadSettings() {
   settings ??= await api("/api/settings");
   $("set-auto").checked = settings.newSessionApproval === "auto";
+  $("set-notify").checked = settings.notifications;
+  $("set-compact").value = settings.compactionTokens;
+  syncNotificationStreams();
   return settings;
 }
 $("set-auto").addEventListener("change", async (ev) => {
@@ -1605,6 +1723,22 @@ $("set-auto").addEventListener("change", async (ev) => {
     ev.target.checked = !ev.target.checked;
     notice(e);
   }
+});
+$("set-notify").addEventListener("change", async (ev) => {
+  if (ev.target.checked && !(await ensureNotificationPermission())) { ev.target.checked = false; return; }
+  try {
+    settings = await api("/api/settings", { notifications: ev.target.checked });
+    syncNotificationStreams();
+    toast("已保存");
+  } catch (e) { ev.target.checked = !ev.target.checked; notice(e); }
+});
+$("set-compact").addEventListener("change", async (ev) => {
+  const value = Number(ev.target.value);
+  if (!Number.isInteger(value) || value < 0) { await loadSettings(); return notice(new Error("请输入大于等于 0 的整数")); }
+  try {
+    settings = await api("/api/settings", { compactionTokens: value });
+    toast(value ? `自动压缩阈值：${fmt.int(value)} token` : "自动压缩已关闭");
+  } catch (e) { await loadSettings(); notice(e); }
 });
 
 // Remote access (--remote / --public): the addresses, paired devices, and pairing codes (created only on the host).

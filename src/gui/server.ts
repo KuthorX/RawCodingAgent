@@ -208,12 +208,28 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       if (!existsSync(path)) throw new HttpError(404, "attachment not found");
       return sendBytes(res, type, readFileSync(path));
     }
+    case "POST compact": {
+      const body = await readJson(req);
+      const runner = manager.get(id);
+      let done: Promise<void>;
+      try { done = runner.compact(typeof body.focus === "string" ? body.focus.trim() : ""); }
+      catch (err) { if (err instanceof SendRejected) throw new HttpError(409, err.message); throw err; }
+      done.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
+      return sendJson(res, 202, { ok: true });
+    }
     case "POST message": {
       const body = await readJson(req, MAX_MESSAGE_BODY);
       const text = typeof body.text === "string" ? body.text.trim() : "";
       const images = parseImages(body.images);
       if (!text && images.length === 0) throw new HttpError(400, '"text" must be a non-empty string (or attach images)');
       const runner = manager.get(id);
+      if (text === "/compact" || text.startsWith("/compact ")) {
+        let done: Promise<void>;
+        try { done = runner.compact(text.slice("/compact".length).trim()); }
+        catch (err) { if (err instanceof SendRejected) throw new HttpError(409, err.message); throw err; }
+        done.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
+        return sendJson(res, 202, { ok: true, compacting: true });
+      }
       const saved = images.map((img) => manager.store.saveAttachment(id, img.data, img.mediaType));
       let sent;
       try {
@@ -253,20 +269,26 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       if (!manager.get(id).approve(body.id, body.allow)) throw new HttpError(404, "no pending approval with that id");
       return sendJson(res, 200, { ok: true });
     }
-    // Any of: approvalMode, limits (replaces the session's turn limits), budgetUsd.
+    // Any of: approvalMode, limits (replaces the session's turn limits), budgetUsd, notifications, model.
     case "POST settings": {
       const body = await readJson(req);
       if (body.approvalMode !== undefined && !isApprovalMode(body.approvalMode)) throw new HttpError(400, '"approvalMode" must be "ask" or "auto"');
+      if (body.notifications !== undefined && body.notifications !== null && typeof body.notifications !== "boolean") {
+        throw new HttpError(400, '"notifications" must be a boolean or null');
+      }
+      if (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) throw new HttpError(400, '"model" must be a non-empty string');
       const limits = body.limits === undefined ? undefined : parseLimits(body.limits);
       const budgetUsd = body.budgetUsd === undefined ? undefined : capValue(body.budgetUsd, "budgetUsd");
-      if (body.approvalMode === undefined && limits === undefined && budgetUsd === undefined) {
-        throw new HttpError(400, 'nothing to change: give "approvalMode", "limits" or "budgetUsd"');
+      if (body.approvalMode === undefined && limits === undefined && budgetUsd === undefined && body.notifications === undefined && body.model === undefined) {
+        throw new HttpError(400, 'nothing to change: give "approvalMode", "limits", "budgetUsd", "notifications" or "model"');
       }
       const runner = manager.get(id);
       if (body.approvalMode !== undefined) runner.setApprovalMode(body.approvalMode as "ask" | "auto");
       if (limits !== undefined || budgetUsd !== undefined) {
         runner.setLimits({ ...(limits !== undefined ? { limits } : {}), ...(budgetUsd !== undefined ? { budgetUsd } : {}) });
       }
+      if (body.notifications !== undefined) runner.setNotifications(body.notifications);
+      if (body.model !== undefined) runner.setModel(body.model);
       return sendJson(res, 200, { ...runner.info, budget: manager.budgetFor(runner.info) });
     }
     case "POST reveal": {
@@ -317,14 +339,25 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
     return streamEvents(req, res, manager, sessionId(events[1]), () => (device ? streams.add(device.id, res) : () => {}));
   }
   if (url.pathname.startsWith("/api/remote")) return handleRemote(req, res, url, caller, remote, streams);
+  if (url.pathname === "/api/models") {
+    if (req.method !== "GET") return sendJson(res, 405, { error: "method not allowed" });
+    return manager.listModels().then((models) => sendJson(res, 200, { models }));
+  }
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager, caller);
   if (url.pathname.startsWith("/api/projects")) return handleProjects(req, res, url, manager, pick);
   if (url.pathname === "/api/settings") {
     if (req.method === "GET") return sendJson(res, 200, manager.settings.get());
     if (req.method === "POST") {
       return readJson(req).then((body) => {
-        if (!isApprovalMode(body.newSessionApproval)) throw new HttpError(400, '"newSessionApproval" must be "ask" or "auto"');
-        sendJson(res, 200, manager.settings.update({ newSessionApproval: body.newSessionApproval }));
+        if (body.newSessionApproval !== undefined && !isApprovalMode(body.newSessionApproval)) throw new HttpError(400, '"newSessionApproval" must be "ask" or "auto"');
+        if (body.notifications !== undefined && typeof body.notifications !== "boolean") throw new HttpError(400, '"notifications" must be a boolean');
+        if (body.compactionTokens !== undefined && (typeof body.compactionTokens !== "number" || !Number.isInteger(body.compactionTokens) || body.compactionTokens < 0)) throw new HttpError(400, '"compactionTokens" must be an integer >= 0');
+        if (body.newSessionApproval === undefined && body.notifications === undefined && body.compactionTokens === undefined) throw new HttpError(400, "nothing to change");
+        sendJson(res, 200, manager.settings.update({
+          ...(body.newSessionApproval !== undefined ? { newSessionApproval: body.newSessionApproval } : {}),
+          ...(body.notifications !== undefined ? { notifications: body.notifications } : {}),
+          ...(body.compactionTokens !== undefined ? { compactionTokens: body.compactionTokens } : {}),
+        }));
       });
     }
   }

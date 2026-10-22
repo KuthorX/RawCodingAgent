@@ -100,7 +100,7 @@ function mapFinishReason(reason: string | null | undefined): StopReason {
 
 export class OpenAIProvider implements Provider {
   readonly name = PROVIDER;
-  readonly model: string;
+  model: string;
   readonly vision: boolean;
   private readonly client: OpenAI;
 
@@ -108,6 +108,15 @@ export class OpenAIProvider implements Provider {
     this.model = config.model;
     this.vision = config.vision;
     this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
+  }
+
+  setModel(model: string): void {
+    this.model = model;
+  }
+
+  async listModels(): Promise<string[]> {
+    const page = await this.client.models.list();
+    return page.data.map((model) => model.id).sort();
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {

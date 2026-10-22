@@ -7,7 +7,7 @@
   --muted: light-dark(#6e6b5e, #7c7a6d); --line: light-dark(#d6d3c7, #2c2f26);
   /* --accent fills (tab, status), --accent-ink is amber as text, --on-accent is text on an amber fill. */
   --accent: light-dark(#f2a93b, #f2b33d); --accent-ink: light-dark(#8f5c00, #f2b33d); --on-accent: light-dark(#1b1600, #0f100d);
-  --link: light-dark(#1d7a75, #6cc4c0); --ok: light-dark(#3a7d2c, #8fcf75); --err: light-dark(#c2412f, #ef6b5b);
+  --link: light-dark(#1d7a75, #6cc4c0); --ok: light-dark(#3a7d2c, #8fcf75); --err: light-dark(#c2412f, #ef6b5b); --info: light-dark(#2672c8, #71a9f2);
   --warn: light-dark(#8f5c00, #f2b33d); --warn-bg: light-dark(#f6ead0, #241e10); --hl: light-dark(#f5dc93, #4a3c14);
   --llm: light-dark(#6d55c9, #b49cf2); --tool: light-dark(#1f8f89, #6cc4c0);
   --mono: "Cascadia Mono", "JetBrains Mono", "Sarasa Mono SC", Consolas, ui-monospace, "Microsoft YaHei", "PingFang SC", monospace;
@@ -60,6 +60,9 @@ kbd { font: inherit; font-size: 12px; color: var(--ink); background: var(--sel);
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; display: inline-block; }
 .dot.idle { background: var(--ok); }
 .dot.busy { background: var(--accent); animation: pulse 1s infinite; }
+.dot.ok { background: var(--ok); }
+.dot.error { background: var(--err); }
+.dot.waiting { background: var(--info); }
 @keyframes pulse { 50% { opacity: .25; } }
 .banner { margin: 10px 16px; padding: 6px 12px; border-left: 2px solid var(--warn); background: var(--warn-bg); color: var(--warn); }
 table { border-collapse: collapse; width: 100%; font-size: 12px; }

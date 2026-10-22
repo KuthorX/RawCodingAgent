@@ -162,6 +162,10 @@ export class SessionManager {
     return this.runtime.store;
   }
 
+  listModels(): Promise<string[]> {
+    return this.runtime.listModels?.() ?? Promise.resolve([this.runtime.model]);
+  }
+
   get(id: string): SessionRunner {
     const existing = this.runners.get(id);
     if (existing) return existing;
@@ -171,6 +175,7 @@ export class SessionManager {
       meta: this.store.getMeta(id),
       makeDeps: this.runtime.makeDeps,
       budget: (meta) => this.budgetFor(meta),
+      compactionTokens: () => this.settings.get().compactionTokens,
     });
     this.runners.set(id, runner);
     return runner;

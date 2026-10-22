@@ -54,6 +54,8 @@ export interface CompletionResponse {
 export interface Provider {
   readonly name: string;
   readonly model: string;
+  setModel?(model: string): void;
+  listModels?(): Promise<string[]>;
   // The signal aborts the in-flight request when the user stops the turn.
   complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse>;
 }

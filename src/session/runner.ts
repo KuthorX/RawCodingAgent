@@ -17,6 +17,7 @@ export interface RunnerOptions {
   // Tightest spending cap left over this session and the workspace/project it belongs to; null = no cap.
   // `label` is for the user, `scope` for the model's limit notice.
   budget?: (meta: SessionMeta) => Budget | null;
+  compactionTokens?: () => number;
 }
 
 export interface Budget {
@@ -29,6 +30,20 @@ export interface Budget {
 export class SendRejected extends Error {}
 
 const INTERRUPTED = "上次运行在这一轮结束前中断（进程退出），这一轮的改动可能不完整。";
+
+const COMPACT_PROMPT = `You are compacting a coding-agent conversation. Write a precise handoff summary for the next agent.
+Keep: the user's goal and constraints, decisions, files changed, commands and test results, unresolved errors, and the exact next step.
+Drop greetings and repeated tool output. Return only the summary.`;
+
+function estimateTokens(messages: Message[]): number {
+  return Math.ceil(JSON.stringify(messages).length / 4);
+}
+
+function messageText(message: Message): string {
+  if (message.role === "user") return `USER:\n${message.content}`;
+  if (message.role === "assistant") return `ASSISTANT:\n${message.text}`;
+  return `TOOLS:\n${message.results.map((r) => `${r.isError ? "ERROR" : "OK"}: ${r.content}`).join("\n")}`;
+}
 
 // A turn that started but never ended means the process died mid-turn.
 function isInterrupted(events: SessionEvent[]): boolean {
@@ -55,11 +70,13 @@ export class SessionRunner {
   private readonly listeners = new Set<Listener>();
   private readonly pending = new Map<string, (allow: boolean) => void>();
   private readonly budget: RunnerOptions["budget"];
+  private readonly compactionTokens: RunnerOptions["compactionTokens"];
   private readonly releaseLock: () => void;
 
   constructor(options: RunnerOptions) {
     this.store = options.store;
     this.budget = options.budget;
+    this.compactionTokens = options.compactionTokens;
     this.meta = options.meta;
     this.releaseLock = this.store.acquireLock(this.meta.id);
     this.history = this.store.loadMessages(this.meta.id);
@@ -130,6 +147,18 @@ export class SessionRunner {
     return { queued: false, done };
   }
 
+  compact(focus = ""): Promise<void> {
+    if (this.running) throw new SendRejected("session is busy");
+    this.controller = new AbortController();
+    const done = this.compactHistory(focus, true, this.controller.signal).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.safely(() => this.emit({ type: "error", message }));
+      throw err;
+    }).finally(() => { this.running = null; this.controller = null; });
+    this.running = done;
+    return this.running;
+  }
+
   // Stops the running turn: aborts the model request and running bash, denies waiting approvals,
   // and drops interjections that were not delivered yet. Returns false when idle.
   stop(): boolean {
@@ -189,6 +218,17 @@ export class SessionRunner {
     if (mode === "auto") for (const id of [...this.pending.keys()]) this.approve(id, true);
   }
 
+  setNotifications(notifications: boolean | null): void {
+    this.meta = this.store.updateMeta(this.id, { notifications: notifications ?? undefined });
+  }
+
+  setModel(model: string): void {
+    if (!model.trim()) throw new Error("model must not be empty");
+    if (!this.deps.provider.setModel) throw new Error("this provider cannot switch models");
+    this.deps.provider.setModel(model.trim());
+    this.meta = this.store.updateMeta(this.id, { model: model.trim() });
+  }
+
   private requestApproval(call: Parameters<Confirm>[0]): Promise<boolean> {
     return new Promise((resolve) => {
       const id = randomUUID();
@@ -202,6 +242,16 @@ export class SessionRunner {
     let input: UserMessage | null = first;
     while (input !== null) {
       this.controller = new AbortController();
+      const limit = this.compactionTokens?.() ?? 0;
+      if (limit > 0 && estimateTokens(this.history) + estimateTokens([input]) >= limit) {
+        try {
+          await this.compactHistory("", false, this.controller.signal);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.safely(() => this.emit({ type: "error", message }));
+          return;
+        }
+      }
       const final = await this.run(input, this.controller.signal);
       const stopped = this.controller.signal.aborted;
       input = !stopped && this.queue.length > 0 ? mergeMessages(this.queue) : null;
@@ -213,6 +263,22 @@ export class SessionRunner {
       }
       this.safely(() => this.emit(input === null ? final : { ...final, continues: true }));
     }
+  }
+
+  private async compactHistory(focus: string, manual: boolean, signal?: AbortSignal): Promise<void> {
+    if (this.history.length === 0) return;
+    const beforeTokens = estimateTokens(this.history);
+    const transcript = this.history.map(messageText).join("\n\n");
+    const response = await this.deps.provider.complete({
+      system: this.deps.system,
+      messages: [{ role: "user", content: `${COMPACT_PROMPT}${focus ? `\nFocus especially on: ${focus}` : ""}\n\n${transcript}` }],
+      tools: [],
+    }, signal);
+    const summary = response.message.text.trim() || "No summary was returned.";
+    const recentUsers = this.history.filter((m): m is Extract<Message, { role: "user" }> => m.role === "user").slice(-8);
+    this.history = [{ role: "user", content: `[Conversation summary]\n${summary}` }, ...recentUsers];
+    this.store.saveMessages(this.id, this.history);
+    this.emit({ type: "compacted", beforeTokens, afterTokens: estimateTokens(this.history), ...(manual ? { manual: true } : {}) });
   }
 
   private async run(input: UserMessage, signal: AbortSignal): Promise<Extract<SessionEvent, { type: "turn_end" | "error" }>> {

@@ -5,9 +5,11 @@ import { isApprovalMode, type ApprovalMode } from "../agent/permissions.ts";
 export interface GuiSettings {
   // Approval mode the "+ 会话" buttons give a new session.
   newSessionApproval: ApprovalMode;
+  notifications: boolean;
+  compactionTokens: number;
 }
 
-const DEFAULTS: GuiSettings = { newSessionApproval: "auto" };
+const DEFAULTS: GuiSettings = { newSessionApproval: "auto", notifications: false, compactionTokens: 400_000 };
 
 export class SettingsStore {
   private readonly file: string;
@@ -20,7 +22,11 @@ export class SettingsStore {
     if (!existsSync(this.file)) return { ...DEFAULTS };
     try {
       const saved = JSON.parse(readFileSync(this.file, "utf8")) as Partial<GuiSettings>;
-      return { newSessionApproval: isApprovalMode(saved.newSessionApproval) ? saved.newSessionApproval : DEFAULTS.newSessionApproval };
+      return {
+        newSessionApproval: isApprovalMode(saved.newSessionApproval) ? saved.newSessionApproval : DEFAULTS.newSessionApproval,
+        notifications: saved.notifications === true,
+        compactionTokens: Number.isInteger(saved.compactionTokens) && (saved.compactionTokens as number) >= 0 ? saved.compactionTokens as number : DEFAULTS.compactionTokens,
+      };
     } catch {
       return { ...DEFAULTS };
     }

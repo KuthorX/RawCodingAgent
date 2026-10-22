@@ -132,7 +132,7 @@ function fileLinks(session, files = FILES) {
   return box;
 }
 
-// D10: conversations above this many input tokens are flagged; compaction isn't implemented yet.
+// D10: conversations above this many input tokens are flagged; automatic compaction is configured in Settings.
 const CONTEXT_WARN_TOKENS = 300_000;
 
 const fmt = {

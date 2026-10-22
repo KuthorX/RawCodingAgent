@@ -28,6 +28,7 @@ export interface SessionMeta {
   updatedAt: string;
   turns: number;
   approvalMode: ApprovalMode;
+  notifications?: boolean;
   // Set on a session created by fork(): where its history came from.
   forkedFrom?: { id: string; turns: number };
   // This session's turn guards. A missing key follows the global default (.env), null means no limit.
@@ -179,6 +180,7 @@ export class SessionStore {
       ...this.create(options.workspace ?? source.workspace, source.model, options.approvalMode ?? source.approvalMode, now),
       title: source.title,
       turns: source.turns,
+      ...(source.notifications !== undefined ? { notifications: source.notifications } : {}),
       forkedFrom: { id: source.id, turns: source.turns },
     };
     writeJsonAtomic(join(this.dir(meta.id), "meta.json"), meta);

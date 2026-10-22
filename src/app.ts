@@ -20,6 +20,7 @@ export interface Runtime {
   projects: ProjectStore;
   settings: SettingsStore;
   model: string;
+  listModels?: () => Promise<string[]>;
   pricing: Pricing;
   promptRules: readonly PromptRule[];
   // Turn guards from .env; a session's own limits override them (see SessionRunner.turnDeps).
@@ -57,6 +58,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     projects: new ProjectStore(resolve(dataDir, ".projects.json"), resolve(dataDir, ".worktrees.json"), resolve(dataDir, ".workspaces.json")),
     settings: new SettingsStore(resolve(dataDir, ".settings.json")),
     model: provider.model,
+    listModels: () => provider.listModels(),
     pricing,
     promptRules: config.promptRules,
     limits: { maxSteps: config.maxSteps, maxTurnCostUsd: config.maxTurnCostUsd },
@@ -76,7 +78,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
         system,
       });
       return {
-        provider,
+        provider: new OpenAIProvider({ ...config.llm, model: meta.model }),
         tools,
         system,
         workspace: meta.workspace,

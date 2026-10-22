@@ -237,9 +237,10 @@ test("search matches titles, user messages and replies, not tool calls", async (
 });
 
 test("GUI settings: new sessions auto-approve by default, can be switched off", async () => {
-  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "auto" });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "auto", notifications: false, compactionTokens: 400000 });
   assert.equal((await call("POST", "/api/settings", { body: { newSessionApproval: "yolo" } })).status, 400);
-  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { newSessionApproval: "ask" } })).body), { newSessionApproval: "ask" });
-  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "ask" });
+  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { newSessionApproval: "ask" } })).body), { newSessionApproval: "ask", notifications: false, compactionTokens: 400000 });
+  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { notifications: true, compactionTokens: 123000 } })).body), { newSessionApproval: "ask", notifications: true, compactionTokens: 123000 });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "ask", notifications: true, compactionTokens: 123000 });
   assert.equal((await call("GET", "/api/settings", { token: null })).status, 401);
 });
