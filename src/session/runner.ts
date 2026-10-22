@@ -266,8 +266,12 @@ export class SessionRunner {
   }
 
   private async compactHistory(focus: string, manual: boolean, signal?: AbortSignal): Promise<void> {
-    if (this.history.length === 0) return;
     const beforeTokens = estimateTokens(this.history);
+    if (this.history.length === 0) {
+      // A manual /compact still needs a completion event so the GUI can leave its busy state.
+      this.emit({ type: "compacted", beforeTokens, afterTokens: beforeTokens, ...(manual ? { manual: true } : {}) });
+      return;
+    }
     const transcript = this.history.map(messageText).join("\n\n");
     const response = await this.deps.provider.complete({
       system: this.deps.system,

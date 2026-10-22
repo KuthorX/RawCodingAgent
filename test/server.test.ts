@@ -44,6 +44,27 @@ function call(method: string, path: string, opts: { body?: unknown; token?: stri
   });
 }
 
+function readSsePrefix(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const req = request({ host: "127.0.0.1", port, method: "GET", path, headers: { host: `127.0.0.1:${port}` } }, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => {
+        body += chunk;
+        if (!settled && body.includes("event: replay_done")) {
+          settled = true;
+          req.destroy();
+          resolve(body);
+        }
+      });
+      res.on("error", (err) => { if (!settled) reject(err); });
+    });
+    req.on("error", (err) => { if (!settled) reject(err); });
+    req.end();
+  });
+}
+
 test("rejects foreign Host headers (DNS rebinding)", async () => {
   assert.equal((await call("GET", "/api/sessions", { host: `evil.example:${port}` })).status, 403);
 });
@@ -76,6 +97,25 @@ test("create a session, run a turn, read stats and raw files", async () => {
 
   const list = JSON.parse((await call("GET", "/api/sessions")).body) as { id: string; title: string }[];
   assert.equal(list.find((s) => s.id === id)?.title, "hi");
+});
+
+test("manual compaction of an empty session does not leave it busy", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "/compact" } })).status, 202);
+  for (let i = 0; i < 50 && JSON.parse((await call("GET", `/api/sessions/${id}`)).body).busy; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  const info = JSON.parse((await call("GET", `/api/sessions/${id}`)).body) as { busy: boolean };
+  assert.equal(info.busy, false);
+  assert.match((await call("GET", `/api/sessions/${id}/file?name=events.jsonl`)).body, /"type":"compacted"/);
+});
+
+test("notification events use one multiplexed stream", async () => {
+  await call("POST", "/api/sessions", { body: { workspace } });
+  const stream = await readSsePrefix(`/events?token=${TOKEN}`);
+  assert.match(stream, /event: hello/);
+  assert.match(stream, /event: replay_done/);
+  assert.match(stream, /sessionId":"[0-9a-f-]+"/);
 });
 
 test("validates ids, file names and bodies", async () => {

@@ -421,7 +421,8 @@ let busy = false;
 let dotState = "idle";
 let replaying = false;   // true while the server replays stored events after (re)connect
 const toolCards = new Map();
-const notificationStreams = new Map();
+let notificationStream = null;
+let notificationSessionKey = "";
 
 // Cards still running or waiting when a turn ends (stopped, or interrupted by a restart) will never get a result.
 function closeStaleCards() {
@@ -787,19 +788,31 @@ function watchNotificationEvent(id, event) {
 }
 
 function syncNotificationStreams() {
-  const wanted = new Set(sessionList.filter((s) => s.id !== current && notificationsEnabled(s.id)).map((s) => s.id));
-  for (const [id, source] of notificationStreams) {
-    if (!wanted.has(id)) { source.close(); notificationStreams.delete(id); }
+  const wanted = Boolean(settings?.notifications || sessionList.some((s) => s.notifications === true));
+  if (!wanted) {
+    notificationStream?.close();
+    notificationStream = null;
+    notificationSessionKey = "";
+    return;
   }
-  for (const id of wanted) {
-    if (notificationStreams.has(id)) continue;
-    const source = new EventSource(withToken(`/events/${id}`));
-    let ready = false;
-    source.addEventListener("replay_done", () => { ready = true; });
-    source.onmessage = (msg) => { if (ready) watchNotificationEvent(id, JSON.parse(msg.data)); };
-    source.onerror = () => { if (source.readyState === EventSource.CLOSED) { source.close(); notificationStreams.delete(id); } };
-    notificationStreams.set(id, source);
-  }
+  const sessionKey = sessionList.map((s) => s.id).sort().join(",");
+  if (notificationStream && notificationSessionKey === sessionKey) return;
+  notificationStream?.close();
+  notificationSessionKey = sessionKey;
+  const source = notificationStream = new EventSource(withToken("/events"));
+  let ready = false;
+  source.addEventListener("replay_done", () => { ready = true; });
+  source.onmessage = (msg) => {
+    if (!ready) return;
+    const event = JSON.parse(msg.data);
+    if (event.sessionId && event.sessionId !== current) watchNotificationEvent(event.sessionId, event);
+  };
+  source.onerror = () => {
+    if (source.readyState === EventSource.CLOSED && notificationStream === source) {
+      notificationStream = null;
+      notificationSessionKey = "";
+    }
+  };
 }
 
 async function refreshSessions() {

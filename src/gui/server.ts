@@ -95,6 +95,34 @@ function streamEvents(req: IncomingMessage, res: ServerResponse, manager: Sessio
   });
 }
 
+// One browser connection is enough for background notifications. Opening one EventSource per
+// session exhausts the browser's HTTP connection pool as the session list grows, and also creates
+// a runner/lock for every session. The session id is included so the client can apply its settings.
+function streamAllEvents(req: IncomingMessage, res: ServerResponse, manager: SessionManager, track: () => () => void): void {
+  const runners = manager.list().flatMap((meta) => {
+    try {
+      return [{ id: meta.id, runner: manager.get(meta.id) }];
+    } catch {
+      // Another process may own a session. Its own event stream will be unavailable too; keep the
+      // global stream useful for the sessions this process can observe.
+      return [];
+    }
+  });
+  const untrack = track();
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
+  res.write("event: hello\ndata: {}\n\n");
+  const unsubscribe = runners.map(({ id, runner }) => runner.subscribe((event) => {
+    res.write(`data: ${JSON.stringify({ sessionId: id, ...forWire(event) })}\n\n`);
+  }));
+  res.write("event: replay_done\ndata: {}\n\n");
+  const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    for (const stop of unsubscribe) stop();
+    untrack();
+  });
+}
+
 export interface GuiOptions {
   pickFolder?: PickFolder;
   remote?: RemoteEntries;
@@ -337,6 +365,10 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
   if (req.method === "GET" && events) {
     const device = caller.kind === "remote" ? caller.device : null;
     return streamEvents(req, res, manager, sessionId(events[1]), () => (device ? streams.add(device.id, res) : () => {}));
+  }
+  if (req.method === "GET" && url.pathname === "/events") {
+    const device = caller.kind === "remote" ? caller.device : null;
+    return streamAllEvents(req, res, manager, () => (device ? streams.add(device.id, res) : () => {}));
   }
   if (url.pathname.startsWith("/api/remote")) return handleRemote(req, res, url, caller, remote, streams);
   if (url.pathname === "/api/models") {

@@ -60,6 +60,20 @@ test("manual and automatic compaction replace old history with a summary", async
   assert.ok(runtime.store.loadEvents(meta.id).some((e) => e.type === "compacted"));
 });
 
+test("manual compaction of an empty session still completes", async () => {
+  const runtime = testRuntime(new ScriptedProvider([]));
+  const meta = runtime.store.create("/tmp", "m");
+  const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
+  const seen: string[] = [];
+  runner.subscribe((event) => seen.push(event.type));
+
+  await runner.compact();
+
+  assert.deepEqual(seen, ["compacted"]);
+  assert.equal(runner.isBusy, false);
+  assert.equal(runtime.store.loadEvents(meta.id)[0]?.type, "compacted");
+});
+
 test("a turn interrupted by a crash is closed with an error on reload", () => {
   const runtime = testRuntime(new ScriptedProvider([]));
   const meta = runtime.store.create("/tmp", "m");

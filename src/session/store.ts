@@ -104,6 +104,16 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
+// Keep one process exit hook for all session locks. The GUI can open many sessions at once
+// (for example through its notification stream); one exit listener per session trips Node's
+// MaxListenersExceededWarning and leaves the browser fighting the connection limit.
+const activeLockReleases = new Set<() => void>();
+let lockExitHookInstalled = false;
+
+function releaseLocksOnExit(): void {
+  for (const release of [...activeLockReleases]) release();
+}
+
 // Write-then-rename so a crash never leaves a half-written file.
 function writeJsonAtomic(path: string, value: unknown): void {
   const tmp = `${path}.${process.pid}.tmp`;
@@ -285,11 +295,18 @@ export class SessionStore {
       }
     }
     writeFileSync(path, String(process.pid));
+    let released = false;
     const release = () => {
+      if (released) return;
+      released = true;
       rmSync(path, { force: true });
-      process.off("exit", release);
+      activeLockReleases.delete(release);
     };
-    process.once("exit", release);
+    activeLockReleases.add(release);
+    if (!lockExitHookInstalled) {
+      lockExitHookInstalled = true;
+      process.once("exit", releaseLocksOnExit);
+    }
     return release;
   }
 }
