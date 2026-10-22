@@ -42,6 +42,19 @@
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
   tr.row { cursor: pointer; }
   tr.row:hover td { background: var(--soft); }
+  .table-scroll { overflow-x: auto; }
+  @media (max-width: 720px) {
+    .wrap { padding: 12px 12px 32px; }
+    section h2 { flex-wrap: wrap; }
+    section h2 > :last-child:not(:first-child) { white-space: nowrap; }
+    .cards { grid-template-columns: 1fr; }
+    .table-scroll table { min-width: 640px; }
+    /* A span on two lines: name and numbers, then the bar across the full width. */
+    .span { grid-template-columns: 1fr auto; grid-template-areas: "name info" "track track"; gap: 2px 10px; }
+    .span .name { grid-area: name; }
+    .span .track { grid-area: track; }
+    .span .info { grid-area: info; }
+  }
 </style>
 </head>
 <body>
@@ -78,7 +91,10 @@ function table(headers, rows) {
   for (const [label, num] of headers) head.append(el("th", num ? "num" : "", label));
   t.append(head);
   for (const row of rows) t.append(row);
-  return t;
+  // Scrolls sideways on its own when the page is narrower than the table (phones).
+  const box = el("div", "table-scroll");
+  box.append(t);
+  return box;
 }
 
 function td(value, className) {

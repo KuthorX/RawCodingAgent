@@ -3,6 +3,8 @@
 const TOKEN = new URLSearchParams(location.search).get("token");
 // Opened from another device through `tailscale serve` (--remote): no token, a device cookie set by pairing instead.
 const REMOTE = location.hostname !== "127.0.0.1" && location.hostname !== "localhost";
+// A touch screen without a mouse (phones, tablets): no hover, no keyboard shortcuts.
+const TOUCH = matchMedia("(hover: none)").matches;
 const FILES = ["trace.jsonl", "events.jsonl", "messages.json", "meta.json"];
 
 function el(tag, className, text) {

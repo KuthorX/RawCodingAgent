@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/common.css">
 <script src="/theme.js"></script>
 <style>
-  body { height: 100vh; display: flex; flex-direction: column; }
+  body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
   .layout { flex: 1; display: flex; min-height: 0; }
   main { flex: 1; overflow-y: auto; padding: 20px 24px 40px; }
   .wrap { max-width: 960px; margin: 0 auto; }
@@ -54,6 +54,15 @@
   .d-del { color: var(--err); }
   .d-hunk { color: var(--llm); }
   .d-file { font-weight: 600; }
+  /* Phones: the commit detail covers the list instead of sitting beside it; 关闭 goes back. */
+  @media (max-width: 720px) {
+    main { padding: 12px 12px 32px; }
+    .entry .when { margin-left: 0; }
+    .entry dl { grid-template-columns: 1fr; gap: 0; }
+    .entry dt { margin-top: 4px; }
+    aside { position: fixed; inset: 0; width: auto; max-width: none; z-index: 5; border-left: 0; }
+    aside pre { font-size: 11px; }
+  }
 </style>
 </head>
 <body>

@@ -2,12 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>raw-coding-agent</title>
 <link rel="stylesheet" href="/common.css">
 <script src="/theme.js"></script>
 <style>
-  body { height: 100vh; display: flex; flex-direction: column; }
+  /* dvh: on phones 100vh includes the browser bars, which would push the input under them. */
+  body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
   /* Tabs: each view stays in the page once shown, switching only hides the others. */
   .topbar { padding: 0; gap: 0; }
   .tabs { display: flex; gap: 0; align-self: stretch; }
@@ -258,6 +259,41 @@
   footer.dragging { outline: 1px dashed var(--accent); outline-offset: -4px; }
   .user .imgs { display: flex; flex-wrap: wrap; gap: 6px; text-indent: 0; margin: 4px 0; }
   .user .imgs img { max-width: 200px; max-height: 160px; border: 1px solid var(--line); display: block; cursor: zoom-in; }
+  .back { display: none; }
+
+  /* Touch screens: nothing appears on hover, and a long press opens the menus (see onMenu). */
+  @media (hover: none) {
+    .ws-head button.x, .ws-head.sub button { visibility: visible; }
+    .item, .ws-head { -webkit-touch-callout: none; user-select: none; }
+    .menu button { padding: 8px 16px; font-size: 13px; }
+    .status .keys { display: none; }
+  }
+
+  /* Phones: one pane at a time. The session list until a session is open, then the chat with a way back. */
+  @media (max-width: 720px) {
+    .tabs { flex: 1; }
+    .tabs a { flex: 1; justify-content: center; padding: 8px 4px; white-space: nowrap; }
+    .tabs a kbd, .topbar h1 { display: none; }
+    aside { width: auto; flex: 1; min-width: 0; border-right: 0; }
+    #root:not(.no-session) aside, #root.no-session .chat { display: none; }
+    .chat-head { padding: 4px 10px; height: auto; min-height: 34px; flex-wrap: wrap; row-gap: 2px; }
+    .chat-head .title { max-width: none; flex: 1; }
+    .chat-head .meta { order: 3; flex-basis: 100%; }
+    #head-links { order: 4; flex-wrap: wrap; }
+    .back { display: inline-block; border: 0; padding: 0 6px 0 0; font-size: 18px; line-height: 1; color: var(--muted); background: none; }
+    #log { padding: 0 12px; }
+    main { padding: 12px 0; }
+    footer { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+    /* Below 16px iOS zooms the page in on focus. */
+    textarea, input[type=text], input[type=search], select { font-size: 16px !important; }
+    .new input[type=text], .search label { height: 34px; }
+    .item { padding-top: 6px; padding-bottom: 6px; }
+    .ws-head { height: 34px; }
+    .status > span { padding: 1px 8px; }
+    .md pre, .tool pre { font-size: 11px; }
+    .user .imgs img { max-width: 45vw; }
+  }
+  dialog { max-width: calc(100vw - 24px); }
 </style>
 </head>
 <body>
@@ -300,6 +336,7 @@
   </aside>
   <section class="chat">
     <div class="chat-head">
+      <button class="back" id="back" type="button" title="回到会话列表">‹</button>
       <span class="dot" id="dot"></span>
       <span class="title" id="head-title"></span>
       <span class="meta grow" id="meta"></span>
@@ -411,9 +448,11 @@ function setBusy(value) {
   $("stop").hidden = !value;
   if ($("fork")) $("fork").disabled = value; // the running turn isn't saved yet
   $("stop").disabled = false;
-  input.placeholder = value
-    ? "agent 正在工作：输入内容（可粘贴图片）会在它下一步之前送达（插话），Esc 停止"
-    : "描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片";
+  input.placeholder = TOUCH
+    ? (value ? "agent 正在工作：发出的内容在它下一步之前送达" : "描述任务")
+    : value
+      ? "agent 正在工作：输入内容（可粘贴图片）会在它下一步之前送达（插话），Esc 停止"
+      : "描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片";
 }
 
 // Queued interjection bubbles, oldest first, waiting for delivery.
@@ -464,7 +503,7 @@ function sessionItem(s) {
   const sub = el("div", "sub", `${shortTime(s.updatedAt)} · ${s.turns} 轮 · ${fmt.usd(s.totals.costUsd)}`);
   if (s.totals.contextTokens > CONTEXT_WARN_TOKENS) sub.append(" · ", el("span", "ctx-warn", `上下文 ${fmt.k(s.totals.contextTokens)}`));
   item.append(title, sub);
-  item.addEventListener("contextmenu", (ev) => sessionMenu(ev, s));
+  onMenu(item, (ev) => sessionMenu(ev, s));
   item.title = [s.title || "（未命名）",
     `${fmt.time(s.updatedAt)} · ${s.turns} 轮 · 上下文 ${fmt.k(s.totals.contextTokens)} · ${fmt.usd(s.totals.costUsd)} · ${s.totals.toolCalls} 次工具调用`,
     s.approvalMode === "auto" ? "自动批准 bash" : "bash 每次询问", s.workspace, s.id].join("\n");
@@ -515,6 +554,24 @@ function showMenu(ev, items) {
 }
 document.addEventListener("click", closeMenu);
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeMenu(); });
+
+// Right click, or a long press on touch screens: iOS Safari never fires contextmenu. Android does, after
+// which the same menu just opens again in place.
+const LONG_PRESS_MS = 500;
+function onMenu(target, open) {
+  target.addEventListener("contextmenu", open);
+  let timer = 0;
+  let fired = false;
+  target.addEventListener("touchstart", (ev) => {
+    if (ev.touches.length !== 1) return;
+    const { clientX, clientY } = ev.touches[0];
+    fired = false;
+    timer = setTimeout(() => { fired = true; open({ clientX, clientY, preventDefault() {} }); }, LONG_PRESS_MS);
+  }, { passive: true });
+  for (const type of ["touchmove", "touchcancel"]) target.addEventListener(type, () => clearTimeout(timer), { passive: true });
+  // After a long press the finger lifting must not also "click" the item (open it, close the menu).
+  target.addEventListener("touchend", (ev) => { clearTimeout(timer); if (fired) ev.preventDefault(); });
+}
 window.addEventListener("blur", closeMenu);
 
 // newWorkspace: { name } to fork into a new worktree that starts at the source workspace's current commit.
@@ -587,7 +644,7 @@ function projectGroup(p, sessions) {
   const spend = spendBadge(p.spentUsd, p.budgetUsd);
   if (spend) head.append(spend);
   head.onclick = () => toggleGroup(key);
-  head.addEventListener("contextmenu", (ev) => showMenu(ev, [
+  onMenu(head, (ev) => showMenu(ev, [
     ["复制路径", () => copyText(p.path, "路径")],
     ["设置项目额度…", () => openBudgetDialog(p)],
   ]));
@@ -618,7 +675,7 @@ function workspaceGroup(p, w, sessions) {
   if (spend) head.append(spend);
   if (!w.missing) head.append(smallButton("+ 会话", `在 ${w.path} 新建会话`, () => createSession(w.path)));
   head.onclick = () => toggleGroup(key);
-  head.addEventListener("contextmenu", (ev) => workspaceMenu(ev, p, w));
+  onMenu(head, (ev) => workspaceMenu(ev, p, w));
   frag.append(head);
   if (!collapsed.has(key)) {
     const box = el("div", "in-ws");
@@ -780,7 +837,7 @@ function renderSearch(box) {
       snip.append(el("span", "role", m.role === "user" ? "你：" : "agent："), highlight(m.snippet));
       item.append(snip);
     }
-    item.addEventListener("contextmenu", (ev) => sessionMenu(ev, hit));
+    onMenu(item, (ev) => sessionMenu(ev, hit));
     box.append(item);
   }
 }
@@ -1430,8 +1487,9 @@ $("form").addEventListener("submit", async (ev) => {
     refreshSessions();
   } catch (e) { append(el("div", "err", "发送失败：" + e.message)); }
 });
+// A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
 input.addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $("form").requestSubmit(); }
+  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && !TOUCH) { ev.preventDefault(); $("form").requestSubmit(); }
 });
 input.addEventListener("input", () => { input.style.height = ""; input.style.height = input.scrollHeight + "px"; });
 
@@ -1603,6 +1661,8 @@ function showFrame(tab, sub) {
   if (win.location.hash.slice(1) !== sub) win.location.hash = sub;
   else if (tab === "stats") win.render?.(); // same page as before: refresh the numbers
 }
+
+$("back").onclick = () => { location.hash = ""; };
 
 function route() {
   const hash = location.hash.slice(1);
