@@ -291,6 +291,13 @@
       "problem": "发送 /compact 后要等压缩结束才看到界面反馈，侧栏无法区分普通运行和压缩；输入斜杠命令必须手动打完整。",
       "change": "新增压缩开始事件，当前会话立即显示压缩中提示，侧栏显示压缩中标记；输入 / 后提供命令候选，支持上下方向键、Tab 和鼠标补全。",
       "commits": ["e5b837d"]
+    },
+    {
+      "module": "gui",
+      "title": "完善模型设置并兼容 Flash 推理历史",
+      "problem": "设置页没有新会话默认模型；模型列表和单会话切换没有统一校验；从旧会话切到 deepseek-flash 后，历史 assistant 消息缺少 reasoning_content 会被 DeepSeek 400 拒绝。",
+      "change": "设置页新增新会话默认模型并与通知、自动压缩分块；新会话和单会话模型只接受服务实际返回的 ID；保存并回传 reasoning_content，旧历史在 thinking 模型请求中补兼容字段。",
+      "commits": ["bec8261"]
     }
   ]
 }
