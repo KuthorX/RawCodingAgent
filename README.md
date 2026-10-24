@@ -11,6 +11,10 @@ cp .env.example .env        # 填入凭证
 
 需要 Node 24+（原生运行 `.ts`，无需编译）。模型回复默认流式显示；`OPENAI_STREAM=false` 可以关掉（兼容端点不接受 `stream_options` 时会自动退回一次非流式请求）。
 
+### Orca / OpenCode
+
+Orca launches the OpenCode CLI inside this workspace. The checked-in `opencode.json` selects `deepseek/deepseek-chat` through DeepSeek's OpenAI-compatible endpoint; OpenCode reads `OPENAI_API_KEY` from this workspace's `.env` via Bun's automatic dotenv loading. No key is stored in the config. Open the workspace in Orca, launch the OpenCode agent, and confirm the model is `deepseek/deepseek-chat`.
+
 `.env` 里填了 `TAVILY_API_KEY`（[Tavily](https://tavily.com)，每月 1000 次免费）就会多一个 `web_search` 工具，用来查文档、报错信息等工作区里没有的资料。它只读、不需要审批，但查询内容会发到 Tavily；provider 和搜索凭据都不会传给 agent 的 bash。
 
 不配 key 也有 `web_fetch`：给一个 http(s) 地址，返回网页的正文（HTML 会去掉脚本和样式、压缩空白），用来读文档、issue 或 web_search 找到的页面。图片和其他二进制类型会被拒绝；云厂商的 metadata 地址也会被拒绝。网页内容是不可信数据，prompt 里明确要求模型不要执行页面里的指令。
