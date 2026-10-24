@@ -182,7 +182,7 @@ export class SessionManager {
       meta: this.store.getMeta(id),
       makeDeps: this.runtime.makeDeps,
       budget: (meta) => this.budgetFor(meta),
-      compactionTokens: () => this.settings.get().compactionTokens,
+      compactionTokens: (meta) => Math.min(this.settings.get().compactionTokens, this.runtime.contextWindow(meta.model)),
     });
     this.runners.set(id, runner);
     return runner;
@@ -271,6 +271,21 @@ export class SessionManager {
     }));
   }
 
+  // Stops every turn this process owns, waits for them to save their state, then releases the session locks.
+  // Called on SIGINT/SIGTERM so a Ctrl-C does not abandon a turn that is halfway through writing files.
+  async shutdown(timeoutMs = 3_000): Promise<void> {
+    const runners = [...this.runners.values()];
+    for (const runner of runners) runner.stop();
+    const waitForIdle = Promise.all(runners.map((runner) => runner.whenIdle())).then(() => undefined);
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); timer.unref(); });
+    await Promise.race([waitForIdle, timeout]);
+    clearTimeout(timer);
+    for (const runner of runners) {
+      try { runner.close(); } catch { /* another path already released it */ }
+    }
+  }
+
   // Read-only: doesn't open a runner, so it works while another process (e.g. an eval run) holds the session lock.
   stats(id: string) {
     if (!this.store.exists(id)) throw new HttpError(404, `session "${id}" not found`);
@@ -282,6 +297,7 @@ export class SessionManager {
       tracePath: this.store.tracePath(id),
       totals: totals(spans, this.runtime.pricing),
       pricing: this.runtime.pricing,
+      contextWindow: this.runtime.contextWindow(meta.model),
       tools: toolStats(spans),
       turns: turns(spans),
     };

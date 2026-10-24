@@ -34,7 +34,7 @@ test("runner.toolCall returns the full input and output from the log", async () 
     reply("done"),
   ]);
   const runtime = testRuntime(provider);
-  const meta = runtime.store.create(tempWorkspace(), "m");
+  const meta = runtime.store.create(tempWorkspace(), "m", "auto");
   const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
   await runner.send("go").done;
   const full = runner.toolCall("w")!;

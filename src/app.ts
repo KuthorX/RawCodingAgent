@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import type { AgentDeps } from "./agent/loop.ts";
 import type { ApprovalMode } from "./agent/permissions.ts";
-import { buildSystemPrompt, type PromptRule } from "./agent/system-prompt.ts";
+import { buildSystemPrompt, loadProjectInstructions, type PromptRule } from "./agent/system-prompt.ts";
 import { createTracer } from "./agent/trace.ts";
-import { loadConfig, loadDotEnv } from "./config.ts";
+import { loadConfig, loadDotEnv, sanitizeToolEnv } from "./config.ts";
 import { OpenAIProvider } from "./providers/openai.ts";
 import { loadPricing, type Pricing } from "./pricing.ts";
 import type { RunnerOptions } from "./session/runner.ts";
@@ -11,7 +11,10 @@ import { SessionStore } from "./session/store.ts";
 import { SettingsStore } from "./gui/settings.ts";
 import { ProjectStore } from "./workspace/store.ts";
 import { defaultTools } from "./tools/index.ts";
+import { webFetchTool } from "./tools/web-fetch.ts";
 import { searchBackendFromEnv, webSearchTool } from "./tools/web-search.ts";
+import { planTool } from "./tools/plan.ts";
+import { delegateTool } from "./tools/delegate.ts";
 
 export const PROJECT_ROOT = resolve(import.meta.dirname, "..");
 
@@ -20,6 +23,7 @@ export interface Runtime {
   projects: ProjectStore;
   settings: SettingsStore;
   model: string;
+  contextWindow: (model: string) => number;
   listModels?: () => Promise<string[]>;
   pricing: Pricing;
   promptRules: readonly PromptRule[];
@@ -49,7 +53,9 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
   const dataDir = options.dataDir ?? PROJECT_ROOT;
   const backend = options.webSearch === false ? null : searchBackendFromEnv(process.env);
   const webSearch = backend ? webSearchTool(backend) : null;
-  // The tool holds the key from here on. bash inherits process.env, so don't leave it there.
+  // Eval runs offline: webSearch: false removes web_fetch too, so no result depends on the network.
+  const webTools = options.webSearch === false ? [] : [webFetchTool, ...(webSearch ? [webSearch] : [])];
+  const toolEnv = sanitizeToolEnv(process.env);
   delete process.env.TAVILY_API_KEY;
 
   return {
@@ -58,6 +64,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     projects: new ProjectStore(resolve(dataDir, ".projects.json"), resolve(dataDir, ".worktrees.json"), resolve(dataDir, ".workspaces.json")),
     settings: new SettingsStore(resolve(dataDir, ".settings.json"), provider.model),
     model: provider.model,
+    contextWindow: (model) => config.contextWindows[model] ?? 400_000,
     listModels: () => provider.listModels(),
     pricing,
     promptRules: config.promptRules,
@@ -65,14 +72,17 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     defaultApprovalMode,
     makeDeps: (meta, hooks) => {
       const tracer = createTracer(store.tracePath(meta.id));
-      const system = buildSystemPrompt(meta.workspace, config.promptRules);
-      const tools = webSearch ? [...defaultTools, webSearch] : defaultTools;
+      // D14: repository conventions ride along with the system prompt. Logged below, so the trace shows exactly
+      // which revision of AGENTS.md the model saw.
+      const system = buildSystemPrompt(meta.workspace, config.promptRules, loadProjectInstructions(meta.workspace));
+      const tools = [...defaultTools, ...webTools, ...(hooks.plan ? [planTool(hooks.plan)] : []), ...(hooks.delegateTask ? [delegateTool(hooks.delegateTask)] : [])];
       // Logged every time a session is (re)loaded: a process started before a prompt change keeps the old prompt,
       // so this is the only reliable record of what the model was actually told.
       tracer.log("session", {
         id: meta.id,
         model: provider.model,
         workspace: meta.workspace,
+        toolEnv,
         promptRules: config.promptRules,
         tools: tools.map((t) => t.spec.name),
         system,

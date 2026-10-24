@@ -253,7 +253,8 @@ test("audit: remote writes and refusals are logged with who and which device; re
   assert.equal(refusedRecord.who, undefined);
   assert.equal(refusedRecord.path, "/api/sessions", "no query string (it can carry a token)");
   assert.match(refusedRecord.at, /^\d{4}-\d\d-\d\dT/);
-  assert.equal(statSync(auditFile).mode & 0o777, 0o600);
+  // POSIX permissions only; Windows keeps the file readable regardless of the requested mode.
+  if (process.platform !== "win32") assert.equal(statSync(auditFile).mode & 0o777, 0o600);
 });
 
 test("public: forking from the public entry starts in ask too, even from an auto session", async () => {

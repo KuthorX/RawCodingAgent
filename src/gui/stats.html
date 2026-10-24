@@ -220,7 +220,7 @@ async function renderSession(id) {
   const cards = el("div", "cards");
   cards.style.marginTop = "10px";
   cards.append(card("轮数", t.turns), card("模型调用", t.llmCalls), card("当前上下文", fmt.int(t.contextTokens) + " tok"), card("输入 tokens", fmt.int(t.inputTokens)),
-    card("其中缓存命中", fmt.int(t.cachedInputTokens)), card("输出 tokens", fmt.int(t.outputTokens)),
+    card("其中缓存命中", `${fmt.int(t.cachedInputTokens)} (${(t.cacheHitRatio * 100).toFixed(1)}%)`), card("输出 tokens", fmt.int(t.outputTokens)),
     card("估算成本", fmt.usd(t.costUsd)), card("工具调用", t.toolCalls), card("工具失败", t.toolErrors),
     card("模型耗时", fmt.ms(t.llmMs)), card("工具执行耗时", fmt.ms(t.toolMs)), card("等待审批", fmt.ms(t.approvalMs)),
     card("审批：人工允许 / 拒绝 / 自动", `${t.approvals.allowed} / ${t.approvals.denied} / ${t.approvals.auto}`));

@@ -17,7 +17,7 @@ export const writeFileTool: Tool = {
       required: ["path", "content"],
     },
   },
-  dangerous: false,
+  dangerous: true,
   async run(input, ctx) {
     const path = requireString(input, "path");
     let content = requireString(input, "content");

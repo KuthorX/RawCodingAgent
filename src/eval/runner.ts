@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import type { Runtime } from "../app.ts";
 import type { FinishReason } from "../agent/loop.ts";
-import { costUsd, type Pricing, type TokenUsage } from "../pricing.ts";
+import { costUsd, pricingForModel, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { SessionEvent } from "../session/events.ts";
 import { SessionRunner } from "../session/runner.ts";
 import { parseTrace, totals } from "../trace/analyze.ts";
@@ -84,7 +84,7 @@ export class BudgetedProvider implements Provider {
   // Same formula as the trace totals used for the verdict (cost of summed tokens), so the guard
   // and the judge never disagree about whether the budget was crossed.
   get spentUsd(): number {
-    return costUsd(this.usage, this.pricing);
+    return costUsd(this.usage, pricingForModel(this.pricing, this.model));
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {

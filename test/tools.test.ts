@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { basename, join } from "node:path";
 import { test } from "node:test";
 import { truncateOutput } from "../src/agent/truncate.ts";
@@ -7,8 +9,12 @@ import { bashTool, decodeOutput } from "../src/tools/bash.ts";
 import { editFileTool } from "../src/tools/edit-file.ts";
 import { globTool } from "../src/tools/glob.ts";
 import { grepTool } from "../src/tools/grep.ts";
+import { listDirTool } from "../src/tools/list-dir.ts";
 import { readFileTool } from "../src/tools/read-file.ts";
+import { delegateTool } from "../src/tools/delegate.ts";
+import { planTool, type PlanItem } from "../src/tools/plan.ts";
 import { ToolError } from "../src/tools/types.ts";
+import { webFetchTool, htmlToText } from "../src/tools/web-fetch.ts";
 import { writeFileTool } from "../src/tools/write-file.ts";
 import { tempWorkspace } from "./helpers.ts";
 
@@ -19,17 +25,39 @@ test("read_file prefixes line numbers", async () => {
   assert.equal(out, "    1\ta\n    2\tb");
 });
 
+test("plan tool validates and persists a bounded checklist", async () => {
+  let items: PlanItem[] = [];
+  const tool = planTool({ get: () => items, replace: (next) => { items = next; return next.map((item) => item.text).join("\n"); } });
+  const result = await tool.run({ items: [{ text: "Inspect", status: "in_progress" }, { text: "Test", status: "pending" }] }, { workspace: tempWorkspace() });
+  assert.match(result, /Inspect/);
+  assert.equal(items[0].status, "in_progress");
+  await assert.rejects(tool.run({ items: [{ text: "a", status: "in_progress" }, { text: "b", status: "in_progress" }] }, { workspace: tempWorkspace() }), /at most one/);
+});
+
+test("delegate tool forwards a focused bounded investigation", async () => {
+  const tool = delegateTool(async (prompt) => `child:${prompt}`);
+  assert.equal(await tool.run({ prompt: "inspect config" }, { workspace: tempWorkspace() }), "child:inspect config");
+  await assert.rejects(tool.run({ prompt: "" }, { workspace: tempWorkspace() }), /1-2000/);
+});
+
 test("paths outside the workspace are rejected", async () => {
   const workspace = tempWorkspace();
   await assert.rejects(readFileTool.run({ path: "../etc/passwd" }, { workspace }), ToolError);
   await assert.rejects(writeFileTool.run({ path: "/tmp/x", content: "" }, { workspace }), ToolError);
 });
 
-test("symbolic links can't lead the file tools out of the workspace", async () => {
+test("symbolic links can't lead the file tools out of the workspace", async (t) => {
   const workspace = tempWorkspace();
   const outside = tempWorkspace();
   writeFileSync(join(outside, "secret.txt"), "token");
-  symlinkSync(outside, join(workspace, "out"));
+  try {
+    symlinkSync(outside, join(workspace, "out"));
+  } catch (err) {
+    // Windows without Developer Mode or admin rights cannot create symlinks; the check itself is covered on
+    // platforms that can (and on CI with developer mode enabled).
+    if ((err as NodeJS.ErrnoException).code === "EPERM") return t.skip("symlinks are not permitted on this machine");
+    throw err;
+  }
   symlinkSync(join(outside, "secret.txt"), join(workspace, "secret-link.txt"));
   await assert.rejects(readFileTool.run({ path: "out/secret.txt" }, { workspace }), /symbolic link/);
   await assert.rejects(readFileTool.run({ path: "secret-link.txt" }, { workspace }), /symbolic link/);
@@ -217,4 +245,77 @@ test("truncateOutput keeps head and tail", () => {
   assert.ok(out.startsWith("a".repeat(10)));
   assert.ok(out.endsWith("b".repeat(10)));
   assert.match(out, /80 chars omitted/);
+});
+
+test("list_dir shows directories first, sizes, and nested levels", async () => {
+  const workspace = tempWorkspace();
+  mkdirSync(join(workspace, "src", "nested"), { recursive: true });
+  writeFileSync(join(workspace, "a.txt"), "abc");
+  writeFileSync(join(workspace, "src", "b.ts"), "hello");
+  writeFileSync(join(workspace, "src", "nested", "c.ts"), "x");
+
+  const flat = await listDirTool.run({}, { workspace });
+  assert.match(flat, /^[^\n]+\/$/m);
+  assert.match(flat, /\n  src\/\n/);
+  assert.match(flat, /\n  a\.txt \(3 B\)/);
+  assert.doesNotMatch(flat, /b\.ts/);
+
+  const deep = await listDirTool.run({ path: "src", depth: 2 }, { workspace });
+  assert.match(deep, /^src\/\n/);
+  assert.match(deep, /\n  b\.ts \(5 B\)/);
+  assert.match(deep, /\n  nested\/\n    c\.ts/);
+});
+
+test("grep returns context lines and can list only matching files", async () => {
+  const workspace = tempWorkspace();
+  writeFileSync(join(workspace, "f.txt"), "one\ntwo target\nthree\nfour\nfive\n");
+  writeFileSync(join(workspace, "g.txt"), "nothing\n");
+
+  const withContext = await grepTool.run({ pattern: "target", context: 1 }, { workspace });
+  assert.match(withContext, /f\.txt-1- one/);
+  assert.match(withContext, /f\.txt:2: two target/);
+  assert.match(withContext, /f\.txt-3- three/);
+  assert.doesNotMatch(withContext, /four/);
+
+  const files = await grepTool.run({ pattern: "target", files_only: true }, { workspace });
+  assert.equal(files, "f.txt");
+});
+
+test("web_fetch extracts readable text and drops scripts", async () => {
+  assert.equal(htmlToText("<title>T</title><p>a &amp; b</p><script>x()</script>"), "T\n\na & b");
+
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end("<html><head><title>Doc</title></head><body><h1>Hi</h1><script>bad()</script><p>Hello &amp; bye</p></body></html>");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const out = await webFetchTool.run({ url: `http://127.0.0.1:${port}/` }, { workspace: tempWorkspace() });
+    assert.match(out, /Doc/);
+    assert.match(out, /Hi/);
+    assert.match(out, /Hello & bye/);
+    assert.doesNotMatch(out, /bad\(\)/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("web_fetch refuses non-http URLs, metadata hosts and binary content", async () => {
+  const workspace = tempWorkspace();
+  await assert.rejects(webFetchTool.run({ url: "file:///etc/passwd" }, { workspace }), /only http/);
+  await assert.rejects(webFetchTool.run({ url: "http://169.254.169.254/latest/meta-data" }, { workspace }), /refusing/);
+  await assert.rejects(webFetchTool.run({ url: "http://10.0.0.1/" }, { workspace }), /private address/);
+
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "image/png" });
+    res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    await assert.rejects(webFetchTool.run({ url: `http://127.0.0.1:${port}/` }, { workspace }), /binary/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

@@ -1,7 +1,11 @@
 import type { ToolSpec } from "../types.ts";
+import type { PlanController } from "./plan.ts";
 
 export interface ToolContext {
   workspace: string;
+  // Sanitized process environment for subprocess tools. Omitted in direct tool tests, where process.env is used.
+  env?: NodeJS.ProcessEnv;
+  plan?: PlanController;
   // Aborted when the user stops the turn; long-running tools should stop early.
   signal?: AbortSignal;
 }

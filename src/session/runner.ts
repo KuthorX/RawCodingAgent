@@ -3,21 +3,25 @@ import type { AgentDeps } from "../agent/loop.ts";
 import { runTurn, TurnAbortedError } from "../agent/loop.ts";
 import type { ApprovalMode, Confirm } from "../agent/permissions.ts";
 import type { ImageAttachment, Message, UserMessage } from "../types.ts";
+import { nullTracer } from "../agent/trace.ts";
+import type { PlanController, PlanItem } from "../tools/plan.ts";
+import { planText } from "../tools/plan.ts";
+import type { DelegateTask } from "../tools/delegate.ts";
 import type { SessionEvent } from "./events.ts";
 import { titleFrom, type SessionMeta, type SessionStore } from "./store.ts";
 
-type Listener = (event: SessionEvent) => void;
+type Listener = (event: SessionEvent, cursor?: number) => void;
 
 export interface RunnerOptions {
   store: SessionStore;
   meta: SessionMeta;
-  makeDeps: (meta: SessionMeta, hooks: Pick<AgentDeps, "confirm" | "onEvent" | "approvalMode">) => AgentDeps;
+  makeDeps: (meta: SessionMeta, hooks: Pick<AgentDeps, "confirm" | "onEvent" | "approvalMode" | "onStep" | "plan" | "delegateTask">) => AgentDeps;
   // When omitted, approvals are surfaced as approval_request events and answered via approve().
   confirm?: Confirm;
   // Tightest spending cap left over this session and the workspace/project it belongs to; null = no cap.
   // `label` is for the user, `scope` for the model's limit notice.
   budget?: (meta: SessionMeta) => Budget | null;
-  compactionTokens?: () => number;
+  compactionTokens?: (meta: SessionMeta) => number;
 }
 
 export interface Budget {
@@ -33,16 +37,85 @@ const INTERRUPTED = "上次运行在这一轮结束前中断（进程退出）�
 
 const COMPACT_PROMPT = `You are compacting a coding-agent conversation. Write a precise handoff summary for the next agent.
 Keep: the user's goal and constraints, decisions, files changed, commands and test results, unresolved errors, and the exact next step.
+Include a short "State" section listing: files created or edited, commands/tests run and whether they passed, and anything still broken.
 Drop greetings and repeated tool output. Return only the summary.`;
 
+// A rough token estimate that does not need the model's tokenizer: ASCII text is about four characters per
+// token, while CJK and other wide characters are closer to one-and-a-half. The old JSON-length/4 estimate
+// under-counted Chinese conversations by roughly 2-3x, so compaction fired too late.
 function estimateTokens(messages: Message[]): number {
-  return Math.ceil(JSON.stringify(messages).length / 4);
+  let ascii = 0;
+  let wide = 0;
+  const add = (text: string): void => {
+    for (const char of text) {
+      if (char.codePointAt(0)! < 128) ascii++;
+      else wide++;
+    }
+  };
+  for (const message of messages) {
+    if (message.role === "user") {
+      add(message.content);
+      continue;
+    }
+    if (message.role === "assistant") {
+      add(message.text);
+      for (const call of message.toolCalls) add(`${call.name}${JSON.stringify(call.input)}`);
+      continue;
+    }
+    for (const result of message.results) add(result.content);
+  }
+  return Math.ceil(ascii / 4 + wide / 1.5);
 }
+
+// The summary is cheap part of compaction; keeping the last few turns verbatim keeps the model oriented
+// without duplicating everything the summary already says.
+const RECENT_CONTEXT_TOKENS = 20_000;
+const MAX_SUMMARY_CHARS = 150_000;
 
 function messageText(message: Message): string {
   if (message.role === "user") return `USER:\n${message.content}`;
   if (message.role === "assistant") return `ASSISTANT:\n${message.text}`;
   return `TOOLS:\n${message.results.map((r) => `${r.isError ? "ERROR" : "OK"}: ${r.content}`).join("\n")}`;
+}
+
+// Deterministic, cheap to collect, and the thing a resumed model most often gets wrong.
+function touchedFiles(messages: Message[]): string[] {
+  const files = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const call of message.toolCalls) {
+      if (call.name !== "write_file" && call.name !== "edit_file") continue;
+      const path = call.input.path;
+      if (typeof path === "string") files.add(path);
+    }
+  }
+  return [...files].sort();
+}
+
+// Keep the most recent complete user turns, from a user boundary so the conversation stays valid for the API.
+// Walk from the oldest of the last eight turns forward: the first slice that fits is also the largest one.
+function recentContext(history: Message[]): Message[] {
+  const userIndexes = history.flatMap((m, i) => (m.role === "user" ? [i] : []));
+  for (const start of userIndexes.slice(-8)) {
+    const slice = history.slice(start);
+    if (estimateTokens(slice) <= RECENT_CONTEXT_TOKENS) return slice;
+  }
+  // A single enormous user turn: keep only that message; the summary carries the rest.
+  const last = userIndexes.at(-1);
+  return last === undefined ? [] : [history[last]!];
+}
+
+function chunks(transcript: string): string[] {
+  if (transcript.length <= MAX_SUMMARY_CHARS) return [transcript];
+  const parts: string[] = [];
+  let rest = transcript;
+  while (rest.length > 0) {
+    let at = rest.lastIndexOf("\n", MAX_SUMMARY_CHARS);
+    if (at < MAX_SUMMARY_CHARS / 2) at = MAX_SUMMARY_CHARS;
+    parts.push(rest.slice(0, at));
+    rest = rest.slice(at);
+  }
+  return parts;
 }
 
 // A turn that started but never ended means the process died mid-turn.
@@ -73,6 +146,7 @@ export class SessionRunner {
   private readonly budget: RunnerOptions["budget"];
   private readonly compactionTokens: RunnerOptions["compactionTokens"];
   private readonly releaseLock: () => void;
+  private readonly plan: PlanController;
 
   constructor(options: RunnerOptions) {
     this.store = options.store;
@@ -82,12 +156,28 @@ export class SessionRunner {
     this.releaseLock = this.store.acquireLock(this.meta.id);
     this.history = this.store.loadMessages(this.meta.id);
     this.log = this.store.loadEvents(this.meta.id);
+    this.plan = {
+      get: () => [...(this.meta.plan ?? [])],
+      replace: (items: PlanItem[]) => {
+        this.meta = this.store.updateMeta(this.id, { plan: items });
+        this.emit({ type: "plan", items });
+        return planText(items);
+      },
+    };
     // Persist the marker so the interrupted turn stays closed after later turns are appended.
     if (isInterrupted(this.log)) this.emit({ type: "error", message: INTERRUPTED });
     this.deps = options.makeDeps(this.meta, {
-      onEvent: (event) => this.emit(event),
+      onEvent: (event) => {
+        // Streaming deltas are a live view of a message that will be stored in full by assistant_text; writing
+        // every token to events.jsonl would make replay and disk usage far worse for no benefit.
+        if (event.type === "assistant_delta" || event.type === "assistant_reasoning_delta" || event.type === "assistant_reset") this.emitTransient(event);
+        else this.emit(event);
+      },
+      onStep: (messages) => this.saveStep(messages),
       confirm: options.confirm ?? ((call) => this.requestApproval(call)),
       approvalMode: () => this.meta.approvalMode,
+      plan: this.plan,
+      delegateTask: (prompt, signal) => this.delegate(prompt, signal),
     });
   }
 
@@ -97,6 +187,26 @@ export class SessionRunner {
 
   get info(): SessionMeta & { busy: boolean; compacting: boolean } {
     return { ...this.meta, busy: this.isBusy, compacting: this.compacting };
+  }
+
+  private async delegate(prompt: string, signal?: AbortSignal): Promise<string> {
+    const tools = this.deps.tools.filter((tool) => ["read_file", "list_dir", "glob", "grep", "web_fetch", "web_search"].includes(tool.spec.name));
+    const child = {
+      ...this.deps,
+      tools,
+      maxSteps: Math.min(this.deps.maxSteps, 8),
+      maxTurnCostUsd: this.deps.maxTurnCostUsd === null || this.deps.maxTurnCostUsd === undefined ? 0.05 : Math.min(this.deps.maxTurnCostUsd, 0.05),
+      approvalMode: () => "auto" as const,
+      confirm: async () => true,
+      tracer: nullTracer,
+      onEvent: undefined,
+      onStep: undefined,
+      plan: undefined,
+      delegateTask: undefined,
+    } satisfies AgentDeps;
+    const result = await runTurn([], { role: "user", content: prompt }, child, { signal });
+    const answer = [...result.messages].reverse().find((message) => message.role === "assistant") as Extract<Message, { role: "assistant" }> | undefined;
+    return answer?.text || `Child agent stopped: ${result.finishReason}`;
   }
 
   get isBusy(): boolean {
@@ -120,8 +230,13 @@ export class SessionRunner {
   }
 
   subscribe(listener: Listener): () => void {
-    for (const event of this.log) listener(event);
+    return this.subscribeFrom(listener, 0);
+  }
+
+  subscribeFrom(listener: Listener, after = 0): () => void {
     this.listeners.add(listener);
+    const start = Math.max(0, Math.floor(after));
+    for (let i = start; i < this.log.length; i++) listener(this.log[i]!, i);
     return () => this.listeners.delete(listener);
   }
 
@@ -245,7 +360,7 @@ export class SessionRunner {
     let input: UserMessage | null = first;
     while (input !== null) {
       this.controller = new AbortController();
-      const limit = this.compactionTokens?.() ?? 0;
+      const limit = this.compactionTokens?.(this.meta) ?? 0;
       if (limit > 0 && estimateTokens(this.history) + estimateTokens([input]) >= limit) {
         this.compacting = true;
         this.safely(() => this.emit({ type: "compaction_start" }));
@@ -254,7 +369,8 @@ export class SessionRunner {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.safely(() => this.emit({ type: "error", message }));
-          return;
+          // Keep going with the un-compacted history: the model call may still fit, and dropping the user's
+          // message because the summary failed would lose work.
         } finally {
           this.compacting = false;
         }
@@ -272,6 +388,28 @@ export class SessionRunner {
     }
   }
 
+  private async summaryCall(transcript: string, focus: string, signal?: AbortSignal): Promise<string> {
+    const response = await this.deps.provider.complete({
+      system: this.deps.system,
+      messages: [{ role: "user", content: `${COMPACT_PROMPT}${focus ? `\nFocus especially on: ${focus}` : ""}\n\n${transcript}` }],
+      tools: [],
+    }, signal);
+    return response.message.text.trim();
+  }
+
+  // Long histories are summarized in parts first: a single prompt would exceed the model's context window,
+  // which is exactly the situation compaction exists for.
+  private async summarize(transcript: string, focus: string, signal?: AbortSignal): Promise<string> {
+    const parts = chunks(transcript);
+    if (parts.length === 1) return this.summaryCall(parts[0]!, focus, signal);
+    const partials: string[] = [];
+    for (const [i, part] of parts.entries()) {
+      const note = `This is part ${i + 1} of ${parts.length}; summarize this part only, keeping facts needed by the next agent.`;
+      partials.push(await this.summaryCall(part, `${focus}\n${note}`.trim(), signal));
+    }
+    return this.summaryCall(partials.join("\n\n"), `${focus}\nCombine these part summaries into one handoff summary; keep every file path, command result and open error.`.trim(), signal);
+  }
+
   private async compactHistory(focus: string, manual: boolean, signal?: AbortSignal): Promise<void> {
     const beforeTokens = estimateTokens(this.history);
     if (this.history.length === 0) {
@@ -280,14 +418,10 @@ export class SessionRunner {
       return;
     }
     const transcript = this.history.map(messageText).join("\n\n");
-    const response = await this.deps.provider.complete({
-      system: this.deps.system,
-      messages: [{ role: "user", content: `${COMPACT_PROMPT}${focus ? `\nFocus especially on: ${focus}` : ""}\n\n${transcript}` }],
-      tools: [],
-    }, signal);
-    const summary = response.message.text.trim() || "No summary was returned.";
-    const recentUsers = this.history.filter((m): m is Extract<Message, { role: "user" }> => m.role === "user").slice(-8);
-    this.history = [{ role: "user", content: `[Conversation summary]\n${summary}` }, ...recentUsers];
+    const summary = (await this.summarize(transcript, focus, signal)) || "No summary was returned.";
+    const files = touchedFiles(this.history);
+    const state = files.length > 0 ? `\n\n[Files changed in this session]\n${files.map((f) => `- ${f}`).join("\n")}` : "";
+    this.history = [{ role: "user", content: `[Conversation summary]\n${summary}${state}` }, ...recentContext(this.history)];
     this.store.saveMessages(this.id, this.history);
     this.emit({ type: "compacted", beforeTokens, afterTokens: estimateTokens(this.history), ...(manual ? { manual: true } : {}) });
   }
@@ -314,6 +448,17 @@ export class SessionRunner {
     }
   }
 
+  // A checkpoint between steps: the history on disk is always a valid conversation to resume from, even if the
+  // process dies before the turn ends.
+  private saveStep(messages: Message[]): void {
+    try {
+      this.store.saveMessages(this.id, messages);
+    } catch (err) {
+      // A failed checkpoint must not abort a turn whose tool calls already ran; the final commit retries.
+      process.stderr.write(`session ${this.id}: checkpoint failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+
   // Saved at step boundaries only, so the stored history is always a valid conversation to resume from.
   private commit(messages: Message[]): void {
     this.history = messages;
@@ -331,7 +476,13 @@ export class SessionRunner {
 
   private emit(event: SessionEvent): void {
     this.log = [...this.log, event];
-    for (const listener of this.listeners) listener(event);
+    const cursor = this.log.length - 1;
+    for (const listener of this.listeners) listener(event, cursor);
     this.store.appendEvent(this.id, event);
+  }
+
+  // Live-only events (streaming text): delivered to current subscribers, never written to the event log.
+  private emitTransient(event: SessionEvent): void {
+    for (const listener of this.listeners) listener(event);
   }
 }

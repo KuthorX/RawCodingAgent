@@ -78,7 +78,7 @@ test("swebench: container names only use characters Docker accepts", () => {
 
 test("swebench: the patch script covers edits, new and binary files, ignores the repo's diff config, and applies", () => {
   const ws = tempWorkspace();
-  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: ws, encoding: "utf8" });
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.autocrlf=false", ...args], { cwd: ws, encoding: "utf8" });
   writeFileSync(join(ws, "a.py"), "x = 1\n");
   writeFileSync(join(ws, ".gitignore"), "*.pyc\n");
   git("init", "-q");
@@ -86,7 +86,7 @@ test("swebench: the patch script covers edits, new and binary files, ignores the
   git("commit", "-q", "-m", "base");
   const base = git("rev-parse", "HEAD").trim();
   const pristine = tempWorkspace();
-  execFileSync("git", ["clone", "-q", ws, pristine]);
+  execFileSync("git", ["-c", "core.autocrlf=false", "clone", "-q", ws, pristine]);
 
   // What an agent could do: change files, add a binary one, commit its work, and rig the repo's git config.
   writeFileSync(join(ws, "a.py"), "x = 2\n");
@@ -108,7 +108,7 @@ test("swebench: the patch script covers edits, new and binary files, ignores the
   assert.doesNotMatch(patch, /a\.pyc|\x1b\[/);
   assert.equal(existsSync(marker), false);
   writeFileSync(join(pristine, "p.diff"), patch);
-  execFileSync("git", ["apply", "p.diff"], { cwd: pristine });
+  execFileSync("git", ["-c", "core.autocrlf=false", "apply", "p.diff"], { cwd: pristine });
   assert.equal(readFileSync(join(pristine, "a.py"), "utf8"), "x = 2\n");
   assert.deepEqual([...readFileSync(join(pristine, "img.bin"))], [0, 1, 2, 255, 0]);
 });

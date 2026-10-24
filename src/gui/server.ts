@@ -11,6 +11,7 @@ import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.t
 import { commitDetail, loadIterations } from "./iterations.ts";
 import { revealInFileManager } from "./reveal.ts";
 import { forWire } from "./wire.ts";
+import { workingTreeDiff } from "../workspace/git.ts";
 import { identifyLocal, identifyPublic, identifyTailnet, type Caller, type Entry, type RemoteEntries } from "./remote/access.ts";
 import type { AuditLog } from "./remote/audit.ts";
 import { DeviceStreams, handleRemote } from "./remote/routes.ts";
@@ -79,12 +80,19 @@ function parseLimits(raw: unknown): TurnLimits {
 }
 
 // track: registers the open stream once the session is known, returns its cleanup.
-function streamEvents(req: IncomingMessage, res: ServerResponse, manager: SessionManager, id: string, track: () => () => void): void {
+function eventCursor(req: IncomingMessage, url: URL): number {
+  const raw = req.headers["last-event-id"] ?? url.searchParams.get("after") ?? "0";
+  const value = Number(Array.isArray(raw) ? raw[0] : raw);
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function streamEvents(req: IncomingMessage, res: ServerResponse, url: URL, manager: SessionManager, id: string, track: () => () => void): void {
   const runner = manager.get(id);
   const untrack = track();
+  const after = eventCursor(req, url);
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
-  res.write(`event: hello\ndata: ${JSON.stringify(runner.info)}\n\n`);
-  const unsubscribe = runner.subscribe((event) => res.write(`data: ${JSON.stringify(forWire(event))}\n\n`));
+  res.write(`event: hello\ndata: ${JSON.stringify({ ...runner.info, resume: after > 0 })}\n\n`);
+  const unsubscribe = runner.subscribeFrom((event, cursor) => res.write(`id: ${(cursor ?? 0) + 1}\ndata: ${JSON.stringify(forWire(event))}\n\n`), after);
   // subscribe() replays history synchronously; tell the client where live events begin.
   res.write("event: replay_done\ndata: {}\n\n");
   const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);
@@ -112,6 +120,9 @@ function streamAllEvents(req: IncomingMessage, res: ServerResponse, manager: Ses
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
   res.write("event: hello\ndata: {}\n\n");
   const unsubscribe = runners.map(({ id, runner }) => runner.subscribe((event) => {
+    // Streaming deltas belong to the open transcript's own stream; the notification stream only needs
+    // turn-level events and would otherwise carry every token of every session.
+    if (event.type === "assistant_delta" || event.type === "assistant_reasoning_delta" || event.type === "assistant_reset") return;
     res.write(`data: ${JSON.stringify({ sessionId: id, ...forWire(event) })}\n\n`);
   }));
   res.write("event: replay_done\ndata: {}\n\n");
@@ -220,6 +231,9 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
     }
     case "GET stats":
       return sendJson(res, 200, manager.stats(id));
+    // The working tree as the agent left it: what the review panel shows after a turn.
+    case "GET diff":
+      return sendJson(res, 200, await workingTreeDiff(manager.get(id).info.workspace));
     case "GET tool": {
       const call = manager.get(id).toolCall(url.searchParams.get("call") ?? "");
       if (!call) throw new HttpError(404, "tool call not found");
@@ -364,7 +378,7 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
   const events = url.pathname.match(/^\/events\/([^/]+)$/);
   if (req.method === "GET" && events) {
     const device = caller.kind === "remote" ? caller.device : null;
-    return streamEvents(req, res, manager, sessionId(events[1]), () => (device ? streams.add(device.id, res) : () => {}));
+    return streamEvents(req, res, url, manager, sessionId(events[1]), () => (device ? streams.add(device.id, res) : () => {}));
   }
   if (req.method === "GET" && url.pathname === "/events") {
     const device = caller.kind === "remote" ? caller.device : null;

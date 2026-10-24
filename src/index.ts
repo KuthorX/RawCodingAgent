@@ -67,10 +67,16 @@ async function main(): Promise<void> {
   const remote = values.remote || values.public ? await remoteEntries(values.remote ? remotePort : null, values.public) : undefined;
   const token = generateToken();
   const audit = remote ? new AuditLog(resolve(PROJECT_ROOT, ".audit.jsonl")) : undefined;
-  const servers = createGuiServers(new SessionManager(runtime), token, { remote, audit });
+  const manager = new SessionManager(runtime);
+  const servers = createGuiServers(manager, token, { remote, audit });
   const actual = await listen(servers.local, port);
   process.stdout.write(`raw-coding-agent GUI: http://127.0.0.1:${actual}/?token=${token}\n`);
   const closeAll = () => [servers.local, servers.tailnet, servers.public].forEach((s) => s?.close());
+  // Stop accepting new requests first, then let running turns save their last step and release the locks.
+  shutdownHandler = async () => {
+    closeAll();
+    await manager.shutdown();
+  };
   if (remote?.public && servers.public) {
     // A fixed port: cloudflared's config points at it.
     await listen(servers.public, publicPort).catch((err: unknown) => {
@@ -125,12 +131,23 @@ async function publicEntry(): Promise<NonNullable<RemoteEntries["public"]>> {
   return { origin: url.origin, verifier };
 }
 
-// Turn Ctrl-C / kill into a normal exit so "exit" handlers (session lock release) run.
-process.once("SIGINT", () => process.exit(130));
-process.once("SIGTERM", () => process.exit(143));
+// Turn Ctrl-C / kill into a normal exit so "exit" handlers (session lock release) run. In GUI mode the
+// handler first stops running turns and waits for their step checkpoints; a second signal exits at once.
+let shutdownHandler: (() => Promise<void>) | null = null;
+let shuttingDown = false;
+const shutdown = (code: number): void => {
+  if (shuttingDown) return process.exit(code);
+  shuttingDown = true;
+  if (!shutdownHandler) return process.exit(code);
+  shutdownHandler()
+    .catch((err: unknown) => process.stderr.write(`shutdown: ${String(err)}\n`))
+    .finally(() => process.exit(code));
+};
+process.once("SIGINT", () => shutdown(130));
+process.once("SIGTERM", () => shutdown(143));
 // Closing the terminal window; --remote turns its tailscale serve config off in an "exit" handler too.
 // Only with a terminal: under nohup the hangup is meant to be ignored, and a handler would undo that.
-if (process.stdout.isTTY) process.once("SIGHUP", () => process.exit(129));
+if (process.stdout.isTTY) process.once("SIGHUP", () => shutdown(129));
 
 main().catch((err: unknown) => {
   renderError(err);

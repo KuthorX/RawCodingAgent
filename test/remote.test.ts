@@ -109,16 +109,19 @@ test("devices: another instance's revoke is seen; an unreadable file is set asid
   assert.equal(b.revoke(device.id), true);
   assert.equal(a.authenticate(token), null);
 
-  // A read error is passing: nothing is moved aside, the devices in memory stay.
-  const { token: kept } = a.redeem(a.createPairingCode().code, "laptop");
-  chmodSync(file, 0o000);
-  try {
-    assert.equal(new DeviceStore(file).list().length, 0);
-    assert.ok(!existsSync(`${file}.bad`));
-  } finally {
-    chmodSync(file, 0o600);
+  // A read error is passing: nothing is moved aside, the devices in memory stay. Windows cannot make a file
+  // unreadable with chmod, so this branch only applies where the permission model supports it.
+  if (process.platform !== "win32") {
+    const { token: kept } = a.redeem(a.createPairingCode().code, "laptop");
+    chmodSync(file, 0o000);
+    try {
+      assert.equal(new DeviceStore(file).list().length, 0);
+      assert.ok(!existsSync(`${file}.bad`));
+    } finally {
+      chmodSync(file, 0o600);
+    }
+    assert.ok(a.authenticate(kept));
   }
-  assert.ok(a.authenticate(kept));
 
   writeFileSync(file, "{broken");
   const c = new DeviceStore(file);

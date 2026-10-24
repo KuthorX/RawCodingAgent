@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { request } from "node:http";
+import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { SessionManager } from "../src/gui/manager.ts";
 import { createGuiServers, listen } from "../src/gui/server.ts";
-import { reply, ScriptedProvider, testRuntime } from "./helpers.ts";
+import { reply, ScriptedProvider, tempWorkspace, testRuntime } from "./helpers.ts";
 
 const TOKEN = "test-token";
 let port = 0;
@@ -289,4 +292,27 @@ test("GUI settings: new sessions auto-approve by default, can be switched off", 
   assert.equal((await call("POST", "/api/settings", { body: { defaultModel: "missing-model" } })).status, 400);
   assert.equal((await call("POST", "/api/settings", { body: { defaultModel: "scripted" } })).status, 200);
   assert.equal((await call("GET", "/api/settings", { token: null })).status, 401);
+});
+
+test("diff: a git workspace returns uncommitted changes; a plain directory says so", async () => {
+  const ws = tempWorkspace();
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.autocrlf=false", ...args], { cwd: ws });
+  git("init", "-q");
+  writeFileSync(join(ws, "a.txt"), "first\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+  writeFileSync(join(ws, "a.txt"), "second\n");
+  writeFileSync(join(ws, "new.txt"), "new\n");
+
+  const session = JSON.parse((await call("POST", "/api/sessions", { body: { workspace: ws, approvalMode: "auto" } })).body) as { id: string };
+  const diff = JSON.parse((await call("GET", `/api/sessions/${session.id}/diff`)).body) as { isRepo: boolean; diff: string; files: { path: string }[] };
+  assert.equal(diff.isRepo, true);
+  assert.match(diff.diff, /\+second/);
+  assert.match(diff.diff, /new\.txt/);
+  assert.deepEqual(diff.files.map((f) => f.path).sort(), ["a.txt", "new.txt"]);
+
+  const plain = tempWorkspace();
+  const plainSession = JSON.parse((await call("POST", "/api/sessions", { body: { workspace: plain, approvalMode: "auto" } })).body) as { id: string };
+  const none = JSON.parse((await call("GET", `/api/sessions/${plainSession.id}/diff`)).body) as { isRepo: boolean };
+  assert.equal(none.isRepo, false);
 });

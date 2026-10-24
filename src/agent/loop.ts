@@ -1,9 +1,11 @@
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
-import { costUsd, DEFAULT_PRICING, type Pricing, type TokenUsage } from "../pricing.ts";
+import { costUsd, DEFAULT_PRICING, pricingForModel, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { Tool } from "../tools/index.ts";
+import type { PlanController } from "../tools/plan.ts";
+import type { DelegateTask } from "../tools/delegate.ts";
 import { ToolError } from "../tools/index.ts";
-import type { CompletionRequest, CompletionResponse, Message, Provider, StopReason, ToolCall, ToolResult, UserMessage } from "../types.ts";
+import type { CompletionRequest, CompletionResponse, Message, ModelDelta, Provider, StopReason, ToolCall, ToolResult, UserMessage } from "../types.ts";
 import { callSignature, isRepeating, limitDetail, limitNotice, type LimitHit } from "./limits.ts";
 import { needsApproval, type ApprovalMode, type ApprovalOutcome, type Confirm } from "./permissions.ts";
 import type { Tracer } from "./trace.ts";
@@ -14,6 +16,10 @@ export interface AgentDeps {
   tools: readonly Tool[];
   system: string;
   workspace: string;
+  // Environment passed to subprocess tools; credentials are removed by createRuntime.
+  toolEnv?: NodeJS.ProcessEnv;
+  plan?: PlanController;
+  delegateTask?: DelegateTask;
   maxSteps: number;
   // D1 guards besides maxSteps. Per turn; null/undefined cost = no cost limit, maxRepeats defaults to 3.
   maxTurnCostUsd?: number | null;
@@ -27,12 +33,21 @@ export interface AgentDeps {
   confirm: Confirm;
   tracer: Tracer;
   onEvent?: (event: AgentEvent) => void;
+  // Called at every step boundary with a history that is safe to resume from. The session saves it, so a
+  // crash mid-turn loses at most the model call in flight, not the tool calls that already changed files.
+  onStep?: (messages: Message[]) => void;
   // Waits before each retry of a model call whose connection dropped; its length is the number of retries.
   retryDelaysMs?: readonly number[];
 }
 
 export type AgentEvent =
   | { type: "assistant_text"; text: string }
+  // Incremental text while a streamed response is being generated; not persisted (assistant_text carries the
+  // final message, so a reconnecting client still sees the whole answer).
+  | { type: "assistant_delta"; text: string }
+  | { type: "assistant_reasoning_delta"; text: string }
+  // A retry after partial text: drop what the UI has shown so far and wait for the replacement stream.
+  | { type: "assistant_reset" }
   | { type: "tool_call"; call: ToolCall }
   | { type: "tool_result"; call: ToolCall; result: ToolResult }
   | { type: "interjection_delivered"; count: number }
@@ -112,7 +127,7 @@ async function runTool(call: ToolCall, deps: AgentDeps, signal?: AbortSignal): P
 
   let approval: ApprovalOutcome = tool.dangerous ? "auto" : "not_required";
   let approvalMs: number | null = null;
-  if (needsApproval(tool, deps.approvalMode())) {
+  if (needsApproval(tool, deps.approvalMode(), call)) {
     const t0 = performance.now();
     const allowed = await deps.confirm(call);
     approvalMs = Math.round(performance.now() - t0);
@@ -120,7 +135,7 @@ async function runTool(call: ToolCall, deps: AgentDeps, signal?: AbortSignal): P
     if (!allowed) return { result: fail("the user denied this tool call"), approval, approvalMs };
   }
   try {
-    const output = await tool.run(call.input, { workspace: deps.workspace, signal });
+    const output = await tool.run(call.input, { workspace: deps.workspace, signal, env: deps.toolEnv, plan: deps.plan });
     return { result: { callId: call.id, content: truncateOutput(output), isError: false }, approval, approvalMs };
   } catch (err) {
     // ToolError = expected failure the model should fix; anything else is reported with its type for debugging.
@@ -157,16 +172,26 @@ async function callModel(
   parentId: string,
   signal?: AbortSignal,
   summary = false,
+  onText?: (delta: ModelDelta) => void,
 ): Promise<CompletionResponse> {
   // The summary request keeps the same tools as every other request: it only differs by the appended notice,
   // so the prompt cache still hits. (tool_choice "none" would make DeepSeek drop the tools and miss the cache.)
   const request = { system: deps.system, messages, tools: deps.tools.map((t) => t.spec) };
   const delays = deps.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  let streamed = false;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await callModelOnce(request, step, deps, parentId, attempt, signal, summary);
+      return await callModelOnce(request, step, deps, parentId, attempt, signal, summary, onText ? (delta) => {
+        streamed = true;
+        onText(delta);
+      } : undefined);
     } catch (err) {
       if (signal?.aborted || attempt >= delays.length || !isDroppedConnection(err)) throw err;
+      // A retry starts the answer over: clear the partial text the UI has already shown.
+      if (streamed) {
+        deps.onEvent?.({ type: "assistant_reset" });
+        streamed = false;
+      }
       // Rejects if the user stops the turn while waiting; the caller then sees the abort.
       await sleep(delays[attempt], undefined, { signal });
     }
@@ -181,11 +206,14 @@ async function callModelOnce(
   attempt: number,
   signal: AbortSignal | undefined,
   summary: boolean,
+  onText?: (delta: ModelDelta) => void,
 ): Promise<CompletionResponse> {
   const attrs = { step, messages: request.messages.length, ...(summary ? { summary: true } : {}), ...(attempt > 0 ? { retry: attempt } : {}) };
   const span = deps.tracer.startSpan("llm", deps.provider.model, parentId, attrs);
   try {
-    const response = await deps.provider.complete(request, signal);
+      const response = await deps.provider.complete(request, signal, onText ? (delta) => {
+        onText(delta);
+    } : undefined);
     span.end({
       inputTokens: response.usage.inputTokens,
       cachedInputTokens: response.usage.cachedInputTokens,
@@ -214,7 +242,7 @@ async function loop(
   const interrupted = (steps: number): TurnResult => ({ messages, finishReason: "interrupted", steps });
   const maxRepeats = deps.maxRepeats ?? DEFAULT_MAX_REPEATS;
   const maxCost = deps.maxTurnCostUsd ?? null;
-  const pricing = deps.pricing ?? DEFAULT_PRICING;
+  const pricing = pricingForModel(deps.pricing ?? DEFAULT_PRICING, deps.provider.model);
   let usage: TokenUsage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
   let signatures: string[] = [];
   let truncations = 0; // consecutive responses cut off by max_tokens inside a tool call
@@ -230,13 +258,16 @@ async function loop(
     // D18: user messages sent mid-turn join the context at the next step boundary.
     const interjections = step > 1 ? (control.takeInterjections?.() ?? []) : [];
     if (interjections.length > 0) {
-      messages = [...messages, ...interjections];
+      messages = [...messages, ...interjections.map((message) => ({ ...message, content: `[User interjection]\n${message.content}` }))];
       deps.onEvent?.({ type: "interjection_delivered", count: interjections.length });
     }
 
     let response: CompletionResponse;
     try {
-      response = await callModel(messages, step, deps, turnId, signal);
+      response = await callModel(messages, step, deps, turnId, signal, false, (delta) => {
+        if (delta.text) deps.onEvent?.({ type: "assistant_delta", text: delta.text });
+        if (delta.reasoning) deps.onEvent?.({ type: "assistant_reasoning_delta", text: delta.reasoning });
+      });
     } catch (err) {
       if (signal?.aborted) return interrupted(step - 1);
       throw new TurnAbortedError(err, messages);
@@ -252,6 +283,7 @@ async function loop(
 
     if (response.message.toolCalls.length === 0) {
       const finishReason = response.stopReason === "tool_use" ? "other" : response.stopReason;
+      deps.onStep?.(messages);
       return { messages, finishReason, steps: step };
     }
 
@@ -265,6 +297,7 @@ async function loop(
         isError: true,
       }));
       messages = [...messages, { role: "tool_results", results: skipped }];
+      deps.onStep?.(messages);
       if (!retry) return { messages, finishReason: response.stopReason, steps: step };
       truncations++;
       deps.tracer.log("truncated", { step, retry: truncations });
@@ -296,6 +329,7 @@ async function loop(
       results.push(result);
     }
     messages = [...messages, { role: "tool_results", results }];
+    deps.onStep?.(messages);
     if (signal?.aborted) return interrupted(step);
     if (repeated) return stopAt("repeated", step);
     if (maxCost !== null && costUsd(usage, pricing) > maxCost) return stopAt("max_cost", step);

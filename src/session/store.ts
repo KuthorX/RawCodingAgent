@@ -12,12 +12,15 @@ import {
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
+  writeSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { isApprovalMode, type ApprovalMode } from "../agent/permissions.ts";
 import type { ImageAttachment, Message } from "../types.ts";
 import type { SessionEvent } from "./events.ts";
+import type { PlanItem } from "../tools/plan.ts";
 
 export interface SessionMeta {
   id: string;
@@ -37,6 +40,7 @@ export interface SessionMeta {
   budgetUsd?: number | null;
   // Hidden from the sidebar's project tree (still searchable, can be restored).
   archived?: boolean;
+  plan?: PlanItem[];
 }
 
 export interface TurnLimits {
@@ -288,18 +292,28 @@ export class SessionStore {
   // A lock left by a dead process is taken over.
   acquireLock(id: string): () => void {
     const path = join(this.dir(id), "lock");
-    if (existsSync(path)) {
-      const pid = Number(readFileSync(path, "utf8"));
-      if (pid !== process.pid && isAlive(pid)) {
-        throw new Error(`session "${id}" is open in another process (pid ${pid})`);
+    for (;;) {
+      try {
+        const fd = openSync(path, "wx");
+        try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        let pid: number;
+        try { pid = Number(readFileSync(path, "utf8")); } catch { continue; }
+        if (pid !== process.pid && isAlive(pid)) {
+          throw new Error(`session "${id}" is open in another process (pid ${pid})`);
+        }
+        // Acquisition is atomic for live locks. A dead lock can be taken over; retry if another process wins
+        // the replacement race.
+        try { unlinkSync(path); } catch { /* another owner may have replaced it */ }
       }
     }
-    writeFileSync(path, String(process.pid));
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
-      rmSync(path, { force: true });
+      try { unlinkSync(path); } catch { /* already removed by recovery */ }
       activeLockReleases.delete(release);
     };
     activeLockReleases.add(release);

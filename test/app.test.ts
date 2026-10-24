@@ -14,6 +14,7 @@ test("createRuntime: the session event records the prompt and tools; the search 
     const meta = runtime.store.create(tempWorkspace(), runtime.model, "ask");
     const deps = runtime.makeDeps(meta, { approvalMode: () => "ask", confirm: async () => true });
     assert.ok(deps.tools.some((t) => t.spec.name === "web_search"));
+    assert.ok(deps.tools.some((t) => t.spec.name === "web_fetch"));
     const session = runtime.store.readFile(meta.id, "trace.jsonl").split("\n").filter(Boolean).map((l) => JSON.parse(l))
       .find((r) => r.type === "event" && r.event === "session");
     assert.deepEqual(session.data.promptRules, ["tools"]);
@@ -25,6 +26,7 @@ test("createRuntime: the session event records the prompt and tools; the search 
     const offline = createRuntime("auto", { sessionsDir: tempWorkspace(), dataDir: tempWorkspace(), webSearch: false });
     const m2 = offline.store.create(tempWorkspace(), offline.model, "auto");
     assert.ok(!offline.makeDeps(m2, { approvalMode: () => "auto", confirm: async () => true }).tools.some((t) => t.spec.name === "web_search"));
+    assert.ok(!offline.makeDeps(m2, { approvalMode: () => "auto", confirm: async () => true }).tools.some((t) => t.spec.name === "web_fetch"));
   } finally {
     delete process.env.TAVILY_API_KEY;
     delete process.env.AGENT_PROMPT_RULES;

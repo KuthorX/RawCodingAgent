@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runTurn } from "../src/agent/loop.ts";
+import { runTurn, type AgentEvent } from "../src/agent/loop.ts";
 import { createMemoryTracer } from "../src/agent/trace.ts";
+import type { CompletionResponse, Provider } from "../src/types.ts";
 import { makeDeps, reply, ScriptedProvider } from "./helpers.ts";
 
 test("returns immediately when the model makes no tool calls", async () => {
@@ -12,6 +13,58 @@ test("returns immediately when the model makes no tool calls", async () => {
   assert.equal(result.finishReason, "end_turn");
   assert.equal(result.steps, 1);
   assert.deepEqual(result.messages.map((m) => m.role), ["user", "assistant"]);
+});
+
+test("streamed text becomes assistant_delta events without changing the final message", async () => {
+  const provider: Provider = {
+    name: "stream",
+    model: "stream",
+    async complete(_req, _signal, onDelta): Promise<CompletionResponse> {
+      onDelta?.({ text: "he" });
+      onDelta?.({ text: "llo" });
+      return reply("hello");
+    },
+  };
+  const events: AgentEvent[] = [];
+  const result = await runTurn([], "hi", makeDeps(provider, { onEvent: (event) => events.push(event) }));
+  assert.deepEqual(events.filter((e) => e.type === "assistant_delta").map((e) => e.type === "assistant_delta" && e.text), ["he", "llo"]);
+  const last = result.messages.at(-1)!;
+  assert.equal(last.role === "assistant" ? last.text : undefined, "hello");
+});
+
+test("a retry after partial streamed text asks the UI to clear it", async () => {
+  let calls = 0;
+  const provider: Provider = {
+    name: "flaky-stream",
+    model: "flaky-stream",
+    async complete(_req, _signal, onDelta): Promise<CompletionResponse> {
+      calls++;
+      if (calls === 1) {
+        onDelta?.({ text: "partial" });
+        throw new TypeError("terminated");
+      }
+      onDelta?.({ text: "final" });
+      return reply("final");
+    },
+  };
+  const events: AgentEvent[] = [];
+  const result = await runTurn([], "hi", makeDeps(provider, { onEvent: (event) => events.push(event), retryDelaysMs: [0] }));
+  assert.deepEqual(events.map((e) => e.type), ["assistant_delta", "assistant_reset", "assistant_delta", "assistant_text"]);
+  const last = result.messages.at(-1)!;
+  assert.equal(last.role === "assistant" ? last.text : undefined, "final");
+});
+
+test("onStep sees a resumable history after each tool batch", async () => {
+  const snapshots: string[][] = [];
+  const provider = new ScriptedProvider([
+    reply("", [{ id: "c1", name: "write_file", input: { path: "a.txt", content: "hi" } }]),
+    reply("done"),
+  ]);
+  await runTurn([], "go", makeDeps(provider, { onStep: (messages) => snapshots.push(messages.map((m) => m.role)) }));
+  assert.deepEqual(snapshots, [
+    ["user", "assistant", "tool_results"],
+    ["user", "assistant", "tool_results", "assistant"],
+  ]);
 });
 
 test("executes tool calls and feeds results back until done", async () => {
@@ -62,7 +115,7 @@ test("reports unknown tools and invalid arguments as errors instead of throwing"
 });
 
 test("denied calls are reported to the model", async () => {
-  const provider = new ScriptedProvider([reply("", [{ id: "a", name: "bash", input: { command: "echo hi" } }]), reply("ok")]);
+  const provider = new ScriptedProvider([reply("", [{ id: "a", name: "bash", input: { command: "rm -rf build" } }]), reply("ok")]);
   const result = await runTurn([], "go", makeDeps(provider, { approvalMode: () => "ask", confirm: async () => false }));
   const msg = result.messages[2]!;
   assert.ok(msg.role === "tool_results");

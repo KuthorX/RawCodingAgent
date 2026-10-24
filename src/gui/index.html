@@ -130,6 +130,16 @@
 
   dialog { border: 1px solid var(--accent); border-radius: 0; background: var(--panel); color: var(--ink); padding: 0; width: 440px; }
   dialog::backdrop { background: rgb(0 0 0 / .55); }
+  dialog.wide { width: min(1000px, calc(100vw - 32px)); }
+  .diff-head { display: flex; align-items: baseline; gap: 12px; padding: 14px 16px 0; }
+  .diff-head h3 { margin: 0; padding: 0; background: none; color: var(--ink); font-weight: 600; }
+  .diff-head .meta { color: var(--muted); font-size: 12px; }
+  .diff { margin: 10px 16px; max-height: 68vh; overflow: auto; background: var(--bg); border-left: 2px solid var(--line); padding: 10px 12px; font-size: 12px; line-height: 1.45; white-space: pre; }
+  .diff .add { color: #6fbf73; }
+  .diff .del { color: #e06c75; }
+  .diff .hunk { color: var(--accent); }
+  .diff .meta { color: var(--muted); }
+  .diff .empty { color: var(--muted); white-space: normal; }
   dialog [hidden] { display: none !important; }
   dialog h3 { margin: 0 -18px 4px; padding: 1px 18px; font-size: 13px; font-weight: 400; background: var(--accent); color: var(--on-accent); }
   dialog p { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
@@ -165,6 +175,8 @@
   main { flex: 1; overflow-y: auto; padding: 18px 0; }
   #log { max-width: 960px; margin: 0 auto; padding: 0 22px; display: flex; flex-direction: column; gap: 12px; }
   .msg { white-space: pre-wrap; word-break: break-word; }
+  .msg.streaming::after { content: "▍"; color: var(--accent); animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
   /* Your message is the prompt line; the agent answers indented under a rail. */
   .user { font-weight: 700; color: var(--bright); padding-left: 2ch; text-indent: -2ch; }
   .user::before { content: "> "; color: var(--muted); font-weight: 400; }
@@ -331,8 +343,8 @@
   <div class="settings-wrap">
     <h2>设置</h2>
     <div class="setting">
-      <label><input type="checkbox" class="switch" id="set-auto"> 新会话自动批准 bash</label>
-      <p>开启后，新建的会话里 agent 的 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
+      <label><input type="checkbox" class="switch" id="set-auto"> 新会话自动批准改动</label>
+      <p>开启后，新建的会话里 agent 的文件改动和 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
     </div>
     <div class="setting">
       <label>新会话默认模型 <select id="set-model"></select></label>
@@ -441,6 +453,16 @@
     </div>
   </form>
 </dialog>
+<dialog id="diff-dialog" class="wide">
+  <div class="diff-head">
+    <h3>工作区改动</h3>
+    <span class="meta" id="diff-stat"></span>
+  </div>
+  <pre class="diff" id="diff-body"></pre>
+  <div class="row">
+    <button type="button" id="diff-close">关闭</button>
+  </div>
+</dialog>
 <script src="/common.js"></script>
 <script src="/markdown.js"></script>
 <script>
@@ -449,10 +471,13 @@ const $ = (id) => document.getElementById(id);
 const logBox = $("log"), input = $("input"), sendBtn = $("send");
 let current = null;      // session id
 let events = null;       // EventSource for current session
+let sessionCursor = 0;
 let busy = false;
 let dotState = "idle";
 let replaying = false;   // true while the server replays stored events after (re)connect
 const toolCards = new Map();
+let streamBox = null;    // the assistant bubble currently receiving token deltas
+let reasoningBox = null; // live reasoning text for thinking models
 let notificationStream = null;
 let notificationSessionKey = "";
 
@@ -628,7 +653,7 @@ function sessionItem(s, extra) {
   onMenu(item, (ev) => sessionMenu(ev, s));
   item.title = [s.title || "（未命名）",
     `${fmt.time(s.updatedAt)} · ${s.turns} 轮 · 上下文 ${fmt.k(s.totals.contextTokens)} · ${fmt.usd(s.totals.costUsd)} · ${s.totals.toolCalls} 次工具调用`,
-    s.approvalMode === "auto" ? "自动批准 bash" : "bash 每次询问", s.workspace, s.id].join("\n");
+    s.approvalMode === "auto" ? "自动批准改动" : "改动每次询问", s.workspace, s.id].join("\n");
   return item;
 }
 
@@ -1046,6 +1071,32 @@ function parseUsd(text, label) {
 }
 
 let budgetTarget = null; // { project, workspace? }
+async function openDiff() {
+  if (!current) return;
+  const body = $("diff-body");
+  body.replaceChildren(el("div", "empty", "读取中…"));
+  $("diff-stat").textContent = "";
+  $("diff-dialog").showModal();
+  $("diff-close").onclick = () => $("diff-dialog").close();
+  const data = await api(`/api/sessions/${current}/diff`);
+  if (!data.isRepo) {
+    body.replaceChildren(el("div", "empty", "这个工作区不是 git 仓库，没有可以对比的改动。"));
+    return;
+  }
+  $("diff-stat").textContent = `${data.files.length} 个文件有改动${data.truncated ? "（diff 太长，已截断）" : ""}`;
+  if (!data.diff.trim()) {
+    body.replaceChildren(el("div", "empty", "工作区是干净的，没有未提交的改动。"));
+    return;
+  }
+  body.replaceChildren();
+  for (const line of data.diff.split("\n")) {
+    const cls = line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("new file")
+      ? "meta"
+      : line.startsWith("@@") ? "hunk" : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
+    body.append(el("span", cls, line + "\n"));
+  }
+}
+
 function openBudgetDialog(project, workspace) {
   budgetTarget = { project, workspace };
   const scope = workspace ? `工作区 ${workspace.name}` : `项目 ${project.name}`;
@@ -1387,7 +1438,42 @@ const handlers = {
   },
   output_truncated(e) { append(el("div", "note", `输出超过 max_tokens，工具调用被截断：已让 agent 拆小重试（第 ${e.retry} 次）`)); },
   interjection_dropped(e) { settleQueued(e.count, "插话 · 未送达（已停止）", "dropped"); },
-  assistant_text(e) { append(renderAssistant(e.text)); },
+  plan(e) {
+    const done = e.items.filter((item) => item.status === "completed").length;
+    append(el("div", "note", `计划已更新：${done}/${e.items.length} 项完成`));
+  },
+  assistant_text(e) {
+    streamBox?.remove();
+    streamBox = null;
+    append(renderAssistant(e.text));
+  },
+  assistant_delta(e) {
+    if (!streamBox || !streamBox.isConnected) {
+      streamBox = el("div", "msg assistant md streaming");
+      streamBox._text = el("span");
+      streamBox.append(streamBox._text);
+      append(streamBox);
+    }
+    streamBox._text.textContent += e.text;
+    const scroller = $("scroller");
+    // Follow the stream only when the reader is already at the bottom.
+    if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80) scroller.scrollTop = scroller.scrollHeight;
+  },
+  assistant_reset() {
+    streamBox?.remove();
+    streamBox = null;
+  },
+  assistant_reasoning_delta(e) {
+    if (!reasoningBox || !reasoningBox.isConnected) {
+      reasoningBox = el("details", "reasoning");
+      reasoningBox.open = false;
+      reasoningBox.append(el("summary", "思考过程（实时）"));
+      reasoningBox._text = el("pre", "");
+      reasoningBox.append(reasoningBox._text);
+      append(reasoningBox);
+    }
+    reasoningBox._text.textContent += e.text;
+  },
   tool_call(e) {
     const card = el("details", "tool running");
     const summary = el("summary");
@@ -1465,7 +1551,7 @@ const handlers = {
   },
   approval_mode(e) {
     showMode(e.mode);
-    append(el("div", "note", e.mode === "auto" ? "权限已切换为：自动批准（之后的 bash 不再询问）" : "权限已切换为：每次询问"));
+    append(el("div", "note", e.mode === "auto" ? "权限已切换为：自动批准（之后的改动不再询问）" : "权限已切换为：每次询问"));
   },
   compaction_start(e) {
     append(el("div", "note", e.manual ? "正在压缩上下文…" : "正在自动压缩上下文…"));
@@ -1507,6 +1593,9 @@ const handlers = {
 
 // A turn ended; if queued interjections arrived too late, they run as the next turn.
 function endTurn(continues) {
+  streamBox?.remove();
+  streamBox = null;
+  reasoningBox = null;
   closeStaleCards();
   foldTools();
   if (continues) {
@@ -1542,19 +1631,22 @@ $("mode-auto").addEventListener("change", async (ev) => {
   const auto = ev.target.checked;
   // The switch snaps back until the server confirms via the approval_mode event.
   ev.target.checked = !auto;
-  if (auto && !(await ask("开启后，本会话里 agent 的 bash 命令将直接执行，不再询问。", { title: "自动批准 bash", ok: "开启" }))) return;
+  if (auto && !(await ask("开启后，本会话里 agent 的文件改动和 bash 命令将直接执行，不再询问。", { title: "自动批准改动", ok: "开启" }))) return;
   setApprovalMode(auto ? "auto" : "ask");
 });
 
 // ---------- open a session ----------
 function openSession(id) {
+  const resumeCursor = current === id ? sessionCursor : 0;
   events?.close();
   attachments = [];
   restoreDraft(id);
   renderAttachments();
   queuedBubbles = [];
   current = id || null;
+  sessionCursor = resumeCursor;
   dotState = "idle";
+  streamBox = null;
   toolCards.clear();
   $("head-links").replaceChildren();
   $("mode").hidden = true;
@@ -1567,13 +1659,16 @@ function openSession(id) {
     refreshSessions();
     return;
   }
-  const source = events = new EventSource(withToken(`/events/${current}`));
-  // The server replays the whole transcript on every (re)connect, so start from a clean slate.
+  const eventPath = sessionCursor ? withToken(`/events/${current}`, { after: String(sessionCursor) }) : withToken(`/events/${current}`);
+  const source = events = new EventSource(eventPath);
   events.addEventListener("hello", (msg) => {
     const info = JSON.parse(msg.data);
-    toolCards.clear();
-    queuedBubbles = [];
-    logBox.replaceChildren(el("div", "empty", "给 agent 一个任务开始吧。"));
+    streamBox = null;
+    if (!info.resume) {
+      toolCards.clear();
+      queuedBubbles = [];
+      logBox.replaceChildren(el("div", "empty", "给 agent 一个任务开始吧。"));
+    }
     $("head-title").textContent = info.title || "（未命名）";
     $("meta").textContent = info.model;
     $("head-title").title = info.workspace;
@@ -1593,10 +1688,14 @@ function openSession(id) {
     limitsBtn.type = "button";
     limitsBtn.title = "本会话的每轮步数、每轮花费和累计花费上限";
     limitsBtn.onclick = () => openLimitsDialog().catch(notice);
-    links.replaceChildren(fork, limitsBtn, link("#stats/" + current, "统计"), link(rawUrl(current, "events.jsonl"), "事件 ↗", true));
+    const diffBtn = el("button", "link", "改动");
+    diffBtn.type = "button";
+    diffBtn.title = "查看工作区里未提交的改动（git diff）";
+    diffBtn.onclick = () => openDiff().catch(notice);
+    links.replaceChildren(fork, limitsBtn, diffBtn, link("#stats/" + current, "统计"), link(rawUrl(current, "events.jsonl"), "事件 ↗", true));
     showMode(info.approvalMode);
     setBusy(info.busy);
-    replaying = true;
+    replaying = !info.resume;
   });
   events.addEventListener("replay_done", () => {
     replaying = false;
@@ -1604,6 +1703,7 @@ function openSession(id) {
     $("scroller").scrollTop = $("scroller").scrollHeight;
   });
   events.onmessage = (msg) => {
+    if (msg.lastEventId) sessionCursor = Number(msg.lastEventId) || sessionCursor;
     const event = JSON.parse(msg.data);
     handlers[event.type]?.(event);
   };

@@ -53,11 +53,19 @@ export interface CompletionResponse {
   usage: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
 }
 
+// Text as it arrives from a streaming response. Tool-call arguments are assembled by the provider and only
+// surface in the final CompletionResponse; UIs don't need to render them token by token.
+export interface ModelDelta {
+  text?: string;
+  reasoning?: string;
+}
+
 export interface Provider {
   readonly name: string;
   readonly model: string;
   setModel?(model: string): void;
   listModels?(): Promise<string[]>;
-  // The signal aborts the in-flight request when the user stops the turn.
-  complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse>;
+  // The signal aborts the in-flight request when the user stops the turn. When onDelta is given (and the
+  // provider supports it), text is delivered incrementally; the return value is the complete message either way.
+  complete(req: CompletionRequest, signal?: AbortSignal, onDelta?: (delta: ModelDelta) => void): Promise<CompletionResponse>;
 }

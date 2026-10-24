@@ -59,7 +59,7 @@ test("runner: attached images reach the model, events name them, and a fork gets
 test("runner: an interjection can carry images, delivered at the next step", async () => {
   const provider = new ManualProvider();
   const runtime = testRuntime(provider);
-  const meta = runtime.store.create(tempWorkspace(), "m");
+  const meta = runtime.store.create(tempWorkspace(), "m", "auto");
   const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
   const events: SessionEvent[] = [];
   runner.subscribe((e) => events.push(e));
@@ -70,7 +70,7 @@ test("runner: an interjection can carry images, delivered at the next step", asy
   assert.deepEqual(events.at(-1), { type: "user", text: "", queued: true, images: [img.name] });
   provider.respond(reply("", [{ id: "a", name: "write_file", input: { path: "x.txt", content: "x" } }]));
   await provider.requested(2);
-  assert.deepEqual(provider.requests[1]!.messages.at(-1), { role: "user", content: "", images: [{ path: img.path, mediaType: "image/png" }] });
+  assert.deepEqual(provider.requests[1]!.messages.at(-1), { role: "user", content: "[User interjection]\n", images: [{ path: img.path, mediaType: "image/png" }] });
   provider.respond(reply("ok"));
   await done;
 });
@@ -78,7 +78,7 @@ test("runner: an interjection can carry images, delivered at the next step", asy
 test("runner: late interjections with images merge into the next turn", async () => {
   const provider = new ManualProvider();
   const runtime = testRuntime(provider);
-  const meta = runtime.store.create(tempWorkspace(), "m");
+  const meta = runtime.store.create(tempWorkspace(), "m", "auto");
   const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
   const { done } = runner.send("start");
   await provider.requested(1);

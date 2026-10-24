@@ -13,7 +13,7 @@ export interface CliOptions {
   forceAuto: boolean;
 }
 
-const MODE_LABEL: Record<ApprovalMode, string> = { ask: "ask (bash needs approval)", auto: "auto (everything runs without asking)" };
+const MODE_LABEL: Record<ApprovalMode, string> = { ask: "ask (mutations need approval)", auto: "auto (everything runs without asking)" };
 const HELP = "type while the agent works to interject · Ctrl-C stops the turn · /auto on|off · /exit";
 const note = (text: string) => process.stdout.write(styleText("dim", text) + "\n");
 

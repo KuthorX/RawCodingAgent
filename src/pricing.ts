@@ -5,6 +5,8 @@ export interface Pricing {
   inputPerMTok: number;
   cachedInputPerMTok: number;
   outputPerMTok: number;
+  // Optional exact-model overrides from MODEL_PRICING_JSON; base rates remain the fallback.
+  models?: Record<string, Omit<Pricing, "models">>;
 }
 
 export const DEFAULT_PRICING: Pricing = { inputPerMTok: 0.3, cachedInputPerMTok: 0.006, outputPerMTok: 1.2 };
@@ -33,9 +35,29 @@ function price(name: string, raw: string | undefined, fallback: number): number 
 }
 
 export function loadPricing(env: NodeJS.ProcessEnv = process.env): Pricing {
-  return {
+  const base = {
     inputPerMTok: price("PRICE_INPUT_PER_MTOK", env.PRICE_INPUT_PER_MTOK, DEFAULT_PRICING.inputPerMTok),
     cachedInputPerMTok: price("PRICE_CACHED_INPUT_PER_MTOK", env.PRICE_CACHED_INPUT_PER_MTOK, DEFAULT_PRICING.cachedInputPerMTok),
     outputPerMTok: price("PRICE_OUTPUT_PER_MTOK", env.PRICE_OUTPUT_PER_MTOK, DEFAULT_PRICING.outputPerMTok),
   };
+  const raw = env.MODEL_PRICING_JSON?.trim();
+  if (!raw) return base;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("MODEL_PRICING_JSON must be valid JSON"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("MODEL_PRICING_JSON must be an object");
+  const models: Record<string, Omit<Pricing, "models">> = {};
+  for (const [model, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`MODEL_PRICING_JSON.${model} must be an object`);
+    const row = value as Record<string, unknown>;
+    models[model] = {
+      inputPerMTok: price(`MODEL_PRICING_JSON.${model}.inputPerMTok`, String(row.inputPerMTok ?? ""), base.inputPerMTok),
+      cachedInputPerMTok: price(`MODEL_PRICING_JSON.${model}.cachedInputPerMTok`, String(row.cachedInputPerMTok ?? ""), base.cachedInputPerMTok),
+      outputPerMTok: price(`MODEL_PRICING_JSON.${model}.outputPerMTok`, String(row.outputPerMTok ?? ""), base.outputPerMTok),
+    };
+  }
+  return { ...base, models };
+}
+
+export function pricingForModel(pricing: Pricing, model: string): Omit<Pricing, "models"> {
+  return pricing.models?.[model] ?? pricing;
 }

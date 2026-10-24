@@ -9,6 +9,8 @@ import { SessionStore } from "../src/session/store.ts";
 import { SettingsStore } from "../src/gui/settings.ts";
 import { ProjectStore } from "../src/workspace/store.ts";
 import { defaultTools } from "../src/tools/index.ts";
+import { planTool } from "../src/tools/plan.ts";
+import { delegateTool } from "../src/tools/delegate.ts";
 import type { CompletionRequest, CompletionResponse, Provider, StopReason, ToolCall } from "../src/types.ts";
 
 export function tempWorkspace(): string {
@@ -54,7 +56,7 @@ export class ScriptedProvider implements Provider {
 export function makeDeps(provider: Provider, overrides: Partial<AgentDeps> = {}): AgentDeps {
   return {
     provider,
-    tools: defaultTools,
+    tools: [...defaultTools, ...(overrides.plan ? [planTool(overrides.plan)] : []), ...(overrides.delegateTask ? [delegateTool(overrides.delegateTask)] : [])],
     system: "test",
     workspace: tempWorkspace(),
     maxSteps: 10,
@@ -73,12 +75,13 @@ export function testRuntime(provider: Provider): Runtime {
     projects: new ProjectStore(join(tempWorkspace(), "projects.json"), join(tempWorkspace(), "worktrees.json")),
     settings: new SettingsStore(join(tempWorkspace(), "settings.json"), provider.model),
     model: provider.model,
+    contextWindow: () => 400_000,
     pricing: DEFAULT_PRICING,
     promptRules: [],
     limits: { maxSteps: 10, maxTurnCostUsd: null },
     defaultApprovalMode: "ask",
     makeDeps: (meta, hooks) => ({
-      ...makeDeps(provider),
+      ...makeDeps(provider, hooks),
       workspace: meta.workspace,
       tracer: createTracer(store.tracePath(meta.id)),
       ...hooks,

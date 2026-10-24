@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 const TIMEOUT_MS = 60_000;
 
@@ -17,7 +18,16 @@ export function git(cwd: string, args: string[]): Promise<string> {
 
 // git prints E:/code/x on Windows; the rest of the app uses E:\code\x. Drive letters are compared upper-case.
 export function samePath(path: string): string {
-  return resolve(path).replace(/^[a-z]:/, (d) => d.toUpperCase());
+  const absolute = resolve(path);
+  let current = absolute;
+  const tail: string[] = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) return absolute.replace(/^[a-z]:/, (d) => d.toUpperCase());
+    tail.unshift(basename(current));
+    current = parent;
+  }
+  return join(realpathSync.native(current), ...tail).replace(/^[a-z]:/, (d) => d.toUpperCase());
 }
 
 // Top of the repository containing `path`, or null when it isn't inside a git work tree.
@@ -102,4 +112,31 @@ export async function isValidBranchName(root: string, name: string): Promise<boo
   } catch {
     return false;
   }
+}
+
+export interface WorkingTreeDiff {
+  isRepo: boolean;
+  diff: string;
+  files: { path: string; status: string }[];
+  truncated: boolean;
+}
+
+const MAX_DIFF_CHARS = 200_000;
+
+// Uncommitted changes in a workspace, for the review panel. Untracked files are listed but not expanded:
+// they are exactly the files the agent created, and a huge generated file should not bloat the response.
+export async function workingTreeDiff(path: string): Promise<WorkingTreeDiff> {
+  if (!(await repoRoot(path))) return { isRepo: false, diff: "", files: [], truncated: false };
+  const [status, tracked] = await Promise.all([
+    git(path, ["status", "--porcelain=v1", "--untracked-files=all"]),
+    git(path, ["-c", "core.quotepath=false", "diff", "--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/"]),
+  ]);
+  const files = status
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => ({ status: line.slice(0, 2).trim() || "M", path: line.slice(3) }));
+  const untracked = files.filter((f) => f.status === "??");
+  const extra = untracked.length > 0 ? `\n\n# untracked files (not shown in the diff above)\n${untracked.map((f) => `?? ${f.path}`).join("\n")}\n` : "";
+  const all = tracked + extra;
+  return { isRepo: true, diff: all.slice(0, MAX_DIFF_CHARS), files, truncated: all.length > MAX_DIFF_CHARS };
 }

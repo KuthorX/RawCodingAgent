@@ -1,5 +1,5 @@
 import type { SpanRecord } from "../agent/trace.ts";
-import { costUsd, DEFAULT_PRICING, type Pricing } from "../pricing.ts";
+import { costUsd, DEFAULT_PRICING, pricingForModel, type Pricing } from "../pricing.ts";
 
 export interface LocatedSpan extends SpanRecord {
   line: number; // 1-based line in trace.jsonl
@@ -12,6 +12,7 @@ export interface Totals {
   toolErrors: number;
   inputTokens: number;
   cachedInputTokens: number; // part of inputTokens served from the provider's prompt cache
+  cacheHitRatio: number;
   outputTokens: number;
   costUsd: number; // estimated from the token counts and the configured pricing
   // Input tokens of the latest model call that reported usage: how big the conversation is now (D10).
@@ -74,7 +75,12 @@ export function totals(spans: readonly LocatedSpan[], pricing: Pricing = DEFAULT
     toolCalls: tools.length,
     toolErrors: tools.filter((s) => s.status === "error").length,
     ...usage,
-    costUsd: costUsd(usage, pricing),
+    costUsd: llm.reduce((total, span) => total + costUsd({
+      inputTokens: num(span.attrs.inputTokens),
+      cachedInputTokens: num(span.attrs.cachedInputTokens),
+      outputTokens: num(span.attrs.outputTokens),
+    }, pricingForModel(pricing, span.name)), 0),
+    cacheHitRatio: usage.inputTokens ? usage.cachedInputTokens / usage.inputTokens : 0,
     // Aborted or failed calls carry no usage; skip them so a stop doesn't reset the number to 0.
     contextTokens: num(
       llm

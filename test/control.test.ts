@@ -56,7 +56,7 @@ test("interjections are injected before the next model call", async () => {
   await provider.requested(2);
   const sent = provider.requests[1]!.messages;
   assert.deepEqual(sent.map((m) => m.role), ["user", "assistant", "tool_results", "user"]);
-  assert.deepEqual(sent.at(-1), { role: "user", content: "actually, use two.txt" });
+  assert.deepEqual(sent.at(-1), { role: "user", content: "[User interjection]\nactually, use two.txt" });
   provider.respond(reply("ok"));
   assert.equal((await turn).finishReason, "end_turn");
 });
@@ -71,9 +71,9 @@ test("bash is killed when the turn is stopped", async () => {
   assert.ok(Date.now() - started < 5000);
 });
 
-function sessionWith(provider: ManualProvider) {
+function sessionWith(provider: ManualProvider, approvalMode: "ask" | "auto" = "ask") {
   const runtime = testRuntime(provider);
-  const meta = runtime.store.create(runtime.store.root, "m");
+  const meta = runtime.store.create(runtime.store.root, "m", approvalMode);
   const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
   const events: SessionEvent[] = [];
   runner.subscribe((e) => events.push(e));
@@ -82,7 +82,7 @@ function sessionWith(provider: ManualProvider) {
 
 test("a message sent mid-turn is queued, then delivered at the next step", async () => {
   const provider = new ManualProvider();
-  const { runner, events } = sessionWith(provider);
+  const { runner, events } = sessionWith(provider, "auto");
   const { done } = runner.send("start");
   await provider.requested(1);
   assert.equal(runner.send("also do X").queued, true);
@@ -117,7 +117,8 @@ test("stop aborts the turn, denies waiting approvals, drops queued messages, and
   const { runner, events, runtime, meta } = sessionWith(provider);
   const { done } = runner.send("start");
   await provider.requested(1);
-  provider.respond(reply("", [{ id: "b", name: "bash", input: { command: "echo hi" } }]));
+  // A write command: read-only bash no longer waits for approval, so this must be something that does.
+  provider.respond(reply("", [{ id: "b", name: "bash", input: { command: "rm -rf build" } }]));
   while (!events.some((e) => e.type === "approval_request")) await new Promise((r) => setTimeout(r, 5));
   runner.send("never mind");
 

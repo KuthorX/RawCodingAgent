@@ -242,7 +242,7 @@ export const bashTool: Tool = {
   },
   dangerous: true,
   async run(input, ctx) {
-    const r = await runShell(requireString(input, "command"), { cwd: ctx.workspace, timeoutMs: TIMEOUT_MS, signal: ctx.signal });
+    const r = await runShell(requireString(input, "command"), { cwd: ctx.workspace, timeoutMs: TIMEOUT_MS, signal: ctx.signal, env: ctx.env });
     return formatShellResult(r);
   },
 };

@@ -33,7 +33,7 @@ test("a failing model call ends llm and turn spans with error status", async () 
 
 test("approval wait time is recorded on the tool span", async () => {
   const tracer = createMemoryTracer();
-  const provider = new ScriptedProvider([reply("", [{ id: "a", name: "bash", input: { command: "true" } }]), reply("ok")]);
+  const provider = new ScriptedProvider([reply("", [{ id: "a", name: "bash", input: { command: "rm -rf build" } }]), reply("ok")]);
   const confirm = () => new Promise<boolean>((r) => setTimeout(() => r(true), 20));
   await runTurn([], "go", makeDeps(provider, { tracer, approvalMode: () => "ask", confirm }));
   const tool = tracer.spans.find((s) => s.kind === "tool")!;
@@ -65,6 +65,7 @@ test("totals, toolStats and turns aggregate spans", () => {
   assert.deepEqual(totals(spans, pricing), {
     turns: 1, llmCalls: 2, toolCalls: 2, toolErrors: 1, inputTokens: 15, cachedInputTokens: 4, outputTokens: 3, costUsd: 17.4,
     contextTokens: 5, // the latest llm span (l2) had 5 input tokens
+    cacheHitRatio: 4 / 15,
     llmMs: 20, toolMs: 40, approvalMs: 500,
     approvals: { auto: 0, allowed: 1, denied: 0 },
   });
@@ -79,7 +80,7 @@ test("totals, toolStats and turns aggregate spans", () => {
 test("tool spans record how each call was permitted, using the mode at call time", async () => {
   const tracer = createMemoryTracer();
   let mode: "ask" | "auto" = "ask";
-  const bash = (id: string) => ({ id, name: "bash", input: { command: `echo ${id}` } });
+  const bash = (id: string) => ({ id, name: "bash", input: { command: `rm -rf ${id}` } });
   const provider = new ScriptedProvider([
     reply("", [{ id: "r", name: "read_file", input: { path: "nope" } }, bash("b1"), bash("b2"), bash("b3")]),
     reply("ok"),

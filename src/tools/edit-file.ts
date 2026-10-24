@@ -68,7 +68,7 @@ export const editFileTool: Tool = {
       required: ["path"],
     },
   },
-  dangerous: false,
+  dangerous: true,
   async run(input, ctx) {
     const path = requireString(input, "path");
     const edits = readEdits(input);
