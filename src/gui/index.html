@@ -293,6 +293,19 @@
   .approval button:hover:not(:disabled) kbd { background: var(--ink); }
   .tool.danger .body { border-color: var(--err); }
   .tool.danger .approval span { color: var(--err); }
+  /* Selects: the popup of a native <select> is drawn by the OS (blue highlight, rounded corners), so each select
+     is covered by a button and a menu drawn here. The real select stays in the DOM for value, options and change. */
+  .pick-wrap { position: relative; display: block; flex: 1 1 auto; width: 100%; min-width: 0; }
+  .pick-wrap > select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+  .pick { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font-size: 12px; text-align: left; }
+  .pick > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pick::after { content: "▾"; flex: none; color: var(--muted); }
+  .pick.on { border-color: var(--accent); }
+  .pick:disabled { opacity: .5; }
+  .pick-menu { position: fixed; z-index: 90; padding: 2px 0; border: 1px solid var(--line); border-radius: 0; background: var(--panel); box-shadow: 0 10px 28px rgb(0 0 0 / .3); max-height: 45vh; overflow: auto; }
+  .pick-menu button { position: relative; display: block; width: 100%; padding: 5px 10px 5px 24px; border: 0; border-radius: 0; background: none; color: var(--ink); font-size: 12px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pick-menu button:hover:not(:disabled) { background: var(--sel); }
+  .pick-menu button.on::before { content: "✓"; position: absolute; left: 8px; color: var(--accent-ink); }
   button.link { border: 0; background: none; color: var(--muted); padding: 2px 6px; }
   button.link:hover:not(:disabled) { color: var(--ink); text-decoration: underline; background: none; }
   /* Child agents: one collapsible panel per agent inside the multi_agent card, with its own transcript. */
@@ -382,6 +395,7 @@
     .slash-menu { left: 10px; right: 10px; }
     /* Below 16px iOS zooms the page in on focus. */
     textarea, input[type=text], input[type=search], input[type=password], input[type=url], select { font-size: 16px !important; }
+    .pick { height: 34px; font-size: 16px; }
     .settings-wrap { padding: 18px 12px; }
     /* 16px controls (so iOS doesn't zoom) next to 12px text reads as broken: lift the surrounding type too. */
     .settings-wrap h2, .setting b, .setting p, .setting label, .model-fields label, .provider-fields label, .devices, .hint { font-size: 14px; }
@@ -2809,6 +2823,94 @@ $("set-theme").addEventListener("click", (ev) => {
   showTheme();
 });
 showTheme();
+
+// ---------- page-drawn dropdowns ----------
+// A native select popup is drawn by the OS and cannot match the page, so every select is covered by a button plus a
+// menu this page draws. The <select> stays in the DOM (transparent, 1:1 over the button) as the source of truth for
+// value, options and change events, including code that sets select.value directly.
+const valueProperty = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+Object.defineProperty(HTMLSelectElement.prototype, "value", {
+  configurable: true,
+  get() { return valueProperty.get.call(this); },
+  set(value) {
+    valueProperty.set.call(this, value);
+    syncPick(this); // code fills and selects options; the button has to follow
+  },
+});
+
+function pickLabel(select) {
+  return select.selectedOptions[0]?.textContent ?? "";
+}
+
+function syncPick(select) {
+  const button = select._pick;
+  if (!button) return;
+  const label = pickLabel(select);
+  if (button._label !== label) {
+    button._label = label;
+    button.firstChild.textContent = label; // the text node, not the ▾ marker
+    button.title = label;
+  }
+  button.disabled = select.disabled;
+}
+
+function closePick() {
+  for (const menu of document.querySelectorAll(".pick-menu")) menu.remove();
+  for (const button of document.querySelectorAll(".pick.on")) button.classList.remove("on");
+}
+
+function togglePick(select) {
+  const button = select._pick;
+  if (!button || select.disabled) return;
+  if (document.querySelector(".pick-menu")?._select === select) return closePick();
+  closePick();
+  button.classList.add("on");
+  const menu = el("div", "pick-menu");
+  menu._select = select;
+  for (const option of select.options) {
+    const item = el("button", option.value === select.value ? "on" : "", option.textContent);
+    item.type = "button";
+    item.disabled = option.disabled;
+    item.onclick = (ev) => {
+      ev.preventDefault();
+      closePick();
+      if (select.value !== option.value) {
+        select.value = option.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    };
+    menu.append(item);
+  }
+  // A modal dialog lives in the top layer: a menu appended to <body> would render behind it.
+  (select.closest("dialog") ?? document.body).append(menu);
+  const rect = button.getBoundingClientRect();
+  menu.style.minWidth = `${Math.max(Math.round(rect.width), 140)}px`;
+  menu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8))}px`;
+  const below = rect.bottom + 4;
+  menu.style.top = `${below + menu.offsetHeight > innerHeight - 8 ? Math.max(8, rect.top - menu.offsetHeight - 4) : below}px`;
+}
+
+function enhanceSelect(select) {
+  if (select._pick) return syncPick(select);
+  const wrap = el("span", "pick-wrap");
+  const button = el("button", "pick");
+  button.type = "button";
+  button.append(el("span", "", pickLabel(select)));
+  button.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); togglePick(select); };
+  select.before(wrap);
+  wrap.append(select, button);
+  select._pick = button;
+  select.tabIndex = -1;
+  syncPick(select);
+  select.addEventListener("change", () => syncPick(select));
+  new MutationObserver(() => syncPick(select)).observe(select, { childList: true, subtree: true, characterData: true });
+}
+
+document.addEventListener("click", (ev) => { if (!ev.target.closest(".pick, .pick-menu")) closePick(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closePick(); });
+addEventListener("resize", closePick);
+document.addEventListener("scroll", closePick, true);
+for (const select of document.querySelectorAll("select")) enhanceSelect(select);
 
 // ---------- settings sections ----------
 // The settings page is long: one section shows at a time, and the choice survives reloads like the theme.
