@@ -8,7 +8,7 @@ import { runCommand } from "../src/session/commands.ts";
 import type { SessionEvent } from "../src/session/events.ts";
 import { SessionRunner } from "../src/session/runner.ts";
 import type { Tool } from "../src/tools/types.ts";
-import { makeDeps, reply, ScriptedProvider, tempWorkspace, testRuntime } from "./helpers.ts";
+import { makeDeps, ManualProvider, reply, ScriptedProvider, tempWorkspace, testRuntime } from "./helpers.ts";
 
 // A tool that records how many of its calls were running at the same time.
 function slowTool(name: string, state: { now: number; peak: number }): Tool {
@@ -141,4 +141,27 @@ test("/multiagent adds the tool and its note; off removes both", async () => {
   assert.equal(runner.info.multiagent, false);
   assert.doesNotMatch(runner.deps.system, /\[Multi-agent\]/);
   assert.throws(() => runCommand(runner, "/multiagent maybe"), /on 或 off/);
+});
+
+test("stopping the turn aborts the children too", async () => {
+  const provider = new ManualProvider();
+  const runtime = testRuntime(provider);
+  const meta = runtime.store.create(tempWorkspace(), "m", "auto");
+  const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
+  runner.setMultiAgent(true);
+  const done = runner.send("go").done;
+
+  await provider.requested(1);
+  provider.respond(reply("", [{ id: "m", name: "multi_agent", input: { tasks: [{ role: "scout", prompt: "look" }] } }]));
+  await provider.requested(2); // the child is now waiting on its own request
+  runner.stop();
+  await done;
+
+  const events = runtime.store.loadEvents(meta.id);
+  const end = events.find((event): event is Extract<SessionEvent, { type: "agent_end" }> => event.type === "agent_end");
+  assert.ok(end);
+  assert.equal(end.ok, false);
+  assert.equal(end.finishReason, "interrupted");
+  const turn = events.findLast((event) => event.type === "turn_end" || event.type === "error");
+  assert.ok(turn?.type === "turn_end" && turn.finishReason === "interrupted");
 });
