@@ -15,9 +15,24 @@ export interface TokenUsage {
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
+  cacheWriteTokens?: number;
+  // Per-request catalog estimate from native providers, including cache writes and pricing tiers.
+  costUsd?: number;
+}
+
+export function usageFromError(error: unknown): TokenUsage | undefined {
+  const usage = error && typeof error === "object" && "usage" in error ? error.usage : undefined;
+  if (!usage || typeof usage !== "object") return;
+  const row = usage as Record<string, unknown>;
+  const valid = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  if (!valid(row.inputTokens) || !valid(row.cachedInputTokens) || !valid(row.outputTokens)) return;
+  return { inputTokens: row.inputTokens, cachedInputTokens: row.cachedInputTokens, outputTokens: row.outputTokens,
+    ...(valid(row.cacheWriteTokens) ? { cacheWriteTokens: row.cacheWriteTokens } : {}),
+    ...(valid(row.costUsd) ? { costUsd: row.costUsd } : {}) };
 }
 
 export function costUsd(usage: TokenUsage, pricing: Pricing): number {
+  if (typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd) && usage.costUsd >= 0) return usage.costUsd;
   const cached = Math.min(usage.cachedInputTokens, usage.inputTokens);
   return (
     ((usage.inputTokens - cached) * pricing.inputPerMTok +

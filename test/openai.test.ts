@@ -41,8 +41,8 @@ test("openai: malformed arguments are flagged, not thrown", () => {
   assert.deepEqual(parseArguments("[1]"), { __invalid_arguments: "[1]" });
 });
 
-test("config requires an API key and validates values", () => {
-  assert.throws(() => loadConfig({}), /OPENAI_API_KEY/);
+test("config allows initial GUI setup without a key and validates values", () => {
+  assert.equal(loadConfig({}).llm.apiKey, "");
   assert.throws(() => loadConfig({ OPENAI_API_KEY: "k", AGENT_MAX_STEPS: "-1" }), /AGENT_MAX_STEPS/);
   assert.equal(loadConfig({ OPENAI_API_KEY: "k", AGENT_MAX_STEPS: "0" }).maxSteps, null);
   assert.equal(loadConfig({ OPENAI_API_KEY: "k", AGENT_MAX_STEPS: "40" }).maxSteps, 40);

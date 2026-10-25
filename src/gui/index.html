@@ -33,10 +33,21 @@
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.on { background: var(--sel); color: var(--ink); }
   .setting label { display: flex; gap: 10px; align-items: center; cursor: pointer; }
-  .setting input[type=number], .setting select { height: 26px; min-width: 150px; padding: 0 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font: inherit; }
-  .setting input[type=number]:focus, .setting select:focus { outline: none; border-color: var(--accent); }
+  .setting input[type=number], .setting input[type=url], .setting input[type=password], .setting select { height: 26px; min-width: 150px; padding: 0 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font: inherit; }
+  .setting input:focus, .setting select:focus { outline: none; border-color: var(--accent); }
   .setting p { margin: 4px 0 0 36px; font-size: 12px; color: var(--muted); }
   .setting p.flat { margin-left: 0; }
+  .model-fields { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(110px, 2fr) minmax(80px, 1fr); gap: 10px; margin: 10px 0 0; min-width: 0; }
+  .model-fields label { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; color: var(--muted); font-size: 12px; }
+  .model-fields select { width: 100%; min-width: 0; max-width: none; height: 26px; }
+  .setting .setting-status { min-height: 1.5em; }
+  .setting .setting-status.error, .model-hint.error { color: var(--err); }
+  .provider-fields { display: grid; gap: 10px; margin-top: 10px; }
+  .provider-fields label { display: grid; grid-template-columns: 86px minmax(0, 1fr); align-items: center; font-size: 12px; color: var(--muted); }
+  .provider-fields input, .provider-fields select { width: 100%; min-width: 0; }
+  .provider-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  .provider-actions button { height: 26px; }
+  #provider-key-clear { color: var(--err); }
   .devices { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
   .devices li { display: flex; gap: 10px; align-items: center; padding: 3px 0; border-top: 1px dashed var(--line); }
   .devices li span { flex: 1; color: var(--muted); }
@@ -159,11 +170,15 @@
   dialog code { color: var(--link); }
 
   .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .chat-head { padding: 0 22px; height: 34px; flex: none; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+  .chat-head { padding: 6px 22px; min-height: 34px; flex: none; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
   .chat-head .dot.none { visibility: hidden; }
   .chat-head .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
   .chat-head select { max-width: 240px; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font: inherit; }
   .chat-head select:focus { outline: none; border-color: var(--accent); }
+  .chat-head .model-fields { flex-basis: 100%; max-width: 680px; margin: 0; }
+  .chat-head .model-fields select { max-width: none; height: 26px; }
+  .model-fields[hidden], .model-hint[hidden] { display: none; }
+  .model-hint { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--muted); }
   #head-links { display: flex; gap: 12px; align-items: center; font-size: 12px; white-space: nowrap; color: var(--muted); }
   #head-links a { color: var(--muted); }
   #head-links a:hover { color: var(--ink); }
@@ -321,7 +336,16 @@
     footer { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
     .slash-menu { left: 10px; right: 10px; }
     /* Below 16px iOS zooms the page in on focus. */
-    textarea, input[type=text], input[type=search], select { font-size: 16px !important; }
+    textarea, input[type=text], input[type=search], input[type=password], input[type=url], select { font-size: 16px !important; }
+    .settings-wrap { padding: 18px 12px; }
+    .setting .row { flex-wrap: wrap; }
+    .model-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .model-fields .provider-field { grid-column: 1; grid-row: 1; }
+    .model-fields .effort-field { grid-column: 2; grid-row: 1; }
+    .model-fields .model-field { grid-column: 1 / -1; grid-row: 2; }
+    .chat-head .model-fields, .chat-head .model-hint { order: 5; }
+    .model-fields select, .chat-head .model-fields select, .provider-fields input, .provider-fields select { height: 34px; }
+    .provider-fields label { grid-template-columns: 1fr; gap: 4px; }
     .new input[type=text], .search label { height: 34px; }
     .item { padding-top: 6px; padding-bottom: 6px; }
     .ws-head { height: 34px; }
@@ -346,9 +370,28 @@
       <label><input type="checkbox" class="switch" id="set-auto"> 新会话自动批准改动</label>
       <p>开启后，新建的会话里 agent 的文件改动和 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
     </div>
-    <div class="setting">
-      <label>新会话默认模型 <select id="set-model"></select></label>
-      <p>只显示模型服务实际返回的 ID；已有会话的模型不受影响。</p>
+    <div class="setting" id="model-defaults">
+      <div class="row"><b>新会话默认模型</b><button type="button" id="set-model-save">保存默认选择</button></div>
+      <div class="model-fields">
+        <label class="provider-field" for="set-provider">厂商<select id="set-provider"></select></label>
+        <label class="model-field" for="set-model">模型<select id="set-model"></select></label>
+        <label class="effort-field" for="set-effort">思考强度<select id="set-effort"></select></label>
+      </div>
+      <p class="flat">仅影响之后新建的会话；已有会话可在对话页顶部单独设置。</p>
+      <p class="flat setting-status" id="set-model-status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="setting" id="provider-settings">
+      <div class="row"><b>厂商连接</b><span class="muted" id="provider-key-state"></span></div>
+      <form id="provider-form">
+        <div class="provider-fields">
+          <label for="provider-config">厂商<select id="provider-config"></select></label>
+          <label for="provider-base-url">API 地址<input type="url" id="provider-base-url" autocomplete="off" spellcheck="false" placeholder="留空使用默认地址"></label>
+          <label for="provider-key">API Key<input type="password" id="provider-key" autocomplete="new-password" spellcheck="false" autocapitalize="off" placeholder="输入 API Key"></label>
+        </div>
+        <p class="flat">密钥保存在本机。已配置时留空即可保留；会话只保存模型选择。</p>
+        <div class="provider-actions"><button type="button" id="provider-key-clear">清除密钥</button><button type="submit" class="primary" id="provider-save">保存连接</button></div>
+        <p class="flat setting-status" id="provider-status" role="status" aria-live="polite"></p>
+      </form>
     </div>
     <div class="setting">
       <label><input type="checkbox" class="switch" id="set-notify"> turn 状态网页通知</label>
@@ -391,8 +434,13 @@
       <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
         <input type="checkbox" class="switch" id="mode-auto"> <span id="mode-text">每次询问</span>
       </label>
-      <select id="model-select" hidden title="本会话使用的模型"></select>
       <span id="head-links"></span>
+      <div class="model-fields" id="model-controls" hidden>
+        <label class="provider-field" for="provider-select">厂商<select id="provider-select" title="本会话使用的厂商"></select></label>
+        <label class="model-field" for="model-select">模型<select id="model-select" title="本会话使用的模型"></select></label>
+        <label class="effort-field" for="effort-select">思考强度<select id="effort-select" title="本会话的思考强度"></select></label>
+      </div>
+      <p class="model-hint" id="session-model-hint" role="status" aria-live="polite" hidden></p>
     </div>
     <main id="scroller"><div id="log"></div></main>
     <footer id="footer">
@@ -515,6 +563,7 @@ function setBusy(value) {
   $("stop").hidden = !value;
   if ($("fork")) $("fork").disabled = value; // the running turn isn't saved yet
   $("stop").disabled = false;
+  syncSessionModelControls();
   input.placeholder = TOUCH
     ? (value ? "agent 正在工作：发出的内容在它下一步之前送达" : "描述任务")
     : value
@@ -550,39 +599,174 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !docum
 // ---------- session list ----------
 const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '["__other__"]'));
 let currentWorkspace = null;
-let availableModels = null;
+const THINK_LABELS = { off: "关闭", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "更高", max: "最高" };
+let providerList = [];
+let providerRequest = null;
+const modelCatalogs = new Map();
+let sessionSelection = { provider: "legacy", model: "", thinkEffort: "off" };
+let sessionModels = [];
+let sessionModelLoading = false;
+let sessionModelSaving = false;
+let sessionModelVersion = 0;
 
-async function loadAvailableModels() {
-  try {
-    availableModels ??= (await api("/api/models")).models;
-  } catch {
-    availableModels ??= [];
+function modelSelection(info) {
+  return { provider: info.provider || "legacy", model: info.model || "", thinkEffort: info.thinkEffort || "off" };
+}
+
+function option(value, text, disabled = false) {
+  const node = el("option", "", text);
+  node.value = value;
+  node.disabled = disabled;
+  return node;
+}
+
+async function loadProviders(refresh = false) {
+  if (refresh) providerRequest = null;
+  if (!providerRequest) {
+    const request = api("/api/providers");
+    providerRequest = request;
+    request.catch(() => { if (providerRequest === request) providerRequest = null; });
   }
-  return availableModels;
+  const request = providerRequest;
+  const data = await request;
+  if (providerRequest === request) providerList = data;
+  return data;
 }
 
-async function loadModelOptions(select, currentModel) {
-  await loadAvailableModels();
-  const models = [...new Set([currentModel, ...availableModels].filter(Boolean))];
-  select.replaceChildren(...models.map((model) => { const option = el("option", "", model); option.value = model; return option; }));
-  select.value = currentModel;
-  select.hidden = models.length === 0;
+async function loadAvailableModels(provider) {
+  if (!modelCatalogs.has(provider)) {
+    const request = api(`/api/models?provider=${encodeURIComponent(provider)}`).then((data) => (Array.isArray(data) ? data : data.models).map((model) =>
+      typeof model === "string" ? { id: model, name: model, thinkingLevels: ["off"] } : model));
+    modelCatalogs.set(provider, request);
+    request.catch(() => { if (modelCatalogs.get(provider) === request) modelCatalogs.delete(provider); });
+  }
+  return modelCatalogs.get(provider);
 }
 
-function loadModelSelect(currentModel) {
-  loadModelOptions($("model-select"), currentModel).catch(() => {});
+function fillProviderOptions(select, selected, configuredOnly = false) {
+  const visible = providerList.filter((provider) => !configuredOnly || provider.configured || provider.id === selected);
+  select.replaceChildren(...visible.map((provider) => option(provider.id, `${provider.name}${provider.configured ? "" : " · 未配置"}`, configuredOnly && !provider.configured)));
+  if (selected && !visible.some((provider) => provider.id === selected)) select.prepend(option(selected, `${selected} · 当前配置不可用`, true));
+  select.value = selected || visible[0]?.id || "";
 }
 
-$("model-select").addEventListener("change", async (ev) => {
-  const model = ev.target.value;
-  if (!current || !model) return;
+function fillModelOptions(select, models, selected, preserve = true) {
+  select.replaceChildren(...models.map((model) => option(model.id, model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id)));
+  if (preserve && selected && !models.some((model) => model.id === selected)) select.prepend(option(selected, `${selected} · 当前配置`, true));
+  if (!select.options.length) select.append(option("", "暂无可用模型", true));
+  select.value = selected && [...select.options].some((entry) => entry.value === selected) ? selected : models[0]?.id || "";
+}
+
+function supportedEfforts(models, model) {
+  return models.find((entry) => entry.id === model)?.thinkingLevels?.filter((effort) => Object.hasOwn(THINK_LABELS, effort)) || ["off"];
+}
+
+function effortLabel(provider, effort) {
+  return provider === "legacy" && effort === "off" ? "接口默认" : THINK_LABELS[effort] || effort;
+}
+
+function fillEffortOptions(select, models, model, effort, preserve = true, provider = models.find((entry) => entry.id === model)?.provider) {
+  const levels = supportedEfforts(models, model);
+  select.replaceChildren(...levels.map((level) => option(level, effortLabel(provider, level))));
+  if (preserve && effort && !levels.includes(effort)) select.prepend(option(effort, `${effortLabel(provider, effort)} · 当前配置不可用`, true));
+  select.value = preserve && effort ? effort : levels.includes(effort) ? effort : levels.includes("off") ? "off" : levels[0] || "";
+}
+
+function selectionFrom(prefix) {
+  return { provider: $(prefix === "set" ? "set-provider" : "provider-select").value, model: $(prefix === "set" ? "set-model" : "model-select").value, thinkEffort: $(prefix === "set" ? "set-effort" : "effort-select").value };
+}
+
+function syncSessionModelControls() {
+  const disabled = !current || busy || sessionModelLoading || sessionModelSaving;
+  $("provider-select").disabled = disabled;
+  $("model-select").disabled = disabled || !sessionModels.length;
+  $("effort-select").disabled = disabled || $("effort-select").options.length < 2;
+}
+
+function showSessionModelHint(message = "", error = false) {
+  const hint = $("session-model-hint");
+  hint.replaceChildren(message);
+  hint.classList.toggle("error", error);
+  const provider = providerList.find((entry) => entry.id === sessionSelection.provider);
+  if (!message && provider && !provider.configured) hint.append("当前厂商尚未配置密钥。", link("#settings", "前往设置"));
+  hint.hidden = !hint.textContent;
+}
+
+function renderSessionSelection() {
+  fillProviderOptions($("provider-select"), sessionSelection.provider, true);
+  fillModelOptions($("model-select"), sessionModels, sessionSelection.model);
+  fillEffortOptions($("effort-select"), sessionModels, sessionSelection.model, sessionSelection.thinkEffort, true, sessionSelection.provider);
+  $("meta").textContent = sessionSelection.model;
+  $("model-controls").hidden = !current;
+  syncSessionModelControls();
+}
+
+async function loadSessionSelection(info) {
+  const version = ++sessionModelVersion;
+  const session = current;
+  sessionSelection = modelSelection(info);
+  sessionModels = [];
+  sessionModelLoading = true;
+  renderSessionSelection();
   try {
-    const info = await api(`/api/sessions/${current}/settings`, { model });
-    $("meta").textContent = info.model;
-    toast(`模型已切换：${info.model}`);
+    await loadProviders();
+    const models = await loadAvailableModels(sessionSelection.provider);
+    if (session !== current || version !== sessionModelVersion) return;
+    sessionModels = models;
+    renderSessionSelection();
+    showSessionModelHint();
+  } catch (error) {
+    if (session === current && version === sessionModelVersion) {
+      renderSessionSelection();
+      showSessionModelHint(`模型列表加载失败：${error.message}`, true);
+    }
+  } finally {
+    if (session === current && version === sessionModelVersion) { sessionModelLoading = false; syncSessionModelControls(); }
+  }
+}
+
+async function changeSessionSelection(field) {
+  if (!current || busy || sessionModelLoading || sessionModelSaving) return;
+  const session = current;
+  const version = ++sessionModelVersion;
+  const before = { ...sessionSelection };
+  let selected = selectionFrom("session");
+  sessionModelSaving = true;
+  syncSessionModelControls();
+  try {
+    const models = await loadAvailableModels(selected.provider);
+    if (session !== current || version !== sessionModelVersion) return;
+    if (field === "provider") {
+      const preferred = providerList.find((provider) => provider.id === selected.provider)?.defaultModel;
+      selected.model = models.some((model) => model.id === preferred) ? preferred : models[0]?.id || "";
+    }
+    const levels = supportedEfforts(models, selected.model);
+    if (!levels.includes(selected.thinkEffort)) selected.thinkEffort = levels.includes("off") ? "off" : levels[0];
+    if (!selected.model || !selected.thinkEffort) throw new Error("该厂商没有可选模型，请检查全局厂商连接。");
+    const info = await api(`/api/sessions/${session}/settings`, selected);
+    if (session !== current || version !== sessionModelVersion) return;
+    sessionSelection = modelSelection(info);
+    sessionModels = models;
+    renderSessionSelection();
+    showSessionModelHint();
+    toast(`本会话已切换：${sessionSelection.model} · 思考：${effortLabel(sessionSelection.provider, sessionSelection.thinkEffort)}`);
     refreshSessions();
-  } catch (e) { notice(e); }
-});
+  } catch (error) {
+    if (session === current && version === sessionModelVersion) {
+      const models = await loadAvailableModels(before.provider).catch(() => []);
+      if (session !== current || version !== sessionModelVersion) return;
+      sessionSelection = before;
+      sessionModels = models;
+      renderSessionSelection();
+      showSessionModelHint(error.message, true);
+    }
+  } finally {
+    if (session === current && version === sessionModelVersion) { sessionModelSaving = false; syncSessionModelControls(); }
+  }
+}
+$("provider-select").addEventListener("change", () => changeSessionSelection("provider"));
+$("model-select").addEventListener("change", () => changeSessionSelection("model"));
+$("effort-select").addEventListener("change", () => changeSessionSelection("effort"));
 
 // "22:59" today, "10/18" before that.
 function shortTime(iso) {
@@ -1637,6 +1821,8 @@ $("mode-auto").addEventListener("change", async (ev) => {
 
 // ---------- open a session ----------
 function openSession(id) {
+  sessionModelVersion++;
+  sessionModelLoading = sessionModelSaving = false;
   const resumeCursor = current === id ? sessionCursor : 0;
   events?.close();
   attachments = [];
@@ -1650,11 +1836,12 @@ function openSession(id) {
   toolCards.clear();
   $("head-links").replaceChildren();
   $("mode").hidden = true;
+  $("model-controls").hidden = true;
+  $("session-model-hint").hidden = true;
   if (!current) {
     logBox.replaceChildren();
     $("head-title").textContent = "";
     $("meta").textContent = "";
-    $("model-select").hidden = true;
     setBusy(false);
     refreshSessions();
     return;
@@ -1673,7 +1860,7 @@ function openSession(id) {
     $("meta").textContent = info.model;
     $("head-title").title = info.workspace;
     currentWorkspace = info.workspace;
-    loadModelSelect(info.model);
+    loadSessionSelection(info);
     const links = $("head-links");
     const fork = el("button", "link", "fork");
     fork.type = "button";
@@ -1958,6 +2145,128 @@ document.addEventListener("keydown", (ev) => {
 
 // ---------- settings ----------
 let settings = null;
+let defaultModels = [];
+let defaultModelLoading = false;
+let defaultModelSaving = false;
+let defaultModelVersion = 0;
+let providerSaving = false;
+
+function settingStatus(id, text, error = false) {
+  $(id).textContent = text;
+  $(id).classList.toggle("error", error);
+}
+
+function syncDefaultModelControls() {
+  const selected = selectionFrom("set");
+  const configured = providerList.find((provider) => provider.id === selected.provider)?.configured;
+  const validModel = defaultModels.some((model) => model.id === selected.model);
+  const validEffort = supportedEfforts(defaultModels, selected.model).includes(selected.thinkEffort);
+  $("set-provider").disabled = defaultModelLoading || defaultModelSaving;
+  $("set-model").disabled = defaultModelLoading || defaultModelSaving || !defaultModels.length;
+  $("set-effort").disabled = defaultModelLoading || defaultModelSaving || $("set-effort").options.length < 2;
+  $("set-model-save").disabled = defaultModelLoading || defaultModelSaving || !configured || !validModel || !validEffort;
+}
+
+async function loadDefaultModelSelection(selected, preserve = true) {
+  const version = ++defaultModelVersion;
+  defaultModelLoading = true;
+  defaultModels = [];
+  fillProviderOptions($("set-provider"), selected.provider);
+  fillModelOptions($("set-model"), [], selected.model, preserve);
+  fillEffortOptions($("set-effort"), [], selected.model, selected.thinkEffort, preserve, selected.provider);
+  syncDefaultModelControls();
+  settingStatus("set-model-status", "正在加载模型…");
+  try {
+    await loadProviders();
+    const models = await loadAvailableModels(selected.provider);
+    if (version !== defaultModelVersion) return;
+    defaultModels = models;
+    const profile = providerList.find((provider) => provider.id === selected.provider);
+    const preferred = selected.model || profile?.defaultModel;
+    fillProviderOptions($("set-provider"), selected.provider);
+    fillModelOptions($("set-model"), models, preferred, preserve);
+    fillEffortOptions($("set-effort"), models, $("set-model").value, selected.thinkEffort, preserve, selected.provider);
+    settingStatus("set-model-status", profile?.configured ? "修改后点击「保存默认选择」。" : "该厂商尚未配置密钥，请在下方的「厂商连接」中设置。");
+  } catch (error) {
+    if (version === defaultModelVersion) {
+      fillProviderOptions($("set-provider"), selected.provider);
+      settingStatus("set-model-status", `模型列表加载失败：${error.message}`, true);
+    }
+  } finally {
+    if (version === defaultModelVersion) { defaultModelLoading = false; syncDefaultModelControls(); }
+  }
+}
+
+function fillProviderEditor() {
+  const provider = providerList.find((entry) => entry.id === $("provider-config").value);
+  $("provider-key").value = "";
+  $("provider-base-url").value = provider?.baseURL || "";
+  $("provider-key").placeholder = provider?.configured ? `${provider.keyMask || "已配置"} · 留空保留` : "输入 API Key";
+  $("provider-key-state").textContent = provider?.configured ? `${provider.keyMask || "已配置"}${provider.source === "environment" ? " · 环境变量" : " · 本机"}` : "尚未配置";
+  $("provider-key-clear").disabled = providerSaving || !provider?.configured;
+  $("provider-save").disabled = providerSaving || !provider;
+  $("provider-config").disabled = $("provider-base-url").disabled = $("provider-key").disabled = providerSaving;
+  settingStatus("provider-status", "");
+}
+
+async function refreshProviderChoices(provider) {
+  modelCatalogs.delete(provider);
+  await loadProviders(true);
+  fillProviderOptions($("provider-config"), provider);
+  fillProviderEditor();
+  const selected = selectionFrom("set");
+  await loadDefaultModelSelection(selected);
+  if (current) await loadSessionSelection(sessionSelection);
+}
+
+async function saveProviderConnection(clear = false) {
+  if (providerSaving) return;
+  const provider = $("provider-config").value;
+  if (!provider) return;
+  const key = $("provider-key").value.trim();
+  const patch = clear ? { apiKey: null } : { baseURL: $("provider-base-url").value.trim() || null, ...(key ? { apiKey: key } : {}) };
+  providerSaving = true;
+  $("provider-key").value = "";
+  $("provider-save").disabled = $("provider-key-clear").disabled = $("provider-config").disabled = $("provider-base-url").disabled = $("provider-key").disabled = true;
+  settingStatus("provider-status", clear ? "正在清除密钥…" : "正在保存连接…");
+  try {
+    await api(`/api/providers/${encodeURIComponent(provider)}`, patch);
+    await refreshProviderChoices(provider);
+    settingStatus("provider-status", clear ? "密钥已清除。" : "连接已保存，密钥仅显示掩码。");
+  } catch (error) {
+    settingStatus("provider-status", `保存失败：${error.message}`, true);
+  } finally {
+    providerSaving = false;
+    const configured = providerList.find((entry) => entry.id === provider)?.configured;
+    $("provider-config").disabled = $("provider-base-url").disabled = $("provider-key").disabled = $("provider-save").disabled = false;
+    $("provider-key-clear").disabled = !configured;
+    $("provider-key").value = "";
+  }
+}
+
+$("provider-config").addEventListener("change", fillProviderEditor);
+$("provider-form").addEventListener("submit", (event) => { event.preventDefault(); saveProviderConnection(); });
+$("provider-key-clear").addEventListener("click", () => saveProviderConnection(true));
+$("set-provider").addEventListener("change", () => loadDefaultModelSelection({ provider: $("set-provider").value, model: "", thinkEffort: "off" }, false));
+$("set-model").addEventListener("change", () => {
+  fillEffortOptions($("set-effort"), defaultModels, $("set-model").value, $("set-effort").value, false, $("set-provider").value);
+  syncDefaultModelControls();
+  settingStatus("set-model-status", "修改后点击「保存默认选择」。");
+});
+$("set-effort").addEventListener("change", () => { syncDefaultModelControls(); settingStatus("set-model-status", "修改后点击「保存默认选择」。"); });
+$("set-model-save").addEventListener("click", async () => {
+  if ($("set-model-save").disabled) return;
+  const selected = selectionFrom("set");
+  defaultModelSaving = true;
+  syncDefaultModelControls();
+  settingStatus("set-model-status", "正在保存默认选择…");
+  try {
+    settings = await api("/api/settings", { defaultProvider: selected.provider, defaultModel: selected.model, defaultThinkEffort: selected.thinkEffort });
+    settingStatus("set-model-status", "已保存，之后新建的会话将使用此选择。");
+  } catch (error) { settingStatus("set-model-status", error.message, true); }
+  finally { defaultModelSaving = false; syncDefaultModelControls(); }
+});
+
 async function ensureNotificationPermission() {
   if (!("Notification" in window)) { toast("当前浏览器不支持网页通知"); return false; }
   if (Notification.permission === "granted") return true;
@@ -1968,7 +2277,9 @@ async function ensureNotificationPermission() {
 async function loadSettings() {
   settings ??= await api("/api/settings");
   $("set-auto").checked = settings.newSessionApproval === "auto";
-  await loadModelOptions($("set-model"), settings.defaultModel);
+  await loadDefaultModelSelection({ provider: settings.defaultProvider || "legacy", model: settings.defaultModel, thinkEffort: settings.defaultThinkEffort || "off" });
+  fillProviderOptions($("provider-config"), $("provider-config").value || settings.defaultProvider || "legacy");
+  if (!providerSaving) fillProviderEditor();
   $("set-notify").checked = settings.notifications;
   $("set-compact").value = settings.compactionTokens;
   syncNotificationStreams();
@@ -1982,12 +2293,6 @@ $("set-auto").addEventListener("change", async (ev) => {
     ev.target.checked = !ev.target.checked;
     notice(e);
   }
-});
-$("set-model").addEventListener("change", async (ev) => {
-  try {
-    settings = await api("/api/settings", { defaultModel: ev.target.value });
-    toast(`新会话默认模型已切换：${settings.defaultModel}`);
-  } catch (e) { await loadSettings(); notice(e); }
 });
 $("set-notify").addEventListener("change", async (ev) => {
   if (ev.target.checked && !(await ensureNotificationPermission())) { ev.target.checked = false; return; }

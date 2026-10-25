@@ -311,7 +311,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       if (!manager.get(id).approve(body.id, body.allow)) throw new HttpError(404, "no pending approval with that id");
       return sendJson(res, 200, { ok: true });
     }
-    // Any of: approvalMode, limits (replaces the session's turn limits), budgetUsd, notifications, model.
+    // Model selection is validated and changed atomically while the session is idle.
     case "POST settings": {
       const body = await readJson(req);
       if (body.approvalMode !== undefined && !isApprovalMode(body.approvalMode)) throw new HttpError(400, '"approvalMode" must be "ask" or "auto"');
@@ -321,16 +321,17 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       if (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) throw new HttpError(400, '"model" must be a non-empty string');
       const limits = body.limits === undefined ? undefined : parseLimits(body.limits);
       const budgetUsd = body.budgetUsd === undefined ? undefined : capValue(body.budgetUsd, "budgetUsd");
-      if (body.approvalMode === undefined && limits === undefined && budgetUsd === undefined && body.notifications === undefined && body.model === undefined) {
+      const modelSettings = body.model !== undefined || body.provider !== undefined || body.thinkEffort !== undefined;
+      if (body.approvalMode === undefined && limits === undefined && budgetUsd === undefined && body.notifications === undefined && !modelSettings) {
         throw new HttpError(400, 'nothing to change: give "approvalMode", "limits", "budgetUsd", "notifications" or "model"');
       }
       const runner = manager.get(id);
+      if (modelSettings) await manager.setSelection(id, { provider: body.provider, model: body.model, thinkEffort: body.thinkEffort });
       if (body.approvalMode !== undefined) runner.setApprovalMode(body.approvalMode as "ask" | "auto");
       if (limits !== undefined || budgetUsd !== undefined) {
         runner.setLimits({ ...(limits !== undefined ? { limits } : {}), ...(budgetUsd !== undefined ? { budgetUsd } : {}) });
       }
       if (body.notifications !== undefined) runner.setNotifications(body.notifications);
-      if (body.model !== undefined) runner.setModel(await manager.validateModel(body.model));
       return sendJson(res, 200, { ...runner.info, budget: manager.budgetFor(runner.info) });
     }
     case "POST reveal": {
@@ -385,8 +386,28 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
     return streamAllEvents(req, res, manager, () => (device ? streams.add(device.id, res) : () => {}));
   }
   if (url.pathname.startsWith("/api/remote")) return handleRemote(req, res, url, caller, remote, streams);
+  if (url.pathname === "/api/providers") {
+    if (req.method !== "GET") return sendJson(res, 405, { error: "method not allowed" });
+    return sendJson(res, 200, manager.listProviders());
+  }
+  const providerRoute = url.pathname.match(/^\/api\/providers\/([^/]+)$/);
+  if (providerRoute) {
+    if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
+    return readJson(req).then((body) => {
+      if (Object.keys(body).some((key) => key !== "apiKey" && key !== "baseURL")) throw new HttpError(400, "Unknown provider setting");
+      if (body.apiKey === undefined && body.baseURL === undefined) throw new HttpError(400, "nothing to change");
+      if (body.apiKey !== undefined && body.apiKey !== null && typeof body.apiKey !== "string") throw new HttpError(400, "apiKey must be a string or null");
+      if (body.baseURL !== undefined && body.baseURL !== null && typeof body.baseURL !== "string") throw new HttpError(400, "baseURL must be a string or null");
+      return sendJson(res, 200, manager.updateProvider(providerRoute[1]!, {
+        ...(body.apiKey !== undefined ? { apiKey: body.apiKey as string | null } : {}),
+        ...(body.baseURL !== undefined ? { baseURL: body.baseURL as string | null } : {}),
+      }));
+    });
+  }
   if (url.pathname === "/api/models") {
     if (req.method !== "GET") return sendJson(res, 405, { error: "method not allowed" });
+    const provider = url.searchParams.get("provider");
+    if (provider !== null) return manager.modelOptions(provider).then((models) => sendJson(res, 200, { models }));
     return manager.listModels().then((models) => sendJson(res, 200, { models }));
   }
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager, caller);
@@ -399,11 +420,13 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
         if (body.defaultModel !== undefined && (typeof body.defaultModel !== "string" || !body.defaultModel.trim())) throw new HttpError(400, '"defaultModel" must be a non-empty string');
         if (body.notifications !== undefined && typeof body.notifications !== "boolean") throw new HttpError(400, '"notifications" must be a boolean');
         if (body.compactionTokens !== undefined && (typeof body.compactionTokens !== "number" || !Number.isInteger(body.compactionTokens) || body.compactionTokens < 0)) throw new HttpError(400, '"compactionTokens" must be an integer >= 0');
-        if (body.newSessionApproval === undefined && body.defaultModel === undefined && body.notifications === undefined && body.compactionTokens === undefined) throw new HttpError(400, "nothing to change");
-        const defaultModel = body.defaultModel === undefined ? undefined : await manager.validateModel(body.defaultModel);
+        const modelSettings = body.defaultModel !== undefined || body.defaultProvider !== undefined || body.defaultThinkEffort !== undefined;
+        if (body.newSessionApproval === undefined && !modelSettings && body.notifications === undefined && body.compactionTokens === undefined) throw new HttpError(400, "nothing to change");
+        const current = manager.settings.get();
+        const selection = modelSettings ? await manager.validateSelection({ provider: body.defaultProvider, model: body.defaultModel, thinkEffort: body.defaultThinkEffort }, { provider: current.defaultProvider, model: current.defaultModel, thinkEffort: current.defaultThinkEffort }) : null;
         sendJson(res, 200, manager.settings.update({
           ...(body.newSessionApproval !== undefined ? { newSessionApproval: body.newSessionApproval } : {}),
-          ...(defaultModel !== undefined ? { defaultModel } : {}),
+          ...(selection ? { defaultProvider: selection.provider, defaultModel: selection.model, defaultThinkEffort: selection.thinkEffort } : {}),
           ...(body.notifications !== undefined ? { notifications: body.notifications } : {}),
           ...(body.compactionTokens !== undefined ? { compactionTokens: body.compactionTokens } : {}),
         }));

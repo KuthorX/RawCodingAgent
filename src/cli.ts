@@ -19,9 +19,13 @@ const note = (text: string) => process.stdout.write(styleText("dim", text) + "\n
 
 export async function runCli(runtime: Runtime, options: CliOptions): Promise<void> {
   const { store } = runtime;
-  const meta = options.resumeId
+  let meta = options.resumeId
     ? store.getMeta(options.resumeId)
-    : store.create(options.workspace, runtime.model, runtime.defaultApprovalMode);
+    : store.create(options.workspace, runtime.settings.get().defaultModel, runtime.defaultApprovalMode);
+  if (!options.resumeId) {
+    const defaults = runtime.settings.get();
+    meta = store.updateMeta(meta.id, { provider: defaults.defaultProvider, thinkEffort: defaults.defaultThinkEffort });
+  }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   // Lines go to a waiting approval prompt first, otherwise they are commands or messages.
@@ -35,7 +39,7 @@ export async function runCli(runtime: Runtime, options: CliOptions): Promise<voi
         resolve(answer === "y" || answer === "a");
       };
     });
-  const runner: SessionRunner = new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm, contextWindow: (session) => runtime.contextWindow(session.model) });
+  const runner: SessionRunner = new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm, contextWindow: (session) => runtime.contextWindow(session.model, session.provider), makeProvider: runtime.makeProvider });
   if (options.forceAuto) runner.setApprovalMode("auto");
 
   // Subscribe after replay so a resumed session doesn't reprint its old transcript.
@@ -80,7 +84,7 @@ export async function runCli(runtime: Runtime, options: CliOptions): Promise<voi
     return;
   }
 
-  process.stdout.write(`${runtime.model} · workspace ${meta.workspace}\n`);
+  process.stdout.write(`${runner.info.provider ?? "legacy"}/${runner.info.model} · thinking ${runner.info.thinkEffort ?? "off"} · workspace ${meta.workspace}\n`);
   note(HELP);
   const prompt = () => {
     if (!runner.isBusy) rl.prompt();

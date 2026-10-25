@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
-import { costUsd, DEFAULT_PRICING, pricingForModel, type Pricing, type TokenUsage } from "../pricing.ts";
+import { costUsd, DEFAULT_PRICING, pricingForModel, usageFromError, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { Tool } from "../tools/index.ts";
 import type { PlanController } from "../tools/plan.ts";
 import type { DelegateTask } from "../tools/delegate.ts";
@@ -239,15 +239,13 @@ export async function completeModel(
   if (hit) throw new ModelBudgetError(hit);
   const limit = deps.inputTokenLimit?.();
   if (limit && requestTokens(request) > limit) throw new ContextLimitError(`Request exceeds the input budget (${limit} estimated tokens); shorten the input or configure the model context window.`);
-  const attrs = { step, messages: request.messages.length, ...(summary ? { summary: true } : {}), ...(attempt > 0 ? { retry: attempt } : {}) };
+  const attrs = { step, provider: deps.provider.name, messages: request.messages.length, ...(summary ? { summary: true } : {}), ...(attempt > 0 ? { retry: attempt } : {}) };
   const model = deps.provider.model;
   const span = deps.tracer.startSpan("llm", model, parentId, attrs);
   try {
     const response = await deps.provider.complete(request, signal, onDelta);
     span.end({
-      inputTokens: response.usage.inputTokens,
-      cachedInputTokens: response.usage.cachedInputTokens,
-      outputTokens: response.usage.outputTokens,
+      ...response.usage,
       stopReason: response.stopReason,
       toolCalls: response.message.toolCalls.length,
     });
@@ -255,7 +253,9 @@ export async function completeModel(
     deps.tracer.log("response", response);
     return response;
   } catch (err) {
-    span.end({ usageUncertain: true, ...(signal?.aborted ? { aborted: true } : { error: errorMessage(err) }) }, signal?.aborted ? "ok" : "error");
+    const usage = usageFromError(err);
+    span.end({ ...(usage ?? { usageUncertain: true }), ...(signal?.aborted ? { aborted: true } : { error: errorMessage(err) }) }, signal?.aborted ? "ok" : "error");
+    if (usage) deps.onUsage?.(usage, model);
     throw err;
   }
 }

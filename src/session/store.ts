@@ -22,12 +22,15 @@ import type { ImageAttachment, Message } from "../types.ts";
 import type { SessionEvent } from "./events.ts";
 import type { PlanItem } from "../tools/plan.ts";
 import type { VerificationState } from "../agent/verification.ts";
+import type { ThinkEffort } from "../providers/catalog.ts";
 
 export interface SessionMeta {
   id: string;
   title: string;
   workspace: string;
   model: string;
+  provider?: string;
+  thinkEffort?: ThinkEffort;
   createdAt: string;
   updatedAt: string;
   turns: number;
@@ -195,6 +198,8 @@ export class SessionStore {
     const meta: SessionMeta = {
       ...this.create(options.workspace ?? source.workspace, source.model, options.approvalMode ?? source.approvalMode, now),
       title: source.title,
+      ...(source.provider !== undefined ? { provider: source.provider } : {}),
+      ...(source.thinkEffort !== undefined ? { thinkEffort: source.thinkEffort } : {}),
       turns: source.turns,
       ...(source.notifications !== undefined ? { notifications: source.notifications } : {}),
       ...(source.plan ? { plan: source.plan } : {}),

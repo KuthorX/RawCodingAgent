@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { Config } from "../config.ts";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { CompletionRequest, CompletionResponse, Message, ModelDelta, Provider, StopReason, ToolCall, UserMessage } from "../types.ts";
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -36,6 +37,7 @@ function userContent(m: UserMessage, vision: boolean): OpenAI.Chat.Completions.C
 }
 
 export function toOpenAIMessages(system: string, messages: Message[], vision = false, model = ""): ChatMessage[] {
+  const wireId = (id: string) => /^[a-zA-Z0-9_-]{1,64}$/.test(id) ? id : `call_${createHash("sha256").update(id).digest("hex").slice(0, 40)}`;
   const out: ChatMessage[] = [{ role: "system", content: system }];
   for (const m of messages) {
     switch (m.role) {
@@ -46,11 +48,11 @@ export function toOpenAIMessages(system: string, messages: Message[], vision = f
         out.push({
           role: "assistant",
           content: m.text || null,
-          ...(needsReasoningContent(model) ? { reasoning_content: m.reasoningContent ?? "" } : m.reasoningContent ? { reasoning_content: m.reasoningContent } : {}),
+          ...(needsReasoningContent(model) ? { reasoning_content: m.piMessage ? "" : m.reasoningContent ?? "" } : !m.piMessage && m.reasoningContent ? { reasoning_content: m.reasoningContent } : {}),
           ...(m.toolCalls.length > 0
             ? {
                 tool_calls: m.toolCalls.map((c) => ({
-                  id: c.id,
+                  id: wireId(c.id),
                   type: "function" as const,
                   function: { name: c.name, arguments: JSON.stringify(c.input) },
                 })),
@@ -61,7 +63,7 @@ export function toOpenAIMessages(system: string, messages: Message[], vision = f
       case "tool_results":
         // OpenAI protocol: one "tool" message per result.
         for (const r of m.results) {
-          out.push({ role: "tool", tool_call_id: r.callId, content: r.isError ? `ERROR: ${r.content}` : r.content });
+          out.push({ role: "tool", tool_call_id: wireId(r.callId), content: r.isError ? `ERROR: ${r.content}` : r.content });
         }
         break;
     }
@@ -104,21 +106,35 @@ function mapFinishReason(reason: string | null | undefined): StopReason {
 }
 
 export class OpenAIProvider implements Provider {
-  readonly name = PROVIDER;
+  readonly name: string;
   model: string;
   vision: boolean;
   readonly stream: boolean;
   private readonly forceVision: boolean;
   private readonly visionModels: Record<string, boolean>;
-  private readonly client: OpenAI;
+  private readonly client: OpenAI | undefined;
+  private readonly apiKey: string;
 
-  constructor(config: Config["llm"]) {
+  constructor(config: Config["llm"], name = PROVIDER) {
+    this.name = name;
     this.model = config.model;
     this.forceVision = config.vision;
     this.visionModels = config.visionModels ?? {};
     this.vision = this.forceVision || this.visionModels[this.model] === true;
     this.stream = config.stream;
-    this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
+    this.apiKey = config.apiKey;
+    if (config.apiKey) this.client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL ?? "https://api.openai.com/v1" });
+  }
+
+  private get api(): OpenAI {
+    if (!this.client) throw new Error("No API key configured for this provider. Configure it in global settings.");
+    return this.client;
+  }
+
+  private safeError(error: unknown): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof Error && (!this.apiKey || !message.includes(this.apiKey))) return error;
+    return new Error(this.apiKey ? message.replaceAll(this.apiKey, "[REDACTED]") : message);
   }
 
   setModel(model: string): void {
@@ -127,8 +143,10 @@ export class OpenAIProvider implements Provider {
   }
 
   async listModels(): Promise<string[]> {
-    const page = await this.client.models.list();
-    return page.data.map((model) => model.id).sort();
+    try {
+      const page = await this.api.models.list();
+      return page.data.map((model) => model.id).sort();
+    } catch (error) { throw this.safeError(error); }
   }
 
   private request(req: CompletionRequest) {
@@ -148,6 +166,11 @@ export class OpenAIProvider implements Provider {
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal, onDelta?: (delta: ModelDelta) => void): Promise<CompletionResponse> {
+    try { return await this.completeRequest(req, signal, onDelta); }
+    catch (error) { throw this.safeError(error); }
+  }
+
+  private async completeRequest(req: CompletionRequest, signal?: AbortSignal, onDelta?: (delta: ModelDelta) => void): Promise<CompletionResponse> {
     if (onDelta && this.stream) {
       let emitted = false;
       try {
@@ -165,7 +188,7 @@ export class OpenAIProvider implements Provider {
   }
 
   private async completeOnce(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
-    const res = await this.client.chat.completions.create(this.request(req), { signal });
+    const res = await this.api.chat.completions.create(this.request(req), { signal });
     const choice = res.choices[0];
     if (!choice) throw new Error("OpenAI-compatible API returned no choices");
 
@@ -192,7 +215,7 @@ export class OpenAIProvider implements Provider {
     signal: AbortSignal | undefined,
     onDelta: (delta: ModelDelta) => void,
   ): Promise<CompletionResponse> {
-    const stream = await this.client.chat.completions.create(
+    const stream = await this.api.chat.completions.create(
       { ...this.request(req), stream: true, stream_options: { include_usage: true } },
       { signal },
     );

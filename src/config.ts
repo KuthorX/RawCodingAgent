@@ -70,8 +70,8 @@ function promptRules(value: string): PromptRule[] {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const apiKey = env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OPENAI_API_KEY is required (see .env.example)");
+  // GUI setup must work before a provider key is configured.
+  const apiKey = env.OPENAI_API_KEY ?? "";
   return {
     // 0 turns the step / cost limit off. Steps are unlimited by default: the cost limit and the repeat guard
     // already stop a runaway turn, and long tasks shouldn't be cut off halfway.

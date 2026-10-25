@@ -1,4 +1,5 @@
 // Internal message format, decoupled from the wire protocol (see providers/openai.ts).
+import type { AssistantMessage as PiAssistantMessage } from "@earendil-works/pi-ai";
 
 export interface ToolCall {
   id: string;
@@ -31,6 +32,8 @@ export type Message =
       toolCalls: ToolCall[];
       // DeepSeek thinking models require this opaque reasoning trace on the next request.
       reasoningContent?: string;
+      // Preserve signed/encrypted reasoning and origin for native multi-provider continuation.
+      piMessage?: PiAssistantMessage;
     }
   | { role: "tool_results"; results: ToolResult[] };
 
@@ -52,7 +55,7 @@ export interface CompletionResponse {
   message: Extract<Message, { role: "assistant" }>;
   stopReason: StopReason;
   // cachedInputTokens is the part of inputTokens served from the provider's prompt cache (billed cheaper).
-  usage: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
+  usage: { inputTokens: number; outputTokens: number; cachedInputTokens: number; cacheWriteTokens?: number; costUsd?: number };
 }
 
 // Text as it arrives from a streaming response. Tool-call arguments are assembled by the provider and only

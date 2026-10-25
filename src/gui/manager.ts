@@ -8,6 +8,8 @@ import { normalizePath, type Project } from "../workspace/store.ts";
 import { createWorkspace, describeProject, headOf, removeWorkspace, WorkspaceError, type CreateOptions, type ProjectView } from "../workspace/worktrees.ts";
 import { localBranches, defaultBaseRef, repoRoot, listWorktrees } from "../workspace/git.ts";
 import { HttpError } from "./http.ts";
+import type { ModelOption, ModelSelection, ThinkEffort } from "../providers/catalog.ts";
+import type { ProviderPatch, ProviderSummary } from "../providers/store.ts";
 
 // Workspace operations report expected failures (dirty worktree, bad branch) with a status; keep it.
 async function asHttp<T>(p: Promise<T>): Promise<T> {
@@ -173,6 +175,49 @@ export class SessionManager {
     return normalized;
   }
 
+  listProviders(): ProviderSummary[] {
+    return this.runtime.providers?.list() ?? [{ id: "legacy", name: "兼容端点", configured: true, keyMask: "", baseURL: "", source: "environment", defaultModel: this.runtime.model }];
+  }
+
+  updateProvider(id: string, patch: ProviderPatch): ProviderSummary {
+    if (!this.runtime.providers) throw new HttpError(400, "Provider configuration is unavailable for this runtime");
+    try { return this.runtime.providers.update(id, patch); }
+    catch (error) { throw new HttpError(400, error instanceof Error ? error.message : "Invalid provider configuration"); }
+  }
+
+  async modelOptions(provider: string): Promise<ModelOption[]> {
+    if (!this.listProviders().some((item) => item.id === provider)) throw new HttpError(400, "Unknown provider");
+    if (this.runtime.modelOptions) return this.runtime.modelOptions(provider);
+    if (provider !== "legacy") throw new HttpError(400, "Unknown provider");
+    return (await this.listModels()).map((id) => ({ provider, id, name: id, api: "openai-completions", contextWindow: this.runtime.contextWindow(id), maxTokens: 8192, vision: false, thinkingLevels: ["off"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }));
+  }
+
+  async validateSelection(raw: { provider?: unknown; model?: unknown; thinkEffort?: unknown }, current: ModelSelection): Promise<ModelSelection> {
+    const provider = raw.provider === undefined ? current.provider : raw.provider;
+    if (typeof provider !== "string" || !provider.trim()) throw new HttpError(400, '"provider" must be a non-empty string');
+    const descriptor = this.listProviders().find((item) => item.id === provider);
+    if (!descriptor) throw new HttpError(400, "Unknown provider");
+    const model = raw.model === undefined ? (provider === current.provider ? current.model : descriptor.defaultModel) : raw.model;
+    if (typeof model !== "string" || !model.trim()) throw new HttpError(400, '"model" must be a non-empty string');
+    const available = (await this.modelOptions(provider)).find((item) => item.id === model.trim());
+    if (!available) throw new HttpError(400, `Model is not available from ${provider}`);
+    const thinkEffort = raw.thinkEffort === undefined
+      ? (available.thinkingLevels.includes(current.thinkEffort) ? current.thinkEffort : available.thinkingLevels[0]) : raw.thinkEffort;
+    if (typeof thinkEffort !== "string" || !available.thinkingLevels.includes(thinkEffort as ThinkEffort)) throw new HttpError(400, "Thinking effort is not supported by this model");
+    return { provider, model: model.trim(), thinkEffort: thinkEffort as ThinkEffort };
+  }
+
+  async setSelection(id: string, raw: { provider?: unknown; model?: unknown; thinkEffort?: unknown }): Promise<void> {
+    const runner = this.get(id);
+    if (runner.isBusy) throw new HttpError(409, "Stop the current turn before changing its model settings.");
+    const info = runner.info;
+    const selection = await this.validateSelection(raw, { provider: info.provider ?? "legacy", model: info.model, thinkEffort: info.thinkEffort ?? "off" });
+    if (runner.isBusy) throw new HttpError(409, "Stop the current turn before changing its model settings.");
+    const provider = this.runtime.makeProvider?.(selection);
+    if (provider) runner.setModelSelection(selection, provider);
+    else runner.setModel(selection.model);
+  }
+
   get(id: string): SessionRunner {
     const existing = this.runners.get(id);
     if (existing) return existing;
@@ -182,8 +227,9 @@ export class SessionManager {
       meta: this.store.getMeta(id),
       makeDeps: this.runtime.makeDeps,
       budget: (meta) => this.budgetFor(meta),
-      compactionTokens: (meta) => Math.min(this.settings.get().compactionTokens, this.runtime.contextWindow(meta.model)),
-      contextWindow: (meta) => this.runtime.contextWindow(meta.model),
+      compactionTokens: (meta) => Math.min(this.settings.get().compactionTokens, this.runtime.contextWindow(meta.model, meta.provider)),
+      contextWindow: (meta) => this.runtime.contextWindow(meta.model, meta.provider),
+      makeProvider: this.runtime.makeProvider,
     });
     this.runners.set(id, runner);
     return runner;
@@ -193,7 +239,9 @@ export class SessionManager {
     const path = normalizePath(workspace);
     if (!statSync(path, { throwIfNoEntry: false })?.isDirectory()) throw new HttpError(400, `"${path}" is not a directory`);
     await this.ensureKnown(path);
-    const meta = this.store.create(path, this.settings.get().defaultModel, approvalMode ?? this.runtime.defaultApprovalMode);
+    const defaults = this.settings.get();
+    let meta = this.store.create(path, defaults.defaultModel, approvalMode ?? this.runtime.defaultApprovalMode);
+    meta = this.store.updateMeta(meta.id, { provider: defaults.defaultProvider, thinkEffort: defaults.defaultThinkEffort });
     this.get(meta.id);
     return meta;
   }
@@ -298,7 +346,7 @@ export class SessionManager {
       tracePath: this.store.tracePath(id),
       totals: totals(spans, this.runtime.pricing),
       pricing: this.runtime.pricing,
-      contextWindow: this.runtime.contextWindow(meta.model),
+      contextWindow: this.runtime.contextWindow(meta.model, meta.provider),
       tools: toolStats(spans),
       turns: turns(spans),
     };

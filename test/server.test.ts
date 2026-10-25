@@ -284,11 +284,11 @@ test("search matches titles, user messages and replies, not tool calls", async (
 });
 
 test("GUI settings: new sessions auto-approve by default, can be switched off", async () => {
-  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "auto", defaultModel: "scripted", notifications: false, compactionTokens: 400000 });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "auto", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: false, compactionTokens: 400000 });
   assert.equal((await call("POST", "/api/settings", { body: { newSessionApproval: "yolo" } })).status, 400);
-  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { newSessionApproval: "ask" } })).body), { newSessionApproval: "ask", defaultModel: "scripted", notifications: false, compactionTokens: 400000 });
-  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { notifications: true, compactionTokens: 123000 } })).body), { newSessionApproval: "ask", defaultModel: "scripted", notifications: true, compactionTokens: 123000 });
-  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "ask", defaultModel: "scripted", notifications: true, compactionTokens: 123000 });
+  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { newSessionApproval: "ask" } })).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: false, compactionTokens: 400000 });
+  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { notifications: true, compactionTokens: 123000 } })).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: true, compactionTokens: 123000 });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: true, compactionTokens: 123000 });
   assert.equal((await call("POST", "/api/settings", { body: { defaultModel: "missing-model" } })).status, 400);
   assert.equal((await call("POST", "/api/settings", { body: { defaultModel: "scripted" } })).status, 200);
   assert.equal((await call("GET", "/api/settings", { token: null })).status, 401);

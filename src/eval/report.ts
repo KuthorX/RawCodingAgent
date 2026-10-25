@@ -2,6 +2,8 @@ import type { TaskOutcome } from "./runner.ts";
 import type { EvalTask } from "./tasks.ts";
 
 import type { Pricing } from "../pricing.ts";
+import type { Runtime } from "../app.ts";
+import type { ThinkEffort } from "../providers/catalog.ts";
 import { bashFileOps, type ToolMix } from "../trace/bash-usage.ts";
 
 export interface TaskTally {
@@ -14,7 +16,10 @@ export interface TaskTally {
 export interface RunSummary {
   runId: string;
   model: string;
-  pricing: Pricing;
+  provider?: string;
+  thinkEffort?: ThinkEffort;
+  pricingSource?: "legacy-config" | "pi-catalog";
+  pricing?: Pricing;
   promptRules: string[];
   startedAt: string;
   attempts: number;
@@ -32,13 +37,22 @@ export interface RunFile {
 export interface RunInfo {
   runId: string;
   model: string;
-  pricing: Pricing;
+  provider?: string;
+  thinkEffort?: ThinkEffort;
+  pricingSource?: "legacy-config" | "pi-catalog";
+  pricing?: Pricing;
   promptRules: string[];
   startedAt: string;
   hashes: Record<string, string>; // task id -> taskHash
 }
 
 export const isError = (o: TaskOutcome): boolean => o.reasons.includes("error");
+
+// Both evaluators report the same startup selection used to create their sessions.
+export function runProfile(runtime: Runtime): Pick<RunInfo, "provider" | "model" | "thinkEffort" | "pricingSource" | "pricing"> {
+  const selection = runtime.initialSelection ?? { provider: "legacy", model: runtime.model, thinkEffort: "off" as const };
+  return { ...selection, pricingSource: selection.provider === "legacy" ? "legacy-config" : "pi-catalog", ...(selection.provider === "legacy" ? { pricing: runtime.pricing } : {}) };
+}
 
 export function summarize(info: RunInfo, outcomes: readonly TaskOutcome[]): RunSummary {
   const byTask: RunSummary["byTask"] = {};
@@ -95,6 +109,9 @@ export function formatTable(tasks: readonly EvalTask[], outcomes: readonly TaskO
 
 const samePricing = (a: Pricing, b: Pricing): boolean =>
   a.inputPerMTok === b.inputPerMTok && a.cachedInputPerMTok === b.cachedInputPerMTok && a.outputPerMTok === b.outputPerMTok;
+const providerOf = (summary: RunSummary): string => summary.provider ?? "legacy";
+const effortOf = (summary: RunSummary): ThinkEffort => summary.thinkEffort ?? "off";
+const pricingSourceOf = (summary: RunSummary): string => summary.pricingSource ?? (providerOf(summary) === "legacy" ? "legacy-config" : "pi-catalog");
 
 // Compares only tasks present in both runs with identical content; a changed task (e.g. a fixed hidden test)
 // would otherwise show up as an agent improvement or regression.
@@ -104,9 +121,12 @@ export function compare(current: RunSummary, previous: RunSummary): string[] {
   const sum = (s: RunSummary, key: "passed" | "attempts") => shared.reduce((n, id) => n + s.byTask[id][key], 0);
   const lines = [`vs ${previous.runId} (${previous.model}), ${shared.length} comparable task(s): ${sum(previous, "passed")}/${sum(previous, "attempts")} → ${sum(current, "passed")}/${sum(current, "attempts")}`];
   if (previous.model !== current.model) lines.push(`  ! model differs: ${previous.model} → ${current.model}`);
+  if (providerOf(previous) !== providerOf(current)) lines.push(`  ! provider differs: ${providerOf(previous)} → ${providerOf(current)}`);
+  if (effortOf(previous) !== effortOf(current)) lines.push(`  ! thinking effort differs: ${effortOf(previous)} → ${effortOf(current)}`);
+  if (pricingSourceOf(previous) !== pricingSourceOf(current)) lines.push(`  ! pricing source differs: ${pricingSourceOf(previous)} → ${pricingSourceOf(current)}`);
   const rules = (s: RunSummary) => (s.promptRules ?? []).join(",") || "(none)";
   if (rules(previous) !== rules(current)) lines.push(`  prompt rules: ${rules(previous)} → ${rules(current)}`);
-  if (previous.pricing && !samePricing(previous.pricing, current.pricing)) lines.push("  ! pricing differs: costs and over_cost verdicts are not comparable");
+  if (previous.pricing && current.pricing && !samePricing(previous.pricing, current.pricing)) lines.push("  ! pricing differs: costs and over_cost verdicts are not comparable");
   if (changed.length > 0) lines.push(`  ! task content changed, not compared: ${changed.join(", ")}`);
   const rate = (t: TaskTally) => (t.attempts === 0 ? null : t.passed / t.attempts);
   for (const id of shared) {
@@ -148,7 +168,7 @@ function comparableTasks(runs: readonly RunFile[]): { shared: string[]; excluded
 export function experimentTable(runs: readonly RunFile[], difficulties: Record<string, string>): string {
   const { shared, excluded } = comparableTasks(runs);
   const graded = (r: RunFile) => r.outcomes.filter((o) => !isError(o) && shared.includes(o.taskId));
-  const rows = [["run", "model", "prompt rules", "pass", "naive 95% CI", "expert pass", "avg steps", "avg cost", "bash file ops"]];
+  const rows = [["run", "model", "prompt rules", "pass", "naive 95% CI", "expert pass", "avg steps", "avg cost", "bash file ops", "provider", "thinking", "pricing source"]];
   for (const run of runs) {
     const outcomes = graded(run);
     const passed = outcomes.filter((o) => o.passed).length;
@@ -164,6 +184,7 @@ export function experimentTable(runs: readonly RunFile[], difficulties: Record<s
       mean(outcomes.map((o) => o.steps)).toFixed(1),
       `$${mean(outcomes.map((o) => o.costUsd)).toFixed(4)}`,
       fileOpsCell(outcomes.map((o) => o.toolMix)),
+      providerOf(run.summary), effortOf(run.summary), pricingSourceOf(run.summary),
     ]);
   }
 
@@ -180,6 +201,9 @@ export function experimentTable(runs: readonly RunFile[], difficulties: Record<s
   const notes: string[] = [];
   if (excluded.length > 0) notes.push(`! not compared (missing or changed in some run): ${excluded.join(", ")}`);
   if (new Set(runs.map((r) => r.summary.model)).size > 1) notes.push("! models differ between runs");
+  if (new Set(runs.map((r) => providerOf(r.summary))).size > 1) notes.push("! providers differ between runs");
+  if (new Set(runs.map((r) => effortOf(r.summary))).size > 1) notes.push("! thinking efforts differ between runs");
+  if (new Set(runs.map((r) => pricingSourceOf(r.summary))).size > 1) notes.push("! pricing sources differ between runs");
   const prices = runs.map((r) => r.summary.pricing).filter((p): p is Pricing => p !== undefined);
   if (prices.some((p) => !samePricing(p, prices[0]))) notes.push("! pricing differs: avg cost is not comparable");
   notes.push("naive CI treats every attempt as independent; repeats of one task are correlated, so the real uncertainty is wider.");

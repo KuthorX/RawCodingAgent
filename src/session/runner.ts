@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { AgentDeps } from "../agent/loop.ts";
 import { completeModel, ModelBudgetError, runTurn, TurnAbortedError } from "../agent/loop.ts";
 import type { ApprovalMode, Confirm } from "../agent/permissions.ts";
-import type { ImageAttachment, Message, UserMessage } from "../types.ts";
+import type { ImageAttachment, Message, Provider, UserMessage } from "../types.ts";
+import type { ModelSelection } from "../providers/catalog.ts";
 import { ContextLimitError, estimateTokens, requestTokens, textTokens } from "../agent/context.ts";
 import { Verification } from "../agent/verification.ts";
 import { costUsd, DEFAULT_PRICING, pricingForModel } from "../pricing.ts";
@@ -28,6 +29,7 @@ export interface RunnerOptions {
   contextWindow?: (meta: SessionMeta) => number;
   // Evaluators with their own independent acceptance tests do not use the interactive completion gate.
   verifyChanges?: boolean;
+  makeProvider?: (selection: ModelSelection) => Provider;
 }
 
 export interface Budget {
@@ -129,6 +131,7 @@ export class SessionRunner {
   private turnSpent = 0;
   private turnMaxCost: number | null = null;
   private turnBudget: Budget | null = null;
+  private readonly makeProvider: RunnerOptions["makeProvider"];
 
   constructor(options: RunnerOptions) {
     this.store = options.store;
@@ -136,6 +139,7 @@ export class SessionRunner {
     this.compactionTokens = options.compactionTokens;
     this.contextWindow = options.contextWindow;
     this.verifyChanges = options.verifyChanges !== false;
+    this.makeProvider = options.makeProvider;
     this.meta = options.meta;
     this.releaseLock = this.store.acquireLock(this.meta.id);
     this.history = this.store.loadMessages(this.meta.id);
@@ -262,6 +266,7 @@ export class SessionRunner {
 
   compact(focus = ""): Promise<void> {
     if (this.running) throw new SendRejected("session is busy");
+    this.refreshProvider();
     this.startBudget();
     this.controller = new AbortController();
     this.compacting = true;
@@ -357,10 +362,22 @@ export class SessionRunner {
   }
 
   setModel(model: string): void {
+    if (this.isBusy) throw new SendRejected("Stop the current turn before changing its model settings.");
     if (!model.trim()) throw new Error("model must not be empty");
     if (!this.deps.provider.setModel) throw new Error("this provider cannot switch models");
     this.deps.provider.setModel(model.trim());
     this.meta = this.store.updateMeta(this.id, { model: model.trim() });
+  }
+
+  setModelSelection(selection: ModelSelection, provider: Provider): void {
+    if (this.isBusy) throw new SendRejected("Stop the current turn before changing its model settings.");
+    this.meta = this.store.updateMeta(this.id, selection);
+    this.deps.provider = provider;
+    this.deps.tracer.log("model_selection", selection);
+  }
+
+  private refreshProvider(): void {
+    if (this.makeProvider) this.deps.provider = this.makeProvider({ provider: this.meta.provider ?? "legacy", model: this.meta.model, thinkEffort: this.meta.thinkEffort ?? "off" });
   }
 
   private requestApproval(call: Parameters<Confirm>[0]): Promise<boolean> {
@@ -376,6 +393,7 @@ export class SessionRunner {
     let input: UserMessage | null = first;
     while (input !== null) {
       this.controller = new AbortController();
+      this.refreshProvider();
       this.startBudget();
       const final = await this.run(input, this.controller.signal);
       const stopped = this.controller.signal.aborted;

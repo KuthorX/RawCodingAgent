@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import type { Runtime } from "../app.ts";
 import type { FinishReason } from "../agent/loop.ts";
-import { costUsd, pricingForModel, type Pricing, type TokenUsage } from "../pricing.ts";
+import { costUsd, pricingForModel, usageFromError, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { SessionEvent } from "../session/events.ts";
 import { SessionRunner } from "../session/runner.ts";
 import { parseTrace, totals } from "../trace/analyze.ts";
@@ -66,7 +66,7 @@ export function judge(r: JudgeInput): FailReason[] {
 export class BudgetedProvider implements Provider {
   readonly name: string;
   readonly model: string;
-  private usage: TokenUsage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+  private cost = 0;
   private readonly inner: Provider;
   private readonly pricing: Pricing;
   private readonly maxCostUsd: number;
@@ -81,23 +81,28 @@ export class BudgetedProvider implements Provider {
     this.onOverBudget = onOverBudget;
   }
 
-  // Same formula as the trace totals used for the verdict (cost of summed tokens), so the guard
+  // Same per-request pricing as the trace totals used for the verdict, so the guard
   // and the judge never disagree about whether the budget was crossed.
   get spentUsd(): number {
-    return costUsd(this.usage, pricingForModel(this.pricing, this.model));
+    return this.cost;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
-    const response = await this.inner.complete(req, signal);
+    try {
+      const response = await this.inner.complete(req, signal);
+      this.charge(response.usage);
+      return response;
+    } catch (error) {
+      const usage = usageFromError(error);
+      if (usage) this.charge(usage);
+      throw error;
+    }
+  }
+
+  private charge(usage: TokenUsage): void {
     const wasUnder = this.spentUsd <= this.maxCostUsd;
-    const u = response.usage;
-    this.usage = {
-      inputTokens: this.usage.inputTokens + u.inputTokens,
-      cachedInputTokens: this.usage.cachedInputTokens + u.cachedInputTokens,
-      outputTokens: this.usage.outputTokens + u.outputTokens,
-    };
+    this.cost += costUsd(usage, pricingForModel(this.pricing, this.model));
     if (wasUnder && this.spentUsd > this.maxCostUsd) this.onOverBudget();
-    return response;
   }
 }
 
@@ -131,22 +136,23 @@ export type AgentTurn = Omit<TaskOutcome, "taskId" | "attempt" | "workspace" | "
 
 // Lets the agent work unattended (auto approval) on one prompt within the budget, and reads back what it did.
 export async function runAgentTurn(runtime: Runtime, options: AgentTurnOptions): Promise<AgentTurn> {
-  const meta = runtime.store.create(options.workspace, runtime.model, "auto");
-  runtime.store.updateMeta(meta.id, { title: options.title });
+  const selection = runtime.initialSelection ?? { provider: "legacy", model: runtime.model, thinkEffort: "off" as const };
+  const meta = runtime.store.create(options.workspace, selection.model, "auto");
+  runtime.store.updateMeta(meta.id, { title: options.title, provider: selection.provider, thinkEffort: selection.thinkEffort });
 
   let runner: SessionRunner | null = null;
   runner = new SessionRunner({
     store: runtime.store,
     meta: runtime.store.getMeta(meta.id),
     verifyChanges: false,
-    contextWindow: (session) => runtime.contextWindow(session.model),
+    contextWindow: (session) => runtime.contextWindow(session.model, session.provider),
     makeDeps: (m, hooks) => {
       const deps = runtime.makeDeps(m, hooks);
       const provider = new BudgetedProvider(deps.provider, runtime.pricing, options.budget.maxCostUsd, () => {
         runner?.stop();
       });
       const tools = options.tools ? options.tools(deps.tools) : deps.tools;
-      return { ...deps, provider, tools, maxSteps: options.budget.maxSteps };
+      return { ...deps, provider, tools, maxSteps: options.budget.maxSteps, maxTurnCostUsd: Math.min(deps.maxTurnCostUsd ?? Infinity, options.budget.maxCostUsd) };
     },
   });
 

@@ -79,6 +79,7 @@ export function totals(spans: readonly LocatedSpan[], pricing: Pricing = DEFAULT
       inputTokens: num(span.attrs.inputTokens),
       cachedInputTokens: num(span.attrs.cachedInputTokens),
       outputTokens: num(span.attrs.outputTokens),
+      ...(typeof span.attrs.costUsd === "number" ? { costUsd: span.attrs.costUsd } : {}),
     }, pricingForModel(pricing, span.name)), 0),
     cacheHitRatio: usage.inputTokens ? usage.cachedInputTokens / usage.inputTokens : 0,
     // Aborted or failed calls carry no usage; skip them so a stop doesn't reset the number to 0.

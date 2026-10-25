@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { createRuntime, PROJECT_ROOT } from "../app.ts";
-import { compare, experimentTable, formatTable, isError, summarize, type RunFile } from "./report.ts";
+import { compare, experimentTable, formatTable, isError, runProfile, summarize, type RunFile } from "./report.ts";
 import { crashed, pool, positiveInt, runId, scrubSecrets } from "./common.ts";
 import { runTask, type TaskOutcome } from "./runner.ts";
 import { copyRepo, loadTasks, overlay, runCheck, taskHash, type EvalTask } from "./tasks.ts";
@@ -103,12 +103,13 @@ async function main(): Promise<number> {
   // Eval sessions live with the run's results, not in the GUI's session list.
   // Created before the run directory, so a config error doesn't leave an empty one behind.
   const runtime = createRuntime("auto", { sessionsDir: join(runDir, "sessions"), webSearch: false });
+  const profile = runProfile(runtime);
   mkdirSync(runDir, { recursive: true });
   scrubSecrets();
   // Outside this project and outside any git repo, so the agent can't reach hidden tests, solutions or .env.
   const workRoot = mkdtempSync(join(tmpdir(), `rca-eval-${id}-`));
   const rules = runtime.promptRules.join(",") || "(none)";
-  process.stdout.write(`eval run ${id}: ${tasks.length} task(s) × ${repeat}, model ${runtime.model}, prompt rules ${rules}\nworkspaces: ${workRoot}\n`);
+  process.stdout.write(`eval run ${id}: ${tasks.length} task(s) × ${repeat}, provider ${profile.provider}, model ${profile.model}, thinking ${profile.thinkEffort}, pricing ${profile.pricingSource}, prompt rules ${rules}\nworkspaces: ${workRoot}\n`);
 
   const jobs = tasks.flatMap((task) =>
     Array.from({ length: repeat }, (_, i) => async (): Promise<TaskOutcome> => {
@@ -123,7 +124,7 @@ async function main(): Promise<number> {
   const outcomes = await pool(jobs, concurrency);
 
   const hashes = Object.fromEntries(tasks.map((t) => [t.id, taskHash(t)]));
-  const summary = summarize({ runId: id, model: runtime.model, pricing: runtime.pricing, promptRules: [...runtime.promptRules], startedAt: startedAt.toISOString(), hashes }, outcomes);
+  const summary = summarize({ runId: id, ...profile, promptRules: [...runtime.promptRules], startedAt: startedAt.toISOString(), hashes }, outcomes);
   const file: RunFile = { summary, outcomes };
   writeFileSync(join(runDir, "results.json"), JSON.stringify(file, null, 2) + "\n");
 

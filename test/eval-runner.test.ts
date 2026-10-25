@@ -71,7 +71,7 @@ test("runTask: cost guard stops the turn and the attempt fails as over_cost", as
   const outcome = await runTask(testRuntime(provider), task, { workspace: join(tempWorkspace(), "w"), attempt: 1 });
   // $0.009 after call 1, $0.018 after call 2 -> stopped before call 3.
   assert.equal(outcome.steps, 2);
-  assert.equal(outcome.finishReason, "interrupted");
+  assert.equal(outcome.finishReason, "max_cost");
   assert.deepEqual(outcome.reasons, ["over_cost", "check_failed"]);
 });
 

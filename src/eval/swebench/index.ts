@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { createRuntime, PROJECT_ROOT } from "../../app.ts";
 import { crashed, pool, positiveInt, runId, scrubSecrets } from "../common.ts";
-import { compare, experimentTable, formatTable, isError, summarize, type RunFile } from "../report.ts";
+import { compare, experimentTable, formatTable, isError, runProfile, summarize, type RunFile } from "../report.ts";
 import type { TaskOutcome } from "../runner.ts";
 import type { Budget, Difficulty, EvalTask } from "../tasks.ts";
 import { selectInstances, toDifficulty, type SweInstance } from "./dataset.ts";
@@ -150,12 +150,13 @@ async function main(): Promise<number> {
   const budget: Budget = { maxSteps: positiveInt(values["max-steps"], "--max-steps"), maxCostUsd: positiveNumber(values["max-cost"], "--max-cost") };
   const runDir = join(RUNS_DIR, id);
   const runtime = createRuntime("auto", { sessionsDir: join(runDir, "sessions"), webSearch: false });
+  const profile = runProfile(runtime);
   mkdirSync(runDir, { recursive: true });
   scrubSecrets();
   // The system temp dir: outside this project and any git repo, and shared with Docker Desktop by default.
   const workRoot = mkdtempSync(join(tmpdir(), `rca-swe-${id}-`));
   process.stdout.write(
-    `swe-bench run ${id}: ${instances.length} instance(s) × ${repeat}, model ${runtime.model}, budget ${budget.maxSteps} steps / $${budget.maxCostUsd}\n`,
+    `swe-bench run ${id}: ${instances.length} instance(s) × ${repeat}, provider ${profile.provider}, model ${profile.model}, thinking ${profile.thinkEffort}, pricing ${profile.pricingSource}, budget ${budget.maxSteps} steps / $${budget.maxCostUsd}\n`,
   );
 
   // One job per instance, its attempts in sequence, so an image can be removed once all of them are done.
@@ -182,7 +183,7 @@ async function main(): Promise<number> {
   if (!values["keep-workspaces"]) rmSync(workRoot, { recursive: true, force: true });
 
   const hashes = Object.fromEntries(instances.map((x) => [x.instance_id, DATASET_TAG]));
-  const summary = summarize({ runId: id, model: runtime.model, pricing: runtime.pricing, promptRules: [...runtime.promptRules], startedAt: startedAt.toISOString(), hashes }, outcomes);
+  const summary = summarize({ runId: id, ...profile, promptRules: [...runtime.promptRules], startedAt: startedAt.toISOString(), hashes }, outcomes);
   writeFileSync(join(runDir, "results.json"), JSON.stringify({ summary, outcomes } satisfies RunFile, null, 2) + "\n");
 
   process.stdout.write(`\n${formatTable(instances.map((x) => asTask(x, budget)), outcomes)}\n\n`);
