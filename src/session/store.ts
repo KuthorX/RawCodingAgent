@@ -51,6 +51,8 @@ export interface SessionMeta {
   plan?: PlanItem[];
   // Set by /plan or /loop; missing = normal session.
   mode?: SessionMode;
+  // /multiagent: expose the multi_agent tool and its workflow note.
+  multiagent?: boolean;
   // /loop re-sends loopPrompt after a turn that ended with unfinished work, at most loopMax times (loopCount done).
   loopPrompt?: string;
   loopMax?: number;

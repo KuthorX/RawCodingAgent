@@ -2,10 +2,11 @@ import type { AgentEvent, FinishReason } from "../agent/loop.ts";
 import type { ApprovalMode } from "../agent/permissions.ts";
 import type { ToolCall } from "../types.ts";
 import type { PlanItem } from "../tools/plan.ts";
+import type { AgentRole } from "../tools/multi-agent.ts";
 import type { SessionMode } from "./store.ts";
 
 // Everything a UI needs to render (and later replay) a conversation.
-export type SessionEvent =
+type SessionEventBody =
   | AgentEvent
   // queued: sent while a turn was running (an interjection), delivered at the next step.
   // images: attachment file names in the session's attachments/ directory.
@@ -24,4 +25,14 @@ export type SessionEvent =
   | { type: "forked"; from: string; fromTitle: string; turns: number }
   | { type: "plan"; items: PlanItem[] }
   // mode null = back to a normal session. note explains an automatic end (plan complete, cap reached, stopped).
-  | { type: "mode"; mode: SessionMode | null; prompt?: string; max?: number; count?: number; note?: string };
+  | { type: "mode"; mode: SessionMode | null; prompt?: string; max?: number; count?: number; note?: string }
+  // A child agent started. callId is the multi_agent call it belongs to, so the UI can nest it under that card.
+  | { type: "agent_start"; agent: string; callId: string; role: AgentRole; name: string; workspace: string; branch: string | null }
+  // Finished child: the same numbers the parent model already has in the tool result.
+  | { type: "agent_end"; agent: string; ok: boolean; steps: number; costUsd: number; finishReason: string; branch: string | null; files: number }
+  // /multiagent: whether the session exposes multi_agent at all.
+  | { type: "multiagent"; enabled: boolean };
+
+// Child agents emit the ordinary agent events with `agent` set; their transcript is grouped in the UI instead of
+// entering the parent's message history.
+export type SessionEvent = SessionEventBody & { agent?: string };

@@ -8,6 +8,7 @@ export const BUILTIN_COMMANDS = [
   { command: "/clear", description: "切到同配置的空会话，保留旧会话" },
   { command: "/compact", description: "压缩当前会话上下文，可附加压缩重点" },
   { command: "/loop", description: "循环模式：/loop [--max N] [任务]，自动继续到计划完成" },
+  { command: "/multiagent", description: "多 agent：/multiagent [on|off]，开启后可用 multi_agent 并发子 agent" },
   { command: "/plan", description: "计划模式：只读探索并给出计划，/plan off 退出" },
   { command: "/help", description: "查看命令帮助" },
   { command: "/skills", description: "列出可用技能和已加载技能" },
@@ -63,6 +64,14 @@ export function runCommand(runner: SessionRunner, text: string, approvalMode?: A
     try { runner.setMode("loop", max === undefined ? {} : { max }); }
     catch (err) { throw new CommandError(err instanceof Error ? err.message : String(err)); }
     return task ? { task } : { message: "已进入循环模式：每轮结束后自动继续，直到计划完成或达到轮数上限。" };
+  }
+  if (name === "multiagent") {
+    const enabled = args === "on" ? true : args === "off" ? false : !runner.info.multiagent;
+    if (args && args !== "on" && args !== "off") throw new CommandError("/multiagent 只接受 on 或 off");
+    runner.setMultiAgent(enabled);
+    return { message: enabled
+      ? "已开启多 agent：agent 可用 multi_agent 并发只读侦察（scout）和工作区隔离的改动（worker）。"
+      : "已关闭多 agent。" };
   }
   if (name === "help") return { message: BUILTIN_COMMANDS.map((c) => `${c.command}  ${c.description}`).join("\n") +
     "\n/技能名 [任务]  加载指定技能；不带任务时不调用模型\n技能持续生效，/clear 后重置。终端另支持 /auto on|off、/exit。" };

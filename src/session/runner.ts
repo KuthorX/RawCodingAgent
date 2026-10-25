@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentDeps } from "../agent/loop.ts";
+import type { AgentDeps, AgentEvent, TurnResult } from "../agent/loop.ts";
 import { completeModel, ModelBudgetError, runTurn, TurnAbortedError } from "../agent/loop.ts";
 import type { ApprovalMode, Confirm } from "../agent/permissions.ts";
 import type { ImageAttachment, Message, Provider, UserMessage } from "../types.ts";
@@ -11,7 +11,8 @@ import { costUsd, DEFAULT_PRICING, pricingForModel } from "../pricing.ts";
 import type { LimitHit } from "../agent/limits.ts";
 import type { PlanController, PlanItem } from "../tools/plan.ts";
 import { planText } from "../tools/plan.ts";
-import type { DelegateTask } from "../tools/delegate.ts";
+import type { AgentOutcome, AgentRole, AgentTask } from "../tools/multi-agent.ts";
+import { createWorkerWorkspace, workerChangeCount, type WorkerWorkspace } from "../workspace/worker.ts";
 import type { SessionEvent } from "./events.ts";
 import { titleFrom, type SessionMeta, type SessionMode, type SessionStore } from "./store.ts";
 
@@ -20,7 +21,9 @@ type Listener = (event: SessionEvent, cursor?: number) => void;
 export interface RunnerOptions {
   store: SessionStore;
   meta: SessionMeta;
-  makeDeps: (meta: SessionMeta, hooks: Pick<AgentDeps, "confirm" | "onEvent" | "approvalMode" | "onStep" | "plan" | "delegateTask">) => AgentDeps;
+  makeDeps: (meta: SessionMeta, hooks: Pick<AgentDeps, "confirm" | "onEvent" | "approvalMode" | "onStep" | "plan" | "spawnAgents">) => AgentDeps;
+  // System prompt for another workspace (child agents in a worktree). Defaults to the session prompt.
+  makeSystem?: (workspace: string) => string;
   // When omitted, approvals are surfaced as approval_request events and answered via approve().
   confirm?: Confirm;
   // Tightest spending cap left over this session and the workspace/project it belongs to; null = no cap.
@@ -65,6 +68,21 @@ const DEFAULT_LOOP_PROMPT = "继续执行计划里未完成的项目；全部完
 const DEFAULT_LOOP_MAX = 10;
 const MAX_LOOP_MAX = 50;
 const MAX_LOOP_PROMPT_CHARS = 2_000;
+
+// /multiagent turns on the multi_agent tool and this note. It is a separate switch from plan/loop because it adds a
+// tool rather than changing what the session may do.
+const MULTIAGENT_NOTE = "[Multi-agent] multi_agent runs up to 4 child agents in one call. Use scouts (2-3) for parallel " +
+  "independent investigation, and a worker only for a substantial change isolated enough for its own worktree: it " +
+  "starts from the current commit, cannot see uncommitted changes or user messages, and its edits stay on its branch. " +
+  "Review that branch and merge deliberately; never spawn agents for a single-file edit.";
+// Read-only children see exactly the tools that cannot change the workspace or wait for approval.
+const SCOUT_TOOLS = new Set(["read_file", "list_dir", "glob", "grep", "web_fetch", "web_search"]);
+// Workers get everything except the parent's plan, its verification tool and recursion into more children.
+const WORKER_EXCLUDED_TOOLS = new Set(["plan", "verify_changes", "multi_agent"]);
+const SCOUT_MAX_STEPS = 8;
+const WORKER_MAX_STEPS = 30;
+const SCOUT_MAX_COST_USD = 0.05;
+const WORKER_MAX_COST_USD = 0.2;
 
 function messageText(message: Message): string {
   if (message.role === "user") return `USER:\n${message.content}`;
@@ -146,6 +164,7 @@ export class SessionRunner {
   private turnMaxCost: number | null = null;
   private turnBudget: Budget | null = null;
   private readonly makeProvider: RunnerOptions["makeProvider"];
+  private readonly makeSystem: RunnerOptions["makeSystem"];
 
   constructor(options: RunnerOptions) {
     this.store = options.store;
@@ -154,6 +173,7 @@ export class SessionRunner {
     this.contextWindow = options.contextWindow;
     this.verifyChanges = options.verifyChanges !== false;
     this.makeProvider = options.makeProvider;
+    this.makeSystem = options.makeSystem;
     this.meta = options.meta;
     this.releaseLock = this.store.acquireLock(this.meta.id);
     this.history = this.store.loadMessages(this.meta.id);
@@ -179,7 +199,7 @@ export class SessionRunner {
       confirm: options.confirm ?? ((call) => this.requestApproval(call)),
       approvalMode: () => this.meta.approvalMode,
       plan: this.plan,
-      delegateTask: (prompt, signal) => this.delegate(prompt, signal),
+      spawnAgents: (tasks, callId, signal) => this.spawnAgents(tasks, callId, signal),
     });
     this.baseSystem = this.deps.system;
     this.deps.system = this.systemFor();
@@ -255,9 +275,18 @@ export class SessionRunner {
 
   private systemFor(meta: SessionMeta = this.meta): string {
     const base = withSkills(this.baseSystem, meta.skills);
-    if (meta.mode === "plan") return `${base}\n\n${PLAN_NOTE}`;
-    if (meta.mode === "loop") return `${base}\n\n${LOOP_NOTE}`;
-    return base;
+    const note = meta.mode === "plan" ? PLAN_NOTE : meta.mode === "loop" ? LOOP_NOTE : null;
+    const lines = [base, ...(note ? [note] : []), ...(meta.multiagent ? [MULTIAGENT_NOTE] : [])];
+    return lines.join("\n\n");
+  }
+
+  // /multiagent: exposes multi_agent and its workflow note. Off is the default, so a session that never asks for it
+  // keeps the same tools and prompt as before.
+  setMultiAgent(enabled: boolean): void {
+    if (this.isBusy) throw new SendRejected("会话正在运行，请先停止后再切换 /multiagent");
+    this.meta = this.store.updateMeta(this.id, { multiagent: enabled });
+    this.applySystem();
+    this.emit({ type: "multiagent", enabled });
   }
 
   private applySystem(): void {
@@ -272,32 +301,101 @@ export class SessionRunner {
     return this.store.updateMeta(fresh.id, { provider, thinkEffort, notifications, limits, budgetUsd, verification });
   }
 
-  private async delegate(prompt: string, signal?: AbortSignal): Promise<string> {
-    const tools = this.deps.tools.filter((tool) => ["read_file", "list_dir", "glob", "grep", "web_fetch", "web_search"].includes(tool.spec.name));
+  // Children share the parent's abort signal and spending budget, but get their own history, system prompt and (for
+  // workers) their own worktree. Their cost is charged to the parent turn through onUsage.
+  private async spawnAgents(tasks: AgentTask[], callId: string, signal?: AbortSignal): Promise<AgentOutcome[]> {
+    const short = this.id.replace(/[^a-z0-9]/gi, "").slice(0, 8);
+    return Promise.all(tasks.map((task, index) => this.runAgent(task, index, callId, short, signal)));
+  }
+
+  private async runAgent(task: AgentTask, index: number, callId: string, short: string, signal?: AbortSignal): Promise<AgentOutcome> {
+    const id = `${callId.replace(/[^a-z0-9]/gi, "").slice(0, 8)}-${index + 1}`;
+    const name = task.name || `${task.role}-${index + 1}`;
+    let workspace = this.meta.workspace;
+    let branch: string | null = null;
+    let checkout: WorkerWorkspace | null = null;
+    if (task.role === "worker") {
+      try {
+        checkout = await createWorkerWorkspace(this.meta.workspace, `${short}-${index + 1}`);
+        workspace = checkout.path;
+        branch = checkout.branch;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        this.emit({ type: "agent_start", agent: id, callId, role: task.role, name, workspace, branch: null });
+        this.emit({ type: "agent_end", agent: id, ok: false, steps: 0, costUsd: 0, finishReason: "error", branch: null, files: 0 });
+        return { id, role: task.role, name, ok: false, steps: 0, costUsd: 0, finishReason: "error", text: "", branch: null, workspace, files: 0, error };
+      }
+    }
+    this.emit({ type: "agent_start", agent: id, callId, role: task.role, name, workspace, branch });
+    const tools = this.deps.tools.filter((tool) => task.role === "scout"
+      ? SCOUT_TOOLS.has(tool.spec.name)
+      : !WORKER_EXCLUDED_TOOLS.has(tool.spec.name));
+    const baseSystem = this.makeSystem?.(workspace) ?? this.baseSystem;
+    const system = `${baseSystem}\n\n${agentNote(task.role, workspace, branch, checkout?.base)}`;
+    const limit = this.inputLimit();
+    let spent = 0;
     const child = {
       ...this.deps,
       tools,
-      maxSteps: Math.min(this.deps.maxSteps, 8),
-      maxTurnCostUsd: this.deps.maxTurnCostUsd === null || this.deps.maxTurnCostUsd === undefined ? 0.05 : Math.min(this.deps.maxTurnCostUsd, 0.05),
+      system,
+      workspace,
+      maxSteps: Math.min(this.deps.maxSteps, task.role === "scout" ? SCOUT_MAX_STEPS : WORKER_MAX_STEPS),
+      maxTurnCostUsd: task.role === "scout" ? SCOUT_MAX_COST_USD : WORKER_MAX_COST_USD,
+      // Approved by the parent's single approval for the multi_agent call; a worker can only write in its worktree.
       approvalMode: () => "auto" as const,
       confirm: async () => true,
       tracer: this.deps.tracer,
-      onEvent: undefined,
+      onEvent: (event: AgentEvent) => this.emitAgentEvent(id, event),
+      onUsage: (usage: Parameters<NonNullable<AgentDeps["onUsage"]>>[0], model: string) => {
+        spent += costUsd(usage, pricingForModel(this.deps.pricing ?? DEFAULT_PRICING, model));
+        this.deps.onUsage?.(usage, model);
+      },
+      turnSpentUsd: () => spent,
+      checkBudget: () => this.spendingLimit(),
       onStep: undefined,
       plan: undefined,
-      delegateTask: undefined,
-      turnSpentUsd: undefined,
-      prepareContext: undefined,
+      spawnAgents: undefined,
+      prepareContext: async (messages: Message[], childSignal?: AbortSignal) => {
+        const specs = tools.map((tool) => tool.spec);
+        if (requestTokens({ system, tools: specs, messages }) < limit) return messages;
+        // Compaction for a child is in memory only: it must never overwrite the parent's saved history.
+        return this.compactMessages(messages, "", childSignal, limit, specs, system);
+      },
       completionCheck: undefined,
       beforeTool: undefined,
       afterTool: undefined,
       progressVersion: undefined,
       subagent: true,
-      budget: undefined,
     } satisfies AgentDeps;
-    const result = await runTurn([], { role: "user", content: prompt }, child, { signal });
-    const answer = [...result.messages].reverse().find((message) => message.role === "assistant") as Extract<Message, { role: "assistant" }> | undefined;
-    return answer?.text || `Child agent stopped: ${result.finishReason}`;
+    let result: TurnResult | null = null;
+    let error: string | undefined;
+    try {
+      result = await runTurn([], { role: "user", content: task.prompt }, child, { signal });
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+    const answer = result?.messages.findLast((message) => message.role === "assistant");
+    const text = answer?.role === "assistant" ? answer.text : "";
+    const files = checkout ? await workerChangeCount(checkout) : 0;
+    const outcome: AgentOutcome = {
+      id, role: task.role, name,
+      ok: !error && result?.finishReason === "end_turn",
+      steps: result?.steps ?? 0,
+      costUsd: spent,
+      finishReason: error ? "error" : result?.finishReason ?? "error",
+      text: text || (error ? "" : `child agent stopped: ${result?.finishReason}`),
+      branch, workspace, files,
+      ...(error ? { error } : {}),
+    };
+    this.emit({ type: "agent_end", agent: id, ok: outcome.ok, steps: outcome.steps, costUsd: outcome.costUsd, finishReason: outcome.finishReason, branch, files });
+    return outcome;
+  }
+
+  // Child events are persisted with their agent id, so replay can rebuild each panel; streaming deltas stay live-only.
+  private emitAgentEvent(agent: string, event: AgentEvent): void {
+    if (event.type === "assistant_delta" || event.type === "assistant_reasoning_delta" || event.type === "assistant_reset") {
+      this.emitTransient({ ...event, agent });
+    } else this.emit({ ...event, agent });
   }
 
   get isBusy(): boolean {
@@ -415,7 +513,9 @@ export class SessionRunner {
     const limits = this.meta.limits ?? {};
     return {
       ...this.deps,
-      tools: this.meta.mode === "plan" ? this.deps.tools.filter((tool) => PLAN_TOOLS.has(tool.spec.name)) : this.deps.tools,
+      tools: this.meta.mode === "plan"
+        ? this.deps.tools.filter((tool) => PLAN_TOOLS.has(tool.spec.name))
+        : this.meta.multiagent ? this.deps.tools : this.deps.tools.filter((tool) => tool.spec.name !== "multi_agent"),
       ...(limits.maxSteps !== undefined ? { maxSteps: limits.maxSteps ?? Infinity } : {}),
       ...(limits.maxTurnCostUsd !== undefined ? { maxTurnCostUsd: limits.maxTurnCostUsd } : {}),
       budget: this.turnBudget,
@@ -533,9 +633,9 @@ export class SessionRunner {
     this.emit({ type: "mode", mode: null, note });
   }
 
-  private async summaryCall(transcript: string, focus: string, signal?: AbortSignal): Promise<string> {
+  private async summaryCall(transcript: string, focus: string, signal?: AbortSignal, system = this.deps.system): Promise<string> {
     const response = await completeModel({
-      system: this.deps.system,
+      system,
       messages: [{ role: "user", content: `${COMPACT_PROMPT}${focus ? `\nFocus especially on: ${focus}` : ""}\n\n${transcript}` }],
       tools: [],
     }, this.deps, { signal, summary: true });
@@ -545,20 +645,20 @@ export class SessionRunner {
 
   // Long histories are summarized in parts first: a single prompt would exceed the model's context window,
   // which is exactly the situation compaction exists for.
-  private async summarize(transcript: string, focus: string, signal?: AbortSignal): Promise<string> {
+  private async summarize(transcript: string, focus: string, signal?: AbortSignal, system = this.deps.system): Promise<string> {
     const overhead = textTokens(this.deps.system) + textTokens(COMPACT_PROMPT + focus) + 512;
     const available = this.inputLimit() - overhead;
     if (available < 128) throw new ContextLimitError("System instructions leave no room for a compaction request");
     const parts = chunks(transcript, Math.min(MAX_SUMMARY_CHARS, available));
-    if (parts.length === 1) return this.summaryCall(parts[0]!, focus, signal);
+    if (parts.length === 1) return this.summaryCall(parts[0]!, focus, signal, system);
     const partials: string[] = [];
     for (const [i, part] of parts.entries()) {
       const note = `This is part ${i + 1} of ${parts.length}; summarize this part only, keeping facts needed by the next agent.`;
-      partials.push(await this.summaryCall(part, `${focus}\n${note}`.trim(), signal));
+      partials.push(await this.summaryCall(part, `${focus}\n${note}`.trim(), signal, system));
     }
     const combined = partials.join("\n\n");
     if (combined.length >= transcript.length) throw new ContextLimitError("Compaction failed to reduce the history; no oversized request was sent");
-    return this.summarize(combined, `${focus}\nCombine these part summaries into one handoff summary; keep every file path, command result and open error.`.trim(), signal);
+    return this.summarize(combined, `${focus}\nCombine these part summaries into one handoff summary; keep every file path, command result and open error.`.trim(), signal, system);
   }
 
   private async prepareContext(messages: Message[], signal?: AbortSignal, force = false, availableTools = this.deps.tools): Promise<Message[]> {
@@ -583,14 +683,14 @@ export class SessionRunner {
     }
   }
 
-  private async compactMessages(messages: Message[], focus: string, signal?: AbortSignal, target = this.inputLimit(), tools = this.deps.tools.map((tool) => tool.spec)): Promise<Message[]> {
+  private async compactMessages(messages: Message[], focus: string, signal?: AbortSignal, target = this.inputLimit(), tools = this.deps.tools.map((tool) => tool.spec), system = this.deps.system): Promise<Message[]> {
     const beforeTokens = estimateTokens(messages);
     const transcript = messages.map(messageText).join("\n\n");
-    const summary = (await this.summarize(transcript, focus, signal)) || "No summary was returned.";
+    const summary = (await this.summarize(transcript, focus, signal, system)) || "No summary was returned.";
     const files = touchedFiles(messages);
     const state = files.length > 0 ? `\n\n[Files changed in this session]\n${files.map((f) => `- ${f}`).join("\n")}` : "";
     const prefix: Message = { role: "user", content: `[Conversation summary]\n${summary}${state}` };
-    const fixed = requestTokens({ system: this.deps.system, tools, messages: [prefix] });
+    const fixed = requestTokens({ system, tools, messages: [prefix] });
     const result = [prefix, ...recentContext(messages, Math.max(0, Math.min(RECENT_CONTEXT_TOKENS, Math.floor(beforeTokens / 2), target - fixed - 64)))];
     if (fixed > target || estimateTokens(result) >= beforeTokens) throw new ContextLimitError("Compaction did not produce a smaller request within the input budget");
     return result;
@@ -676,4 +776,18 @@ export class SessionRunner {
   private emitTransient(event: SessionEvent): void {
     for (const listener of this.listeners) listener(event);
   }
+}
+
+// The child's own instructions: what it may do, and what the parent will do with its answer.
+function agentNote(role: AgentRole, workspace: string, branch: string | null, base?: string): string {
+  if (role === "scout") {
+    return `[Scout] You are a read-only child agent working in ${workspace}. You cannot edit files or run shell commands. ` +
+      "Investigate the task and answer with concrete findings, file paths and line numbers, and anything the parent " +
+      "should double-check. Do not restate the task; never claim work you did not observe.";
+  }
+  return `[Worker] You are working in your own git worktree at ${workspace}` +
+    (branch ? ` on branch ${branch}, started at ${base ?? "HEAD"}` : "") +
+    ". Changes here are not in the parent's workspace, and uncommitted changes in the parent are not visible to you. " +
+    "Do not touch other checkouts and do not commit: leave the work uncommitted. Run the relevant tests or checks, " +
+    "then answer with what you changed, what you verified, and what is left.";
 }

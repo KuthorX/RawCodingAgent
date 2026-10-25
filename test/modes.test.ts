@@ -19,7 +19,7 @@ test("/plan exposes only read-only tools and persists until /plan off", async ()
   const request = provider.requests[0]!;
   const tools = request.tools.map((tool) => tool.name);
   assert.ok(tools.includes("plan") && tools.includes("read_file"));
-  for (const tool of ["bash", "write_file", "edit_file", "verify_changes", "delegate_task"]) assert.ok(!tools.includes(tool), `plan mode must not expose ${tool}`);
+  for (const tool of ["bash", "write_file", "edit_file", "verify_changes", "multi_agent"]) assert.ok(!tools.includes(tool), `plan mode must not expose ${tool}`);
   assert.match(request.system, /\[Plan mode\]/);
 
   runCommand(runner, "/plan off");

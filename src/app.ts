@@ -15,7 +15,7 @@ import { defaultTools } from "./tools/index.ts";
 import { webFetchTool } from "./tools/web-fetch.ts";
 import { searchBackendFromEnv, webSearchTool } from "./tools/web-search.ts";
 import { planTool } from "./tools/plan.ts";
-import { delegateTool } from "./tools/delegate.ts";
+import { multiAgentTool } from "./tools/multi-agent.ts";
 import { ProviderStore } from "./providers/store.ts";
 import { PiProvider } from "./providers/pi.ts";
 import { getCatalogModel, listCatalogModels, type ModelOption, type ModelSelection } from "./providers/catalog.ts";
@@ -41,6 +41,8 @@ export interface Runtime {
   // Mode given to newly created sessions (--yes => "auto"); each session can change its own later.
   defaultApprovalMode: ApprovalMode;
   makeDeps: RunnerOptions["makeDeps"];
+  // Prompt for another workspace, used by child agents in their own worktree.
+  makeSystem: (workspace: string) => string;
 }
 
 // Shared by the CLI and the GUI: config, provider, session storage, and per-session agent wiring.
@@ -80,6 +82,7 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
   const webTools = options.webSearch === false ? [] : [webFetchTool, ...(webSearch ? [webSearch] : [])];
   const toolEnv = sanitizeToolEnv(process.env);
   delete process.env.TAVILY_API_KEY;
+  const makeSystem = (workspace: string) => buildSystemPrompt(workspace, config.promptRules, loadProjectInstructions(workspace));
 
   return {
     store,
@@ -100,14 +103,15 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
     promptRules: config.promptRules,
     limits: { maxSteps: config.maxSteps, maxTurnCostUsd: config.maxTurnCostUsd },
     defaultApprovalMode,
+    makeSystem,
     makeDeps: (meta, hooks) => {
       const selection: ModelSelection = { provider: meta.provider ?? "legacy", model: meta.model, thinkEffort: meta.thinkEffort ?? "off" };
       const provider = makeProvider(selection);
       const tracer = createTracer(store.tracePath(meta.id));
       // D14: repository conventions ride along with the system prompt. Logged below, so the trace shows exactly
       // which revision of AGENTS.md the model saw.
-      const system = buildSystemPrompt(meta.workspace, config.promptRules, loadProjectInstructions(meta.workspace));
-      const tools = [...defaultTools, ...webTools, ...(hooks.plan ? [planTool(hooks.plan)] : []), ...(hooks.delegateTask ? [delegateTool(hooks.delegateTask)] : [])];
+      const system = makeSystem(meta.workspace);
+      const tools = [...defaultTools, ...webTools, ...(hooks.plan ? [planTool(hooks.plan)] : []), ...(hooks.spawnAgents ? [multiAgentTool(hooks.spawnAgents)] : [])];
       // Logged every time a session is (re)loaded: a process started before a prompt change keeps the old prompt,
       // so this is the only reliable record of what the model was actually told.
       tracer.log("session", {

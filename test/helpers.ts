@@ -10,7 +10,7 @@ import { SettingsStore } from "../src/gui/settings.ts";
 import { ProjectStore } from "../src/workspace/store.ts";
 import { defaultTools } from "../src/tools/index.ts";
 import { planTool } from "../src/tools/plan.ts";
-import { delegateTool } from "../src/tools/delegate.ts";
+import { multiAgentTool } from "../src/tools/multi-agent.ts";
 import type { CompletionRequest, CompletionResponse, Provider, StopReason, ToolCall } from "../src/types.ts";
 
 export function tempWorkspace(): string {
@@ -56,7 +56,7 @@ export class ScriptedProvider implements Provider {
 export function makeDeps(provider: Provider, overrides: Partial<AgentDeps> = {}): AgentDeps {
   return {
     provider,
-    tools: [...defaultTools, ...(overrides.plan ? [planTool(overrides.plan)] : []), ...(overrides.delegateTask ? [delegateTool(overrides.delegateTask)] : [])],
+    tools: [...defaultTools, ...(overrides.plan ? [planTool(overrides.plan)] : []), ...(overrides.spawnAgents ? [multiAgentTool(overrides.spawnAgents)] : [])],
     system: "test",
     workspace: tempWorkspace(),
     maxSteps: 10,
@@ -80,6 +80,7 @@ export function testRuntime(provider: Provider): Runtime {
     promptRules: [],
     limits: { maxSteps: 10, maxTurnCostUsd: null },
     defaultApprovalMode: "ask",
+    makeSystem: () => "test",
     makeDeps: (meta, hooks) => ({
       ...makeDeps(provider, hooks),
       workspace: meta.workspace,

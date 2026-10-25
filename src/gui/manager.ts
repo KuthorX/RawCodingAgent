@@ -230,6 +230,7 @@ export class SessionManager {
       compactionTokens: (meta) => Math.min(this.settings.get().compactionTokens, this.runtime.contextWindow(meta.model, meta.provider)),
       contextWindow: (meta) => this.runtime.contextWindow(meta.model, meta.provider),
       makeProvider: this.runtime.makeProvider,
+      makeSystem: this.runtime.makeSystem,
     });
     this.runners.set(id, runner);
     return runner;

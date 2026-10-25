@@ -33,11 +33,14 @@ GUI 输入 `/` 可选择命令或技能，方向键选择，Tab / 点击补全�
 | `/compact [重点]` | 压缩当前上下文，保留已加载技能。 |
 | `/loop [--max N] [任务]` | 循环模式：每轮结束后如果计划还有未完成项，就用循环提示词自动继续，最多 N 轮（默认 10）。`/loop stop` 退出。 |
 | `/plan [任务]` | 计划模式：只提供只读工具，agent 探索后给出计划；网页上可以改、删计划项并点“执行计划”。`/plan off` 退出。 |
+| `/multiagent [on\|off]` | 多 agent：开启后暴露 `multi_agent`，一次调用并发最多 4 个子 agent（scout 只读侦察，worker 在自己的 worktree 里改代码）。不带参数切换。 |
 | `/help` | 显示命令帮助，不调用模型。 |
 | `/skills` | 显示可用技能、文件路径及已加载标记，不调用模型。 |
 | `/skill 名称 [任务]` 或 `/技能名 [任务]` | 加载指定 `SKILL.md`，可同时开始任务。不带任务只加载，不调用模型。 |
 
 `/plan` 进入计划模式后只暴露 `read_file`、`list_dir`、`glob`、`grep`、`web_search`、`web_fetch` 和 `plan`，没有 bash 和写文件的工具，所以探索阶段不会改工作区。计划项保存在 `meta.json` 的 `plan` 里，网页顶部可以编辑文字、点方框切换状态、删除单项或清空；点“执行计划”退出计划模式并让 agent 按清单开始，完整工具随之恢复。`/loop` 只在一轮以 `unverified` 结束（计划没做完或检查没过）时自动续跑，正常完成、出错、被停止或达到轮数上限就结束；自动继续的提示词和上限可以在网页顶部“设置”里改，“停止”会中断当前一轮并退出循环。两种模式都保存在会话里，重启后继续生效；`/clear` 和 fork 不继承模式，fork 只复制计划清单。
+
+`/multiagent` 开启后，模型可以一次调用 `multi_agent` 跑多个子 agent：`scout` 只拿只读工具，在会话工作区里并行搜索和阅读，回答写回父 turn 的工具结果，子 agent 自己的对话不进父历史；`worker` 在自己新建的 git worktree（`<仓库>.worktrees/multi-…`，分支 `agent/multi-…`）里改代码，父工作区不受影响，结果回给父 agent 的是分支名、改动文件数和总结，合并要父 agent 自己审查 diff 后再做。子 agent 共享父 turn 的停止信号和预算，费用计入父 turn；它们看不到未提交的改动和之后的用户插话。开关存在 `meta.json` 的 `multiagent` 里，`/clear` 后重置。
 
 技能从工作区及祖先目录、用户目录下的 `.agents/skills`、`.codex/skills`、`.claude/skills` 发现。例如 `.agents/skills/review/SKILL.md` 可通过 `/review` 加载。支持常见 frontmatter `name` / `description`（含引号和多行描述）、符号链接和包内的 `skills/` 子目录。同名优先使用距离工作区最近的技能，同层按上述目录顺序；与内置命令重名时使用 `/skill 名称`。
 
@@ -208,7 +211,7 @@ npm run eval:swe -- --report <运行编号>,<运行编号>
 |---|---|---|
 | `meta.json` | 标题、工作区、模型、时间、轮数、审批模式 | 会话列表、会话权限 |
 | `messages.json` | 完整对话历史（每个工具执行前后和每轮结束时原子写入） | 恢复已完成结果；中断中的工具标为结果不确定，尚未开始的工具标为未执行，不自动重放副作用 |
-| `events.jsonl` | 界面事件（用户输入、工具调用、审批、结果） | 重新打开会话时回放 |
+| `events.jsonl` | 界面事件（用户输入、工具调用、审批、结果、子 agent 的开始/结束及其事件） | 重新打开会话时回放 |
 | `trace.jsonl` | span 记录 + 模型原始返回 | 统计页面、调试 |
 
 trace 的第一条是 `session` 事件，记录模型、工作区、启用的提示词规则、工具列表和完整的 system prompt（每次加载会话都会记一条：进程启动后才改的提示词不会生效，以这里为准）。
@@ -238,17 +241,18 @@ src/
     store.ts            项目列表（.projects.json）、这里新建的 worktree（.worktrees.json）
     git.ts              git 命令封装：worktree list、status、分支、工作区 diff
     worktrees.ts        项目的工作区（worktree）：列出、新建、删除
+    worker.ts           子 agent 的工作区：按当前提交新建 worktree 和分支，复制 .worktreeinclude
   agent/
-    loop.ts             ★ agent 主循环（span 埋点、停止、插话注入、流式 delta、按步 checkpoint）
+    loop.ts             ★ agent 主循环（span 埋点、停止、插话注入、流式 delta、只读工具并行、按步 checkpoint）
     system-prompt.ts    ★ system prompt 与 AGENTS.md 注入
     truncate.ts         ★ 工具输出截断策略
     permissions.ts      ★ 审批策略：模式、只读 bash 命令放行
     trace.ts            span / 事件写入（写入前脱敏常见凭据）
   providers/openai.ts   内部格式 ↔ OpenAI Chat Completions（流式 tool_calls 拼接、非流式回退）
-  tools/                read_file / write_file / edit_file / list_dir / glob / grep / plan / delegate_task / bash / web_search / web_fetch
+  tools/                read_file / write_file / edit_file / list_dir / glob / grep / plan / multi_agent / bash / web_search / web_fetch
   session/
     store.ts            会话目录读写
-    runner.ts           单个会话：历史、事件回放、审批、计划、只读子 agent、运行中的 turn、压缩、每步保存
+    runner.ts           单个会话：历史、事件回放、审批、计划、子 agent（scout/worker、worktree）、运行中的 turn、压缩、每步保存
     events.ts           界面事件类型
   trace/analyze.ts      从 trace.jsonl 计算统计（含成本）、按 turn 组织 span
   trace/bash-usage.ts   bash 命令分类：读/搜/改文件、工作区外、其他（eval 的 bash file ops 指标）

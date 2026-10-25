@@ -288,6 +288,20 @@
   .tool.danger .approval span { color: var(--err); }
   button.link { border: 0; background: none; color: var(--muted); padding: 2px 6px; }
   button.link:hover:not(:disabled) { color: var(--ink); text-decoration: underline; background: none; }
+  /* Child agents: one collapsible panel per agent inside the multi_agent card, with its own transcript. */
+  .tool .agents { display: grid; gap: 6px; padding: 4px 12px 8px; }
+  .agent { border-left: 2px solid var(--line); padding-left: 8px; }
+  .agent > summary { cursor: pointer; list-style: none; display: flex; gap: 1ch; font-size: 12px; color: var(--muted); }
+  .agent > summary::-webkit-details-marker { display: none; }
+  .agent > summary::before { content: "▸"; }
+  .agent[open] > summary::before { content: "▾"; }
+  .agent > summary .label { color: var(--ink); flex: none; }
+  .agent > summary .state { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent .list { display: flex; flex-direction: column; gap: 2px; padding: 2px 0 4px; }
+  .agent .list .tool pre { max-height: 220px; }
+  .agent .list .msg { font-size: 12px; }
+  .agent.bad > summary .label { color: var(--err); }
+  .ma-chip { color: var(--muted); font-size: 12px; border: 1px solid var(--line); padding: 0 6px; }
   .end { color: var(--muted); font-size: 12px; padding: 0 0 8px; }
   .end::before { content: "── "; }
   .end.bad { color: var(--err); }
@@ -461,6 +475,7 @@
         <input type="checkbox" class="switch" id="mode-auto"> <span id="mode-text">每次询问</span>
       </label>
       <span class="session-mode" id="session-mode" hidden></span>
+      <span class="ma-chip" id="ma-chip" hidden></span>
       <span id="head-links"></span>
       <div class="model-fields" id="model-controls" hidden>
         <label class="provider-field" for="provider-select">厂商<select id="provider-select" title="本会话使用的厂商"></select></label>
@@ -574,8 +589,12 @@ let busy = false;
 let dotState = "idle";
 let replaying = false;   // true while the server replays stored events after (re)connect
 const toolCards = new Map();
-let streamBox = null;    // the assistant bubble currently receiving token deltas
-let reasoningBox = null; // live reasoning text for thinking models
+// Child agents render into their own panel; these switch while one of their events is handled.
+const agentPanels = new Map(); // agent id -> { details, summary, label, state, list, stream }
+let focusAgent = null;
+const mainStream = { box: null, reasoning: null }; // the assistant bubble and live reasoning of the main turn
+const streamState = () => focusAgent?.stream ?? mainStream;
+let multiagentOn = false;
 let notificationStream = null;
 let notificationSessionKey = "";
 // /plan and /loop state for the open session, and the plan list shown above the transcript.
@@ -593,7 +612,12 @@ function closeStaleCards() {
   }
 }
 
-function append(node, parent = logBox) {
+// Where new transcript nodes go: the parent's log, or the child agent currently being rendered.
+function renderTarget() {
+  return focusAgent ? focusAgent.list : logBox;
+}
+
+function append(node, parent = renderTarget()) {
   const scroller = $("scroller");
   // Reading scrollHeight forces a layout of the whole log; during a replay that would happen once per event,
   // so skip it and scroll once at replay_done.
@@ -1580,6 +1604,10 @@ function stripCd(command) {
 
 function describe(call) {
   const a = call.input || {};
+  if (call.name === "multi_agent" && Array.isArray(a.tasks)) {
+    const roles = a.tasks.map((task) => task?.role).filter(Boolean);
+    return `multi_agent: ${roles.length} 个子 agent (${roles.join(", ")})`;
+  }
   if (typeof a.command === "string") return `${call.name}: ${stripCd(a.command)}`;
   if (typeof a.path === "string") return `${call.name} ${a.path}`;
   if (typeof a.query === "string") return `${call.name}: ${a.query}`;
@@ -1617,7 +1645,7 @@ function offerFull(card, callId) {
 // into a single "N 次工具调用" line, unless one of them still needs attention.
 const FOLD_AT = 3;
 function toolGroup() {
-  const last = logBox.lastElementChild;
+  const last = renderTarget().lastElementChild;
   if (last?.classList.contains("tools")) return last;
   const group = el("details", "tools");
   group.open = true;
@@ -1691,36 +1719,38 @@ const handlers = {
     if (!replaying) refreshSessions();
   },
   assistant_text(e) {
-    streamBox?.remove();
-    streamBox = null;
+    streamState().box?.remove();
+    streamState().box = null;
     append(renderAssistant(e.text));
   },
   assistant_delta(e) {
-    if (!streamBox || !streamBox.isConnected) {
-      streamBox = el("div", "msg assistant md streaming");
-      streamBox._text = el("span");
-      streamBox.append(streamBox._text);
-      append(streamBox);
+    const stream = streamState();
+    if (!stream.box || !stream.box.isConnected) {
+      stream.box = el("div", "msg assistant md streaming");
+      stream.box._text = el("span");
+      stream.box.append(stream.box._text);
+      append(stream.box);
     }
-    streamBox._text.textContent += e.text;
+    stream.box._text.textContent += e.text;
     const scroller = $("scroller");
     // Follow the stream only when the reader is already at the bottom.
     if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80) scroller.scrollTop = scroller.scrollHeight;
   },
   assistant_reset() {
-    streamBox?.remove();
-    streamBox = null;
+    streamState().box?.remove();
+    streamState().box = null;
   },
   assistant_reasoning_delta(e) {
-    if (!reasoningBox || !reasoningBox.isConnected) {
-      reasoningBox = el("details", "reasoning");
-      reasoningBox.open = false;
-      reasoningBox.append(el("summary", "思考过程（实时）"));
-      reasoningBox._text = el("pre", "");
-      reasoningBox.append(reasoningBox._text);
-      append(reasoningBox);
+    const stream = streamState();
+    if (!stream.reasoning || !stream.reasoning.isConnected) {
+      stream.reasoning = el("details", "reasoning");
+      stream.reasoning.open = false;
+      stream.reasoning.append(el("summary", "思考过程（实时）"));
+      stream.reasoning._text = el("pre", "");
+      stream.reasoning.append(stream.reasoning._text);
+      append(stream.reasoning);
     }
-    reasoningBox._text.textContent += e.text;
+    stream.reasoning._text.textContent += e.text;
   },
   tool_call(e) {
     const card = el("details", "tool running");
@@ -1809,6 +1839,37 @@ const handlers = {
     if (e.manual) setBusy(true);
     if (!replaying) refreshSessions();
   },
+  agent_start(e) {
+    const card = toolCards.get(e.callId);
+    if (!card) return;
+    // The card is where the panels live, so it must be open and readable while they work.
+    card.open = true;
+    card._agents ??= (() => { const box = el("div", "agents"); card._body.append(box); return box; })();
+    const details = el("details", "agent");
+    details.open = true;
+    const summary = el("summary");
+    const label = el("span", "label", `${e.role} ${e.name}`);
+    const state = el("span", "state", e.branch ? `${e.branch} · 运行中…` : "运行中…");
+    summary.append(label, state);
+    const list = el("div", "list");
+    details.append(summary, list);
+    details.title = e.branch ? `${e.branch}\n${e.workspace}` : e.workspace;
+    card._agents.append(details);
+    agentPanels.set(e.agent, { details, summary, label, state, list, stream: { box: null, reasoning: null } });
+  },
+  agent_end(e) {
+    const panel = agentPanels.get(e.agent);
+    if (!panel) return;
+    const bits = [`${e.steps} 步`, `$${e.costUsd.toFixed(3)}`];
+    if (e.branch) bits.push(e.branch, `${e.files} 个文件`);
+    panel.state.textContent = (e.ok ? "" : `失败 · `) + bits.join(" · ");
+    panel.details.classList.toggle("bad", !e.ok);
+  },
+  multiagent(e) {
+    multiagentOn = e.enabled;
+    renderMultiAgent();
+    append(el("div", "note", e.enabled ? "已开启多 agent：可用 multi_agent 并发 scout / worker" : "已关闭多 agent"));
+  },
   tool_result(e) {
     const card = toolCards.get(e.call.id);
     if (!card) return;
@@ -1854,9 +1915,9 @@ const handlers = {
 
 // A turn ended; if queued interjections arrived too late, they run as the next turn.
 function endTurn(continues) {
-  streamBox?.remove();
-  streamBox = null;
-  reasoningBox = null;
+  mainStream.box?.remove();
+  mainStream.box = null;
+  mainStream.reasoning = null;
   closeStaleCards();
   foldTools();
   if (continues) {
@@ -1901,7 +1962,16 @@ const PLAN_MARK = { pending: "[ ]", in_progress: "[~]", completed: "[x]" };
 const NEXT_STATUS = { pending: "in_progress", in_progress: "completed", completed: "pending" };
 
 // The `hello` event carries the whole session; switch tabs only change which event stream is open.
+function renderMultiAgent() {
+  const chip = $("ma-chip");
+  chip.hidden = !multiagentOn;
+  chip.textContent = "多 agent";
+  chip.title = "本会话可用 multi_agent 并发子 agent；/multiagent off 关闭";
+}
+
 function applySessionInfo(info) {
+  multiagentOn = !!info.multiagent;
+  renderMultiAgent();
   sessionMode = info.mode ? { mode: info.mode, prompt: info.loopPrompt ?? "", max: info.loopMax ?? 10, count: info.loopCount ?? 0 } : null;
   planItems = info.plan ?? [];
   planEditing = null;
@@ -2074,8 +2144,11 @@ function openSession(id) {
   if (current) loadCommands(current).catch(notice);
   sessionCursor = resumeCursor;
   dotState = "idle";
-  streamBox = null;
+  mainStream.box = null;
+  mainStream.reasoning = null;
+  focusAgent = null;
   toolCards.clear();
+  agentPanels.clear();
   $("head-links").replaceChildren();
   $("mode").hidden = true;
   $("model-controls").hidden = true;
@@ -2097,9 +2170,10 @@ function openSession(id) {
   const source = events = new EventSource(eventPath);
   events.addEventListener("hello", (msg) => {
     const info = JSON.parse(msg.data);
-    streamBox = null;
+    mainStream.box = null;
     if (!info.resume) {
       toolCards.clear();
+      agentPanels.clear();
       queuedBubbles = [];
       logBox.replaceChildren(el("div", "empty", "给 agent 一个任务开始吧。"));
     }
@@ -2140,6 +2214,19 @@ function openSession(id) {
   events.onmessage = (msg) => {
     if (msg.lastEventId) sessionCursor = Number(msg.lastEventId) || sessionCursor;
     const event = JSON.parse(msg.data);
+    if (event.type === "agent_start" || event.type === "agent_end") {
+      focusAgent = null;
+      handlers[event.type]?.(event);
+      return;
+    }
+    // A child's events render inside its own panel; the parent's transcript never sees them.
+    if (event.agent) {
+      const panel = agentPanels.get(event.agent);
+      if (!panel) return;
+      focusAgent = panel;
+      try { handlers[event.type]?.(event); } finally { focusAgent = null; }
+      return;
+    }
     handlers[event.type]?.(event);
   };
   // EventSource reconnects on its own after a network blip, but gives up (CLOSED) when the server refuses the

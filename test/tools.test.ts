@@ -11,7 +11,7 @@ import { globTool } from "../src/tools/glob.ts";
 import { grepTool } from "../src/tools/grep.ts";
 import { listDirTool } from "../src/tools/list-dir.ts";
 import { readFileTool } from "../src/tools/read-file.ts";
-import { delegateTool } from "../src/tools/delegate.ts";
+import { multiAgentTool } from "../src/tools/multi-agent.ts";
 import { planTool, type PlanItem } from "../src/tools/plan.ts";
 import { ToolError } from "../src/tools/types.ts";
 import { webFetchTool, htmlToText } from "../src/tools/web-fetch.ts";
@@ -34,10 +34,19 @@ test("plan tool validates and persists a bounded checklist", async () => {
   await assert.rejects(tool.run({ items: [{ text: "a", status: "in_progress" }, { text: "b", status: "in_progress" }] }, { workspace: tempWorkspace() }), /at most one/);
 });
 
-test("delegate tool forwards a focused bounded investigation", async () => {
-  const tool = delegateTool(async (prompt) => `child:${prompt}`);
-  assert.equal(await tool.run({ prompt: "inspect config" }, { workspace: tempWorkspace() }), "child:inspect config");
-  await assert.rejects(tool.run({ prompt: "" }, { workspace: tempWorkspace() }), /1-2000/);
+test("multi_agent validates tasks and reports each child", async () => {
+  const tool = multiAgentTool(async (tasks) => tasks.map((task, index) => ({
+    id: `a${index}`, role: task.role, name: task.name ?? task.role, ok: true, steps: 2, costUsd: 0.01,
+    finishReason: "end_turn", text: `done:${task.prompt}`, branch: null, workspace: "/w", files: 0,
+  })));
+  const out = await tool.run({ tasks: [{ role: "scout", prompt: "inspect config" }] }, { workspace: tempWorkspace() });
+  assert.match(out, /\[scout scout\] ok/);
+  assert.match(out, /done:inspect config/);
+  await assert.rejects(() => tool.run({ tasks: [] }, { workspace: tempWorkspace() }), /non-empty/);
+  await assert.rejects(() => tool.run({ tasks: [{ role: "nope", prompt: "x" }] }, { workspace: tempWorkspace() }), /must be "scout" or "worker"/);
+  await assert.rejects(() => tool.run({ tasks: [
+    { role: "worker", prompt: "a" }, { role: "worker", prompt: "b" }, { role: "worker", prompt: "c" },
+  ] }, { workspace: tempWorkspace() }), /at most 2 workers/);
 });
 
 test("paths outside the workspace are rejected", async () => {

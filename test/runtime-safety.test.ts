@@ -40,13 +40,14 @@ test("normal runtime bash receives a sanitized environment and traces do not con
 test("child model calls are traced, charged to the parent, and cannot start another request after the shared cap", async () => {
   const usage = { inputTokens: 1000, outputTokens: 0, cachedInputTokens: 0 };
   const provider = new ScriptedProvider([
-    reply("", [{ id: "child", name: "delegate_task", input: { prompt: "inspect" } }], undefined, usage),
+    reply("", [{ id: "child", name: "multi_agent", input: { tasks: [{ role: "scout", prompt: "inspect" }] } }], undefined, usage),
     reply("child result", [], undefined, { ...usage, inputTokens: 10_000 }),
   ]);
   const runtime = testRuntime(provider);
   const meta = runtime.store.create(tempWorkspace(), "m", "auto");
   const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
   runner.setLimits({ limits: { maxTurnCostUsd: 0.002 } });
+  runner.setMultiAgent(true);
   await runner.send("investigate").done;
   assert.equal(provider.requests.length, 2);
   assert.equal(runtime.store.loadEvents(meta.id).at(-1)?.type, "turn_end");

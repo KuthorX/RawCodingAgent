@@ -49,7 +49,7 @@ export async function runCli(runtime: Runtime, options: CliOptions): Promise<voi
         resolve(answer === "y" || answer === "a");
       };
     });
-  const makeRunner = (meta: SessionMeta): SessionRunner => new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm, contextWindow: (session) => runtime.contextWindow(session.model, session.provider), makeProvider: runtime.makeProvider });
+  const makeRunner = (meta: SessionMeta): SessionRunner => new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm, contextWindow: (session) => runtime.contextWindow(session.model, session.provider), makeProvider: runtime.makeProvider, makeSystem: runtime.makeSystem });
   let runner = makeRunner(meta);
   if (options.forceAuto) runner.setApprovalMode("auto");
 

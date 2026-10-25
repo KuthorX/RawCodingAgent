@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { costUsd, DEFAULT_PRICING, pricingForModel, usageFromError, type Pricing, type TokenUsage } from "../pricing.ts";
 import type { Tool } from "../tools/index.ts";
 import type { PlanController } from "../tools/plan.ts";
-import type { DelegateTask } from "../tools/delegate.ts";
+import type { SpawnAgents } from "../tools/multi-agent.ts";
 import { ToolError } from "../tools/index.ts";
 import type { CompletionRequest, CompletionResponse, Message, ModelDelta, Provider, StopReason, ToolCall, ToolResult, UserMessage } from "../types.ts";
 import { callSignature, isRepeating, limitDetail, limitNotice, type LimitHit } from "./limits.ts";
@@ -21,7 +21,8 @@ export interface AgentDeps {
   // Environment passed to subprocess tools; credentials are removed by createRuntime.
   toolEnv?: NodeJS.ProcessEnv;
   plan?: PlanController;
-  delegateTask?: DelegateTask;
+  // Spawns child agents for the multi_agent tool. Children inherit this deps object with their own overrides.
+  spawnAgents?: SpawnAgents;
   maxSteps: number;
   // D1 guards besides maxSteps. Per turn; null/undefined cost = no cost limit, maxRepeats defaults to 3.
   maxTurnCostUsd?: number | null;
@@ -93,6 +94,9 @@ export interface TurnResult {
 }
 
 const INPUT_PREVIEW_CHARS = 500;
+// Consecutive independent reads run together, so one model step can fan out instead of paying latency per call.
+const PARALLEL_READ_TOOLS = new Set(["read_file", "list_dir", "glob", "grep", "web_fetch", "web_search"]);
+const PARALLEL_READ_MAX = 3;
 
 export class ModelBudgetError extends Error {
   readonly hit: LimitHit;
@@ -163,7 +167,7 @@ async function runTool(call: ToolCall, deps: AgentDeps, signal?: AbortSignal): P
     signal?.throwIfAborted();
     await deps.beforeTool?.(call);
     signal?.throwIfAborted();
-    const output = await tool.run(call.input, { workspace: deps.workspace, signal, env: deps.toolEnv, plan: deps.plan });
+    const output = await tool.run(call.input, { workspace: deps.workspace, callId: call.id, signal, env: deps.toolEnv, plan: deps.plan });
     await deps.afterTool?.(call);
     return { result: { callId: call.id, content: truncateOutput(output), isError: false, observationHash: observationHash(call.name, output) }, approval, approvalMs };
   } catch (err) {
@@ -398,42 +402,63 @@ async function loop(
     }
     truncations = 0;
 
-    // D2: tool calls run sequentially, results returned together in one message.
+    // D2: results still go back as one message, but consecutive read-only calls run together (PARALLEL_READ_*).
     // After a stop, every remaining call still gets a result so the history stays valid.
     const batch = messages;
     const results: ToolResult[] = response.message.toolCalls.map((call) => ({ callId: call.id, content: "not executed: the process stopped before this tool started", isError: true }));
     const saveResults = () => { messages = [...batch, { role: "tool_results", results: results.map((result) => ({ ...result })) }]; checkpoint(); };
     saveResults();
     let repeated = false;
-    for (const [index, call] of response.message.toolCalls.entries()) {
+    const calls = response.message.toolCalls;
+    for (let index = 0; index < calls.length; index++) {
+      const call = calls[index]!;
       if (signal?.aborted || repeated) {
         results[index] = { callId: call.id, content: repeated ? REPEATED_RESULT : INTERRUPTED_RESULT, isError: true };
         saveResults();
         continue;
       }
-      signatures = [...signatures, callSignature(call)].slice(-Math.max(2, maxRepeats));
-      if (isRepeating(signatures, maxRepeats)) {
+      const hit = budgetHit();
+      if (hit) return stopAt(hit, step);
+      if (isRepeating([...signatures, callSignature(call)], maxRepeats)) {
         repeated = true;
         results[index] = { callId: call.id, content: REPEATED_RESULT, isError: true };
         saveResults();
         continue;
       }
-      const hit = budgetHit();
-      if (hit) return stopAt(hit, step);
-      results[index] = { callId: call.id, content: "execution outcome uncertain: the process stopped during this tool; inspect the workspace before retrying, do not automatically repeat side effects", isError: true };
+      // Only read-only neighbours join the group: no call can observe another's write, and no approval is pending.
+      const group = [call];
+      const groupSignatures = [...signatures, callSignature(call)];
+      while (group.length < PARALLEL_READ_MAX && index + group.length < calls.length) {
+        const next = calls[index + group.length]!;
+        if (!PARALLEL_READ_TOOLS.has(next.name)) break;
+        const signature = callSignature(next);
+        if (isRepeating([...groupSignatures, signature], maxRepeats)) break;
+        group.push(next);
+        groupSignatures.push(signature);
+      }
+      signatures = groupSignatures.slice(-Math.max(2, maxRepeats));
+      for (const [offset, member] of group.entries()) {
+        results[index + offset] = { callId: member.id, content: "execution outcome uncertain: the process stopped during this tool; inspect the workspace before retrying, do not automatically repeat side effects", isError: true };
+        deps.onEvent?.({ type: "tool_call", call: member });
+      }
       saveResults();
-      deps.onEvent?.({ type: "tool_call", call });
       const beforeProgress = deps.progressVersion?.();
-      const result = await executeToolCall(call, deps, turnId, signal);
-      results[index] = result;
-      saveResults();
-      deps.onEvent?.({ type: "tool_result", call, result });
-      const changed = beforeProgress !== deps.progressVersion?.();
-      const wroteFile = !result.isError && (call.name === "write_file" || call.name === "edit_file");
-      // Without workspace observations, a command may have progressed silently. Avoid guessing it did nothing.
-      const unknownMutation = call.name === "bash" && !deps.progressVersion && !isReadOnlyBashCommand(String(call.input.command ?? ""));
-      if (changed || wroteFile || unknownMutation) cycles.reset();
-      else cycles.observe(call, result);
+      const settled = group.length > 1
+        ? await Promise.all(group.map((member) => executeToolCall(member, deps, turnId, signal)))
+        : [await executeToolCall(call, deps, turnId, signal)];
+      for (const [offset, result] of settled.entries()) {
+        const member = group[offset]!;
+        results[index + offset] = result;
+        saveResults();
+        deps.onEvent?.({ type: "tool_result", call: member, result });
+        const changed = beforeProgress !== deps.progressVersion?.();
+        const wroteFile = !result.isError && (member.name === "write_file" || member.name === "edit_file");
+        // Without workspace observations, a command may have progressed silently. Avoid guessing it did nothing.
+        const unknownMutation = member.name === "bash" && !deps.progressVersion && !isReadOnlyBashCommand(String(member.input.command ?? ""));
+        if (changed || wroteFile || unknownMutation) cycles.reset();
+        else cycles.observe(member, result);
+      }
+      index += group.length - 1;
     }
     if (signal?.aborted) return interrupted(step);
     if (repeated) return stopAt("repeated", step);
