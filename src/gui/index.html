@@ -12,7 +12,7 @@
   /* Tabs: each view stays in the page once shown, switching only hides the others. */
   .topbar { padding: 0; gap: 0; }
   .tabs { display: flex; gap: 0; align-self: stretch; }
-  .tabs a { display: flex; align-items: center; gap: 4px; padding: 5px 8px; color: var(--muted); border-right: 1px solid var(--line); }
+  .tabs a { display: flex; align-items: center; gap: 5px; padding: 5px 12px; color: var(--muted); }
   .tabs a kbd { background: none; padding: 0; color: var(--accent-ink); }
   .tabs a:hover { color: var(--ink); text-decoration: none; background: var(--soft); }
   .tabs a.on { color: var(--on-accent); background: var(--accent); }
@@ -25,8 +25,8 @@
   .settings-wrap { max-width: 680px; margin: 0 auto; padding: 24px 22px; }
   .settings-wrap h2 { font-size: 13px; font-weight: 400; color: var(--muted); margin: 0 0 10px; }
   /* Settings is longer than one screen: a section bar replaces one long scroll. */
-  .settings-nav { display: flex; flex-wrap: wrap; border: 1px solid var(--line); width: fit-content; max-width: 100%; margin: 0 0 12px; }
-  .settings-nav button { border: 0; padding: 3px 12px; color: var(--muted); background: none; }
+  .settings-nav { display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 0; width: fit-content; max-width: 100%; margin: 0 0 12px; }
+  .settings-nav button { border: 0; border-radius: 0; padding: 3px 12px; color: var(--muted); background: none; }
   .settings-nav button + button { border-left: 1px solid var(--line); }
   .settings-nav button:hover:not(.on) { color: var(--ink); background: var(--soft); }
   .settings-nav button.on { background: var(--sel); color: var(--ink); }
@@ -385,6 +385,10 @@
     /* Below 16px iOS zooms the page in on focus. */
     textarea, input[type=text], input[type=search], input[type=password], input[type=url], select { font-size: 16px !important; }
     .settings-wrap { padding: 18px 12px; }
+    /* 16px controls (so iOS doesn't zoom) next to 12px text reads as broken: lift the surrounding type too. */
+    .settings-wrap h2, .setting b, .setting p, .setting label, .model-fields label, .provider-fields label, .devices, .hint { font-size: 14px; }
+    .settings-nav button, .seg button, .tabs a { font-size: 14px; }
+    .settings-nav button, .seg button { padding: 5px 14px; }
     .setting .row { flex-wrap: wrap; }
     .model-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .model-fields .provider-field { grid-column: 1; grid-row: 1; }
