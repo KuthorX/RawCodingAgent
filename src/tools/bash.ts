@@ -171,6 +171,7 @@ export interface ShellResult {
 
 // Runs a command in the agent's shell (the bash tool, eval checks): same shell, kill and decoding on every platform.
 export function runShell(command: string, options: ShellOptions): Promise<ShellResult> {
+  if (options.signal?.aborted) return Promise.resolve({ output: "", exitCode: null, timedOut: false, stopped: true, leftRunning: false });
   return new Promise((resolve) => {
     // detached gives the shell its own process group on Unix; on Windows it would only open a console window.
     const child = spawn(shell.file, shell.args(command), {

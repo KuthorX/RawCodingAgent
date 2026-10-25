@@ -138,6 +138,8 @@ export async function runAgentTurn(runtime: Runtime, options: AgentTurnOptions):
   runner = new SessionRunner({
     store: runtime.store,
     meta: runtime.store.getMeta(meta.id),
+    verifyChanges: false,
+    contextWindow: (session) => runtime.contextWindow(session.model),
     makeDeps: (m, hooks) => {
       const deps = runtime.makeDeps(m, hooks);
       const provider = new BudgetedProvider(deps.provider, runtime.pricing, options.budget.maxCostUsd, () => {

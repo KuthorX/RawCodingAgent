@@ -6,6 +6,7 @@ const BASE = [
   "You are a coding agent working inside a local repository.",
   "The workspace root is {workspace}. All relative paths resolve against it.",
   "Use the tools to inspect files before changing them, and verify your changes (e.g. run tests) when possible.",
+  "After changing files, run verify_changes when available and fix any failures before finishing. Complete every item in your plan. If no checks are configured, report the work as unverified.",
   "When the task is done, reply with a short summary of what you changed.",
 ];
 

@@ -183,6 +183,7 @@ export class SessionManager {
       makeDeps: this.runtime.makeDeps,
       budget: (meta) => this.budgetFor(meta),
       compactionTokens: (meta) => Math.min(this.settings.get().compactionTokens, this.runtime.contextWindow(meta.model)),
+      contextWindow: (meta) => this.runtime.contextWindow(meta.model),
     });
     this.runners.set(id, runner);
     return runner;

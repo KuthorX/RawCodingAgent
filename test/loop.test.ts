@@ -54,7 +54,7 @@ test("a retry after partial streamed text asks the UI to clear it", async () => 
   assert.equal(last.role === "assistant" ? last.text : undefined, "final");
 });
 
-test("onStep sees a resumable history after each tool batch", async () => {
+test("onStep sees a resumable history before and after every tool", async () => {
   const snapshots: string[][] = [];
   const provider = new ScriptedProvider([
     reply("", [{ id: "c1", name: "write_file", input: { path: "a.txt", content: "hi" } }]),
@@ -62,6 +62,8 @@ test("onStep sees a resumable history after each tool batch", async () => {
   ]);
   await runTurn([], "go", makeDeps(provider, { onStep: (messages) => snapshots.push(messages.map((m) => m.role)) }));
   assert.deepEqual(snapshots, [
+    ["user", "assistant", "tool_results"],
+    ["user", "assistant", "tool_results"],
     ["user", "assistant", "tool_results"],
     ["user", "assistant", "tool_results", "assistant"],
   ]);
@@ -172,7 +174,7 @@ test("stops when the turn's cost passes the limit", async () => {
   const result = await runTurn([], "go", makeDeps(provider, { maxTurnCostUsd: 0.5 }));
   assert.equal(result.finishReason, "max_cost");
   assert.equal(result.steps, 2);
-  assert.equal(provider.requests.length, 3);
+  assert.equal(provider.requests.length, 2);
 });
 
 test("does not execute tool calls from a truncated response but keeps history valid", async () => {
@@ -217,7 +219,7 @@ test("system prompt rules are appended in order and unknown rules are rejected",
   const prompt = buildSystemPrompt("/w", ["spec", "debug"]);
   assert.ok(prompt.includes("/w"));
   assert.ok(prompt.endsWith(`${PROMPT_RULES.spec}\n${PROMPT_RULES.debug}`));
-  assert.equal(buildSystemPrompt("/w").split("\n").length, 4);
+  assert.match(buildSystemPrompt("/w"), /run verify_changes/);
   assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: " debug, spec ,debug" }).promptRules, ["debug", "spec"]);
   assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k" }).promptRules, ["spec", "tools"]);
   assert.deepEqual(loadConfig({ OPENAI_API_KEY: "k", AGENT_PROMPT_RULES: "" }).promptRules, []);

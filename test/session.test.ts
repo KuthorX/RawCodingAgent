@@ -79,8 +79,10 @@ test("manual and automatic compaction replace old history with a summary", async
   const provider = new ScriptedProvider([reply("first"), reply("summary"), reply("second")]);
   const runtime = testRuntime(provider);
   const meta = runtime.store.create("/tmp", "m", "auto");
-  const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps, compactionTokens: () => 1 });
-  await runner.send("one").done;
+  let threshold = 0;
+  const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps, compactionTokens: () => threshold });
+  await runner.send("one".repeat(10_000)).done;
+  threshold = 1;
   await runner.send("two").done;
   assert.match((runtime.store.loadMessages(meta.id)[0] as { content?: string }).content ?? "", /summary/);
   assert.ok(runtime.store.loadEvents(meta.id).some((e) => e.type === "compacted"));

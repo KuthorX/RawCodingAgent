@@ -21,6 +21,7 @@ import { isApprovalMode, type ApprovalMode } from "../agent/permissions.ts";
 import type { ImageAttachment, Message } from "../types.ts";
 import type { SessionEvent } from "./events.ts";
 import type { PlanItem } from "../tools/plan.ts";
+import type { VerificationState } from "../agent/verification.ts";
 
 export interface SessionMeta {
   id: string;
@@ -41,6 +42,7 @@ export interface SessionMeta {
   // Hidden from the sidebar's project tree (still searchable, can be restored).
   archived?: boolean;
   plan?: PlanItem[];
+  verification?: VerificationState;
 }
 
 export interface TurnLimits {
@@ -195,6 +197,9 @@ export class SessionStore {
       title: source.title,
       turns: source.turns,
       ...(source.notifications !== undefined ? { notifications: source.notifications } : {}),
+      ...(source.plan ? { plan: source.plan } : {}),
+      ...(source.verification ? { verification: options.workspace && options.workspace !== source.workspace
+        ? { ...source.verification, checked: undefined } : source.verification } : {}),
       forkedFrom: { id: source.id, turns: source.turns },
     };
     writeJsonAtomic(join(this.dir(meta.id), "meta.json"), meta);

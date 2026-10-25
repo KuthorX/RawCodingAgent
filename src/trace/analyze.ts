@@ -70,7 +70,7 @@ export function totals(spans: readonly LocatedSpan[], pricing: Pricing = DEFAULT
     outputTokens: llm.reduce((n, s) => n + num(s.attrs.outputTokens), 0),
   };
   return {
-    turns: of("turn").length,
+    turns: of("turn").filter((span) => !span.attrs.subagent).length,
     llmCalls: llm.length,
     toolCalls: tools.length,
     toolErrors: tools.filter((s) => s.status === "error").length,

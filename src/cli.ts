@@ -35,7 +35,7 @@ export async function runCli(runtime: Runtime, options: CliOptions): Promise<voi
         resolve(answer === "y" || answer === "a");
       };
     });
-  const runner: SessionRunner = new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm });
+  const runner: SessionRunner = new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm, contextWindow: (session) => runtime.contextWindow(session.model) });
   if (options.forceAuto) runner.setApprovalMode("auto");
 
   // Subscribe after replay so a resumed session doesn't reprint its old transcript.

@@ -43,8 +43,9 @@ test("a spending budget stops the turn, and a used-up budget refuses the next me
   });
   await runner.send("go").done;
   assert.deepEqual(runtime.store.loadEvents(meta.id).at(-1), { type: "turn_end", finishReason: "budget", steps: 2 });
-  // The summary request was told why.
-  assert.match(JSON.stringify(provider.requests[2]!.messages.at(-1)), /spending budget of the workspace \\"w\\"/);
+  // No extra paid request is allowed once the budget is exhausted.
+  assert.equal(provider.requests.length, 2);
+  assert.match(JSON.stringify(runtime.store.loadMessages(meta.id).at(-1)), /spending budget/);
   remaining = 0;
   assert.throws(() => runner.send("more"), (err: unknown) => err instanceof SendRejected && /工作区 w 的额度已经用完/.test(err.message));
 });

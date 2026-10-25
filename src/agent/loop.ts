@@ -10,6 +10,7 @@ import { callSignature, isRepeating, limitDetail, limitNotice, type LimitHit } f
 import { needsApproval, type ApprovalMode, type ApprovalOutcome, type Confirm } from "./permissions.ts";
 import type { Tracer } from "./trace.ts";
 import { truncateOutput } from "./truncate.ts";
+import { ContextLimitError, requestTokens } from "./context.ts";
 
 export interface AgentDeps {
   provider: Provider;
@@ -28,13 +29,22 @@ export interface AgentDeps {
   budget?: { remainingUsd: number; scope: string } | null;
   maxRepeats?: number;
   pricing?: Pricing;
+  // Shared by the main turn, compaction and read-only children.
+  onUsage?: (usage: TokenUsage, model: string) => void;
+  turnSpentUsd?: () => number;
+  checkBudget?: () => LimitHit | null;
+  inputTokenLimit?: () => number;
+  prepareContext?: (messages: Message[], signal?: AbortSignal, force?: boolean) => Promise<Message[]>;
+  completionCheck?: () => Promise<string | null>;
+  beforeTool?: (call: ToolCall) => Promise<void>;
+  afterTool?: (call: ToolCall) => Promise<void>;
+  subagent?: boolean;
   // Read before every tool call, so a mode switched mid-turn applies to the next call.
   approvalMode: () => ApprovalMode;
   confirm: Confirm;
   tracer: Tracer;
   onEvent?: (event: AgentEvent) => void;
-  // Called at every step boundary with a history that is safe to resume from. The session saves it, so a
-  // crash mid-turn loses at most the model call in flight, not the tool calls that already changed files.
+  // Called before each tool and immediately after its result. Pending calls have explicit recovery results.
   onStep?: (messages: Message[]) => void;
   // Waits before each retry of a model call whose connection dropped; its length is the number of retries.
   retryDelaysMs?: readonly number[];
@@ -54,7 +64,7 @@ export type AgentEvent =
   // A tool call was cut off by max_tokens; the model is asked to retry in smaller pieces.
   | { type: "output_truncated"; retry: number };
 
-export type FinishReason = Exclude<StopReason, "tool_use"> | LimitHit | "interrupted";
+export type FinishReason = Exclude<StopReason, "tool_use"> | LimitHit | "interrupted" | "unverified";
 
 // Live controls for a running turn.
 export interface TurnControl {
@@ -80,6 +90,14 @@ export interface TurnResult {
 }
 
 const INPUT_PREVIEW_CHARS = 500;
+
+export class ModelBudgetError extends Error {
+  readonly hit: LimitHit;
+  constructor(hit: LimitHit) {
+    super(`Model request blocked: ${hit}`);
+    this.hit = hit;
+  }
+}
 
 // Thrown when a turn fails midway. `messages` is the history up to the last completed step,
 // so tool calls that already ran (and changed files) are not forgotten on resume.
@@ -110,6 +128,10 @@ export function isDroppedConnection(err: unknown): boolean {
   return false;
 }
 
+function isContextOverflow(err: unknown): boolean {
+  return err instanceof Error && /context_length_exceeded|maximum context|context (?:length|window)|too many (?:input )?tokens/i.test(err.message);
+}
+
 interface ToolRun {
   result: ToolResult;
   approval: ApprovalOutcome | null; // null when the call never reached the approval step
@@ -129,15 +151,20 @@ async function runTool(call: ToolCall, deps: AgentDeps, signal?: AbortSignal): P
   let approvalMs: number | null = null;
   if (needsApproval(tool, deps.approvalMode(), call)) {
     const t0 = performance.now();
-    const allowed = await deps.confirm(call);
+    const allowed = await deps.confirm(tool.approvalInput ? { ...call, input: tool.approvalInput } : call);
     approvalMs = Math.round(performance.now() - t0);
     approval = allowed ? "allowed" : "denied";
     if (!allowed) return { result: fail("the user denied this tool call"), approval, approvalMs };
   }
   try {
+    signal?.throwIfAborted();
+    await deps.beforeTool?.(call);
+    signal?.throwIfAborted();
     const output = await tool.run(call.input, { workspace: deps.workspace, signal, env: deps.toolEnv, plan: deps.plan });
+    await deps.afterTool?.(call);
     return { result: { callId: call.id, content: truncateOutput(output), isError: false }, approval, approvalMs };
   } catch (err) {
+    await deps.afterTool?.(call);
     // ToolError = expected failure the model should fix; anything else is reported with its type for debugging.
     return { result: fail(err instanceof ToolError ? err.message : errorMessage(err)), approval, approvalMs };
   }
@@ -181,10 +208,10 @@ async function callModel(
   let streamed = false;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await callModelOnce(request, step, deps, parentId, attempt, signal, summary, onText ? (delta) => {
+      return await completeModel(request, deps, { step, parentId, attempt, signal, summary, onDelta: onText ? (delta) => {
         streamed = true;
         onText(delta);
-      } : undefined);
+      } : undefined });
     } catch (err) {
       if (signal?.aborted || attempt >= delays.length || !isDroppedConnection(err)) throw err;
       // A retry starts the answer over: clear the partial text the UI has already shown.
@@ -198,22 +225,22 @@ async function callModel(
   }
 }
 
-async function callModelOnce(
+export async function completeModel(
   request: CompletionRequest,
-  step: number,
   deps: AgentDeps,
-  parentId: string,
-  attempt: number,
-  signal: AbortSignal | undefined,
-  summary: boolean,
-  onText?: (delta: ModelDelta) => void,
+  options: { step?: number; parentId?: string; attempt?: number; signal?: AbortSignal; summary?: boolean; onDelta?: (delta: ModelDelta) => void } = {},
 ): Promise<CompletionResponse> {
+  const { step = 0, parentId = null, attempt = 0, signal, summary = false, onDelta } = options;
+  signal?.throwIfAborted();
+  const hit = deps.checkBudget?.();
+  if (hit) throw new ModelBudgetError(hit);
+  const limit = deps.inputTokenLimit?.();
+  if (limit && requestTokens(request) > limit) throw new ContextLimitError(`Request exceeds the input budget (${limit} estimated tokens); shorten the input or configure the model context window.`);
   const attrs = { step, messages: request.messages.length, ...(summary ? { summary: true } : {}), ...(attempt > 0 ? { retry: attempt } : {}) };
-  const span = deps.tracer.startSpan("llm", deps.provider.model, parentId, attrs);
+  const model = deps.provider.model;
+  const span = deps.tracer.startSpan("llm", model, parentId, attrs);
   try {
-      const response = await deps.provider.complete(request, signal, onText ? (delta) => {
-        onText(delta);
-    } : undefined);
+    const response = await deps.provider.complete(request, signal, onDelta);
     span.end({
       inputTokens: response.usage.inputTokens,
       cachedInputTokens: response.usage.cachedInputTokens,
@@ -221,10 +248,11 @@ async function callModelOnce(
       stopReason: response.stopReason,
       toolCalls: response.message.toolCalls.length,
     });
+    deps.onUsage?.(response.usage, model);
     deps.tracer.log("response", response);
     return response;
   } catch (err) {
-    span.end(signal?.aborted ? { aborted: true } : { error: errorMessage(err) }, signal?.aborted ? "ok" : "error");
+    span.end({ usageUncertain: true, ...(signal?.aborted ? { aborted: true } : { error: errorMessage(err) }) }, signal?.aborted ? "ok" : "error");
     throw err;
   }
 }
@@ -242,19 +270,38 @@ async function loop(
   const interrupted = (steps: number): TurnResult => ({ messages, finishReason: "interrupted", steps });
   const maxRepeats = deps.maxRepeats ?? DEFAULT_MAX_REPEATS;
   const maxCost = deps.maxTurnCostUsd ?? null;
-  const pricing = pricingForModel(deps.pricing ?? DEFAULT_PRICING, deps.provider.model);
-  let usage: TokenUsage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+  let localCost = 0;
+  const onUsage = deps.onUsage;
+  deps = { ...deps, onUsage: (usage, model) => {
+    localCost += costUsd(usage, pricingForModel(deps.pricing ?? DEFAULT_PRICING, model));
+    onUsage?.(usage, model);
+  } };
   let signatures: string[] = [];
   let truncations = 0; // consecutive responses cut off by max_tokens inside a tool call
+  const spent = () => deps.turnSpentUsd?.() ?? localCost;
+  const budgetHit = (): LimitHit | null => deps.checkBudget?.() ??
+    (maxCost !== null && spent() >= maxCost ? "max_cost" : deps.budget && spent() >= deps.budget.remainingUsd ? "budget" : null);
+  const checkpoint = () => {
+    try { deps.onStep?.(messages); }
+    catch (err) { throw new TurnAbortedError(err, messages); }
+  };
   const stopAt = async (hit: LimitHit, steps: number): Promise<TurnResult> => {
     const detail = limitDetail(hit, { maxSteps: deps.maxSteps, maxCostUsd: maxCost, maxRepeats, budgetScope: deps.budget?.scope });
-    deps.tracer.log("limit", { hit, steps, costUsd: costUsd(usage, pricing) });
-    messages = await summarize(messages, detail, steps + 1, deps, turnId, signal);
+    deps.tracer.log("limit", { hit, steps, costUsd: spent() });
+    // An exhausted budget must not trigger another paid request just to explain the limit.
+    if (hit === "max_cost" || hit === "budget") {
+      const text = `[agent limit] ${detail}. Completed tool results are saved; work may be incomplete.`;
+      messages = [...messages, { role: "assistant", text, toolCalls: [] }];
+      deps.onEvent?.({ type: "assistant_text", text });
+    } else messages = await summarize(messages, detail, steps + 1, deps, turnId, signal);
+    checkpoint();
     return { messages, finishReason: hit, steps };
   };
 
   for (let step = 1; step <= deps.maxSteps; step++) {
     if (signal?.aborted) return interrupted(step - 1);
+    const hit = budgetHit();
+    if (hit) return stopAt(hit, step - 1);
     // D18: user messages sent mid-turn join the context at the next step boundary.
     const interjections = step > 1 ? (control.takeInterjections?.() ?? []) : [];
     if (interjections.length > 0) {
@@ -264,28 +311,49 @@ async function loop(
 
     let response: CompletionResponse;
     try {
-      response = await callModel(messages, step, deps, turnId, signal, false, (delta) => {
+      messages = await deps.prepareContext?.(messages, signal) ?? messages;
+      const onDelta = (delta: ModelDelta) => {
         if (delta.text) deps.onEvent?.({ type: "assistant_delta", text: delta.text });
         if (delta.reasoning) deps.onEvent?.({ type: "assistant_reasoning_delta", text: delta.reasoning });
-      });
+      };
+      try { response = await callModel(messages, step, deps, turnId, signal, false, onDelta); }
+      catch (err) {
+        if (!deps.prepareContext || !isContextOverflow(err) || signal?.aborted) throw err;
+        messages = await deps.prepareContext(messages, signal, true);
+        deps.onEvent?.({ type: "assistant_reset" });
+        response = await callModel(messages, step, deps, turnId, signal, false, onDelta);
+      }
     } catch (err) {
       if (signal?.aborted) return interrupted(step - 1);
+      if (err instanceof ModelBudgetError) return stopAt(err.hit, step - 1);
       throw new TurnAbortedError(err, messages);
     }
     messages = [...messages, response.message];
-    const u = response.usage;
-    usage = {
-      inputTokens: usage.inputTokens + u.inputTokens,
-      cachedInputTokens: usage.cachedInputTokens + u.cachedInputTokens,
-      outputTokens: usage.outputTokens + u.outputTokens,
-    };
-    if (response.message.text) deps.onEvent?.({ type: "assistant_text", text: response.message.text });
+    const afterModel = budgetHit();
+    if (afterModel) {
+      if (response.message.toolCalls.length) messages = [...messages, { role: "tool_results", results: response.message.toolCalls.map((call) => ({ callId: call.id, content: "not executed: model budget exhausted", isError: true })) }];
+      return stopAt(afterModel, step);
+    }
 
     if (response.message.toolCalls.length === 0) {
+      if (response.stopReason === "end_turn") {
+        const blocked = deps.plan?.get().some((item) => item.status !== "completed")
+          ? "The plan still has unfinished items. Work is not verified complete."
+          : await deps.completionCheck?.();
+        if (blocked) {
+          const text = `[unverified] ${blocked}${response.message.text ? `\n\n${response.message.text}` : ""}`;
+          messages = [...messages.slice(0, -1), { role: "assistant", text, toolCalls: [] }];
+          deps.onEvent?.({ type: "assistant_text", text });
+          checkpoint();
+          return { messages, finishReason: "unverified", steps: step };
+        }
+      }
+      if (response.message.text) deps.onEvent?.({ type: "assistant_text", text: response.message.text });
       const finishReason = response.stopReason === "tool_use" ? "other" : response.stopReason;
-      deps.onStep?.(messages);
+      checkpoint();
       return { messages, finishReason, steps: step };
     }
+    if (response.message.text) deps.onEvent?.({ type: "assistant_text", text: response.message.text });
 
     // Tool input may be cut off: don't run it, but answer every call so the history stays valid.
     if (response.stopReason === "max_tokens" || response.stopReason === "refusal") {
@@ -297,43 +365,51 @@ async function loop(
         isError: true,
       }));
       messages = [...messages, { role: "tool_results", results: skipped }];
-      deps.onStep?.(messages);
+      checkpoint();
       if (!retry) return { messages, finishReason: response.stopReason, steps: step };
       truncations++;
       deps.tracer.log("truncated", { step, retry: truncations });
       deps.onEvent?.({ type: "output_truncated", retry: truncations });
-      if (maxCost !== null && costUsd(usage, pricing) > maxCost) return stopAt("max_cost", step);
-      if (deps.budget && costUsd(usage, pricing) > deps.budget.remainingUsd) return stopAt("budget", step);
+      const hit = budgetHit();
+      if (hit) return stopAt(hit, step);
       continue;
     }
     truncations = 0;
 
     // D2: tool calls run sequentially, results returned together in one message.
     // After a stop, every remaining call still gets a result so the history stays valid.
-    const results: ToolResult[] = [];
+    const batch = messages;
+    const results: ToolResult[] = response.message.toolCalls.map((call) => ({ callId: call.id, content: "not executed: the process stopped before this tool started", isError: true }));
+    const saveResults = () => { messages = [...batch, { role: "tool_results", results: results.map((result) => ({ ...result })) }]; checkpoint(); };
+    saveResults();
     let repeated = false;
-    for (const call of response.message.toolCalls) {
+    for (const [index, call] of response.message.toolCalls.entries()) {
       if (signal?.aborted || repeated) {
-        results.push({ callId: call.id, content: repeated ? REPEATED_RESULT : INTERRUPTED_RESULT, isError: true });
+        results[index] = { callId: call.id, content: repeated ? REPEATED_RESULT : INTERRUPTED_RESULT, isError: true };
+        saveResults();
         continue;
       }
       signatures = [...signatures, callSignature(call)];
       if (isRepeating(signatures, maxRepeats)) {
         repeated = true;
-        results.push({ callId: call.id, content: REPEATED_RESULT, isError: true });
+        results[index] = { callId: call.id, content: REPEATED_RESULT, isError: true };
+        saveResults();
         continue;
       }
+      const hit = budgetHit();
+      if (hit) return stopAt(hit, step);
+      results[index] = { callId: call.id, content: "execution outcome uncertain: the process stopped during this tool; inspect the workspace before retrying, do not automatically repeat side effects", isError: true };
+      saveResults();
       deps.onEvent?.({ type: "tool_call", call });
       const result = await executeToolCall(call, deps, turnId, signal);
+      results[index] = result;
+      saveResults();
       deps.onEvent?.({ type: "tool_result", call, result });
-      results.push(result);
     }
-    messages = [...messages, { role: "tool_results", results }];
-    deps.onStep?.(messages);
     if (signal?.aborted) return interrupted(step);
     if (repeated) return stopAt("repeated", step);
-    if (maxCost !== null && costUsd(usage, pricing) > maxCost) return stopAt("max_cost", step);
-    if (deps.budget && costUsd(usage, pricing) > deps.budget.remainingUsd) return stopAt("budget", step);
+    const afterTools = budgetHit();
+    if (afterTools) return stopAt(afterTools, step);
   }
   return stopAt("max_steps", deps.maxSteps);
 }
@@ -351,11 +427,12 @@ async function summarize(
   if (signal?.aborted) return messages;
   const withNotice: Message[] = [...messages, { role: "user", content: limitNotice(detail) }];
   try {
-    const response = await callModel(withNotice, step, deps, turnId, signal, true);
+    const prepared = await deps.prepareContext?.(withNotice, signal) ?? withNotice;
+    const response = await callModel(prepared, step, deps, turnId, signal, true);
     // Tool calls are not allowed here; drop any the model still makes so no call is left unanswered.
     const text = response.message.text || `(stopped: ${detail})`;
     deps.onEvent?.({ type: "assistant_text", text });
-    return [...withNotice, { role: "assistant", text, toolCalls: [] }];
+    return [...prepared, { role: "assistant", text, toolCalls: [] }];
   } catch {
     return messages;
   }
@@ -369,8 +446,8 @@ export async function runTurn(
   control: TurnControl = {},
 ): Promise<TurnResult> {
   const input: UserMessage = typeof userInput === "string" ? { role: "user", content: userInput } : userInput;
-  const attrs = { input: input.content.slice(0, INPUT_PREVIEW_CHARS), ...(input.images?.length ? { images: input.images.length } : {}) };
-  const span = deps.tracer.startSpan("turn", "turn", null, attrs);
+  const attrs = { input: input.content.slice(0, INPUT_PREVIEW_CHARS), ...(input.images?.length ? { images: input.images.length } : {}), ...(deps.subagent ? { subagent: true } : {}) };
+  const span = deps.tracer.startSpan("turn", deps.subagent ? "delegate" : "turn", null, attrs);
   try {
     const result = await loop(history, input, deps, span.id, control);
     span.end({ finishReason: result.finishReason, steps: result.steps });

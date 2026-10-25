@@ -14,6 +14,8 @@ export interface Tool {
   spec: ToolSpec;
   // Whether a human must approve each call (see permission policy in agent/permissions.ts).
   dangerous: boolean;
+  // Harness-owned details shown for approval when execution is fixed outside the model's arguments.
+  approvalInput?: Record<string, unknown>;
   run(input: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }
 
