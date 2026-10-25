@@ -23,6 +23,7 @@ import type { SessionEvent } from "./events.ts";
 import type { PlanItem } from "../tools/plan.ts";
 import type { VerificationState } from "../agent/verification.ts";
 import type { ThinkEffort } from "../providers/catalog.ts";
+import type { LoadedSkill } from "../agent/skills.ts";
 
 export interface SessionMeta {
   id: string;
@@ -46,6 +47,8 @@ export interface SessionMeta {
   archived?: boolean;
   plan?: PlanItem[];
   verification?: VerificationState;
+  // Snapshots keep explicitly selected instructions stable across restart and compaction.
+  skills?: LoadedSkill[];
 }
 
 export interface TurnLimits {
@@ -198,6 +201,7 @@ export class SessionStore {
     const meta: SessionMeta = {
       ...this.create(options.workspace ?? source.workspace, source.model, options.approvalMode ?? source.approvalMode, now),
       title: source.title,
+      ...(source.skills ? { skills: source.skills } : {}),
       ...(source.provider !== undefined ? { provider: source.provider } : {}),
       ...(source.thinkEffort !== undefined ? { thinkEffort: source.thinkEffort } : {}),
       turns: source.turns,

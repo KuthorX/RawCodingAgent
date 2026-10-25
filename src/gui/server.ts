@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { isApprovalMode } from "../agent/permissions.ts";
 import { SendRejected } from "../session/runner.ts";
+import { CommandError, commandCatalog, runCommand } from "../session/commands.ts";
+import { SkillError } from "../agent/skills.ts";
 import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId, type TurnLimits } from "../session/store.ts";
 import { HttpError, readJson, sendBytes, sendJson, sendText, tokenMatches } from "./http.ts";
 import type { SessionManager } from "./manager.ts";
@@ -231,6 +233,8 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
     }
     case "GET stats":
       return sendJson(res, 200, manager.stats(id));
+    case "GET commands":
+      return sendJson(res, 200, commandCatalog(manager.get(id).info.workspace));
     // The working tree as the agent left it: what the review panel shows after a turn.
     case "GET diff":
       return sendJson(res, 200, await workingTreeDiff(manager.get(id).info.workspace));
@@ -265,17 +269,27 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       const images = parseImages(body.images);
       if (!text && images.length === 0) throw new HttpError(400, '"text" must be a non-empty string (or attach images)');
       const runner = manager.get(id);
-      if (text === "/compact" || text.startsWith("/compact ")) {
-        let done: Promise<void>;
-        try { done = runner.compact(text.slice("/compact".length).trim()); }
-        catch (err) { if (err instanceof SendRejected) throw new HttpError(409, err.message); throw err; }
-        done.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
-        return sendJson(res, 202, { ok: true, compacting: true });
+      let task = text;
+      try {
+        if (text.startsWith("/") && images.length) throw new CommandError("命令不接受图片，请先移除附件，再单独发送任务和图片");
+        const result = runCommand(runner, text, startMode);
+        if (result) {
+          result.done?.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
+          if (!result.task) {
+            const { done: _, ...body } = result;
+            return sendJson(res, result.done ? 202 : 200, { ok: true, ...body });
+          }
+          task = result.task;
+        }
+      } catch (err) {
+        if (err instanceof SendRejected) throw new HttpError(409, err.message);
+        if (err instanceof CommandError || err instanceof SkillError) throw new HttpError(400, err.message);
+        throw err;
       }
       const saved = images.map((img) => manager.store.saveAttachment(id, img.data, img.mediaType));
       let sent;
       try {
-        sent = runner.send(text, saved);
+        sent = runner.send(task, saved);
       } catch (err) {
         if (err instanceof SendRejected) throw new HttpError(409, err.message);
         throw err;

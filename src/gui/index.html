@@ -286,6 +286,8 @@
   footer { position: relative; border-top: 1px solid var(--line); padding: 10px 22px; }
   .slash-menu { position: absolute; z-index: 8; left: 22px; right: 22px; bottom: calc(100% + 6px); max-width: 960px; margin: 0 auto; padding: 3px 0; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 6px 24px rgb(0 0 0 / .35); }
   .slash-menu[hidden] { display: none; }
+  .slash-menu { max-height: min(320px, 45vh); overflow-y: auto; }
+  .command-output { white-space: pre-wrap; overflow-wrap: anywhere; }
   .slash-menu button { display: flex; align-items: baseline; gap: 12px; width: 100%; border: 0; padding: 5px 10px; text-align: left; background: none; color: var(--ink); }
   .slash-menu button:hover, .slash-menu button.selected { background: var(--sel); }
   .slash-menu .command { color: var(--accent-ink); font-family: inherit; }
@@ -444,10 +446,10 @@
     </div>
     <main id="scroller"><div id="log"></div></main>
     <footer id="footer">
-      <div class="slash-menu" id="slash-menu" role="listbox" hidden></div>
+      <div class="slash-menu" id="slash-menu" role="listbox" aria-label="命令和技能" hidden></div>
       <div class="attachments" id="attachments" hidden></div>
       <form id="form">
-        <textarea id="input" rows="1" placeholder="描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片"></textarea>
+        <textarea id="input" rows="1" aria-label="任务或命令" aria-autocomplete="list" aria-controls="slash-menu" aria-expanded="false" placeholder="描述任务，输入 / 选择命令或技能，Shift+Enter 换行"></textarea>
         <button class="stop" id="stop" type="button" hidden title="中断模型请求和正在运行的命令（Esc）">停止</button>
         <button class="primary" id="send" type="submit">发送</button>
       </form>
@@ -565,10 +567,10 @@ function setBusy(value) {
   $("stop").disabled = false;
   syncSessionModelControls();
   input.placeholder = TOUCH
-    ? (value ? "agent 正在工作：发出的内容在它下一步之前送达" : "描述任务")
+    ? (value ? "agent 正在工作：发出的内容在它下一步之前送达" : "描述任务，输入 / 选择命令或技能")
     : value
       ? "agent 正在工作：输入内容（可粘贴图片）会在它下一步之前送达（插话），Esc 停止"
-      : "描述任务，Enter 发送，Shift+Enter 换行，可粘贴图片";
+      : "描述任务，输入 / 选择命令或技能，Shift+Enter 换行";
 }
 
 function setDot(state) {
@@ -1737,6 +1739,9 @@ const handlers = {
     showMode(e.mode);
     append(el("div", "note", e.mode === "auto" ? "权限已切换为：自动批准（之后的改动不再询问）" : "权限已切换为：每次询问"));
   },
+  skill_loaded(e) {
+    append(el("div", "note", `已加载技能 ${e.name} · /clear 后重置`));
+  },
   compaction_start(e) {
     append(el("div", "note", e.manual ? "正在压缩上下文…" : "正在自动压缩上下文…"));
     if (e.manual) setBusy(true);
@@ -1830,6 +1835,9 @@ function openSession(id) {
   renderAttachments();
   queuedBubbles = [];
   current = id || null;
+  slashCommands = skillCommands = [];
+  hideSlashMenu();
+  if (current) loadCommands(current).catch(notice);
   sessionCursor = resumeCursor;
   dotState = "idle";
   streamBox = null;
@@ -2006,29 +2014,42 @@ footer.addEventListener("drop", (ev) => {
   addImages([...ev.dataTransfer.files]);
 });
 
-const SLASH_COMMANDS = [
-  { command: "/compact", description: "压缩当前会话上下文" },
-];
+let slashCommands = [];
+let skillCommands = [];
+let commandVersion = 0;
 const slashMenu = $("slash-menu");
 let slashMatches = [];
 let slashSelected = 0;
+
+async function loadCommands(id) {
+  const version = ++commandVersion;
+  const catalog = await api(`/api/sessions/${id}/commands`);
+  if (current !== id || version !== commandVersion) return;
+  slashCommands = catalog.commands;
+  skillCommands = catalog.skills.map((skill) => ({ command: `/skill ${skill.name}`, description: skill.description || "加载技能" }));
+  renderSlashMenu();
+}
 
 function hideSlashMenu() {
   slashMenu.hidden = true;
   slashMatches = [];
   slashSelected = 0;
+  input.setAttribute("aria-expanded", "false");
+  input.removeAttribute("aria-activedescendant");
 }
 
 function renderSlashMenu() {
-  if (input.selectionStart !== input.value.length || !/^\/[^\s/]*$/.test(input.value)) return hideSlashMenu();
+  const skillArgument = /^\/skill\s+[^\s/]*$/i.test(input.value);
+  if (document.activeElement !== input || input.selectionStart !== input.value.length || (!skillArgument && !/^\/[^\s/]*$/.test(input.value))) return hideSlashMenu();
   const query = input.value.toLowerCase();
-  slashMatches = SLASH_COMMANDS.filter((item) => item.command.startsWith(query));
+  slashMatches = (skillArgument ? skillCommands : slashCommands).filter((item) => item.command.toLowerCase().startsWith(query));
   if (slashMatches.length === 0) return hideSlashMenu();
   slashSelected = Math.min(slashSelected, slashMatches.length - 1);
   slashMenu.replaceChildren(...slashMatches.map((item, index) => {
     const button = el("button", index === slashSelected ? "selected" : "");
     button.type = "button";
     button.role = "option";
+    button.id = `slash-option-${index}`;
     button.ariaSelected = index === slashSelected ? "true" : "false";
     button.append(el("span", "command", item.command), el("span", "description", item.description));
     button.onmousedown = (ev) => ev.preventDefault();
@@ -2036,6 +2057,9 @@ function renderSlashMenu() {
     return button;
   }));
   slashMenu.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+  input.setAttribute("aria-activedescendant", `slash-option-${slashSelected}`);
+  slashMenu.children[slashSelected]?.scrollIntoView({ block: "nearest" });
 }
 
 function completeSlash(index = slashSelected) {
@@ -2048,15 +2072,19 @@ function completeSlash(index = slashSelected) {
   hideSlashMenu();
 }
 
-input.addEventListener("input", renderSlashMenu);
+input.addEventListener("input", () => {
+  slashSelected = 0;
+  renderSlashMenu();
+  if (current && (input.value === "/" || input.value === "/skill ")) loadCommands(current).catch(notice);
+});
 input.addEventListener("blur", () => setTimeout(hideSlashMenu, 120));
 input.addEventListener("keydown", (ev) => {
-  if (slashMenu.hidden || slashMatches.length === 0) return;
+  if (ev.isComposing || slashMenu.hidden || slashMatches.length === 0) return;
   if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
     ev.preventDefault();
     slashSelected = (slashSelected + (ev.key === "ArrowDown" ? 1 : -1) + slashMatches.length) % slashMatches.length;
     renderSlashMenu();
-  } else if (ev.key === "Tab") {
+  } else if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && input.value !== slashMatches[slashSelected].command)) {
     ev.preventDefault();
     completeSlash();
   } else if (ev.key === "Escape") {
@@ -2067,23 +2095,35 @@ input.addEventListener("keydown", (ev) => {
 
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
+  const draft = input.value;
+  const submittedAttachments = attachments;
   const text = input.value.trim();
   const images = attachments.filter(Boolean);
   if ((!text && images.length === 0) || !current) return;
+  const session = current;
   const compacting = text === "/compact" || text.startsWith("/compact ");
   if (compacting) setBusy(true);
   try {
-    await api(`/api/sessions/${current}/message`, { text, ...(images.length ? { images } : {}) });
-    input.value = "";
-    input.style.height = "";
-    attachments = [];
-    renderAttachments();
+    const result = await api(`/api/sessions/${session}/message`, { text, ...(images.length ? { images } : {}) });
+    if (current !== session) { refreshSessions(); return; }
+    // A previous request must not erase the next command or its attachments while the user is typing.
+    if (input.value === draft) {
+      input.value = "";
+      input.style.height = "";
+      hideSlashMenu();
+    }
+    if (attachments === submittedAttachments) {
+      attachments = [];
+      renderAttachments();
+    }
+    if (result.message) append(el("pre", "note command-output", result.message));
+    if (result.session) location.hash = result.session.id;
     refreshSessions();
-  } catch (e) { if (compacting) setBusy(false); append(el("div", "err", "发送失败：" + e.message)); }
+  } catch (e) { if (current !== session) return; if (compacting) setBusy(false); append(el("div", "err", "发送失败：" + e.message)); }
 });
 // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
 input.addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && !TOUCH) { ev.preventDefault(); $("form").requestSubmit(); }
+  if (!ev.defaultPrevented && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && !TOUCH) { ev.preventDefault(); $("form").requestSubmit(); }
 });
 input.addEventListener("input", () => { input.style.height = ""; input.style.height = input.scrollHeight + "px"; });
 

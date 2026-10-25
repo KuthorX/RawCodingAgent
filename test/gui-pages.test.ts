@@ -7,6 +7,39 @@ import { PROJECT_ROOT } from "../src/app.ts";
 
 const GUI = join(PROJECT_ROOT, "src", "gui");
 
+test("a delayed command response preserves the next draft and ignores a session switched in flight", async () => {
+  const page = readFileSync(join(GUI, "index.html"), "utf8");
+  const source = page.match(/\$\("form"\)\.addEventListener\("submit", async \(ev\) => \{[^]*?^\}\);/m)?.[0];
+  assert.ok(source);
+  let submit: (event: { preventDefault(): void }) => Promise<void>;
+  let respond: (result: unknown) => void;
+  const context = vm.createContext({
+    $: () => ({ addEventListener: (_name: string, callback: typeof submit) => { submit = callback; } }),
+    api: () => new Promise((resolve) => { respond = resolve; }),
+    input: { value: "/help", style: { height: "" } },
+    attachments: [], current: "old", location: { hash: "old" },
+    hideSlashMenu() {}, renderAttachments() {}, refreshSessions() {}, setBusy() {}, append() {}, el() {},
+  });
+  vm.runInContext(source, context);
+  const pending = submit!({ preventDefault() {} });
+  context.input.value = "/skills";
+  context.attachments = ["new image"];
+  respond!({ message: "help text" });
+  await pending;
+  assert.equal(context.input.value, "/skills");
+  assert.deepEqual(context.attachments, ["new image"]);
+
+  context.input.value = "/clear";
+  context.attachments = [];
+  const switching = submit!({ preventDefault() {} });
+  context.current = "other";
+  context.input.value = "other draft";
+  respond!({ session: { id: "fresh" } });
+  await switching;
+  assert.equal(context.input.value, "other draft");
+  assert.equal(context.location.hash, "old");
+});
+
 // A syntax error in a page script silently breaks the whole page (no sessions, dead buttons), and the
 // HTTP tests can't see it. Compile every inline <script> and common.js without running them.
 for (const file of readdirSync(GUI).filter((f) => f.endsWith(".html") || f.endsWith(".js"))) {

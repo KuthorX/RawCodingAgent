@@ -6,6 +6,7 @@ import type { ImageAttachment, Message, Provider, UserMessage } from "../types.t
 import type { ModelSelection } from "../providers/catalog.ts";
 import { ContextLimitError, estimateTokens, requestTokens, textTokens } from "../agent/context.ts";
 import { Verification } from "../agent/verification.ts";
+import { MAX_LOADED_SKILL_CHARS, SkillError, withSkills, type LoadedSkill } from "../agent/skills.ts";
 import { costUsd, DEFAULT_PRICING, pricingForModel } from "../pricing.ts";
 import type { LimitHit } from "../agent/limits.ts";
 import type { PlanController, PlanItem } from "../tools/plan.ts";
@@ -112,6 +113,7 @@ function mergeMessages(queue: UserMessage[]): UserMessage {
 // Owns one persisted conversation: history, replayable event log, approvals, and the running turn.
 export class SessionRunner {
   readonly deps: AgentDeps;
+  private readonly baseSystem: string;
   private meta: SessionMeta;
   private history: Message[];
   private log: SessionEvent[];
@@ -167,6 +169,9 @@ export class SessionRunner {
       plan: this.plan,
       delegateTask: (prompt, signal) => this.delegate(prompt, signal),
     });
+    this.baseSystem = this.deps.system;
+    this.deps.system = withSkills(this.baseSystem, this.meta.skills);
+    if (this.meta.skills?.length) this.deps.tracer.log("skills", { skills: this.meta.skills, system: this.deps.system });
     this.deps.onUsage = (usage, model) => { this.turnSpent += costUsd(usage, pricingForModel(this.deps.pricing ?? DEFAULT_PRICING, model)); };
     this.deps.turnSpentUsd = () => this.turnSpent;
     this.deps.checkBudget = () => this.spendingLimit();
@@ -180,6 +185,28 @@ export class SessionRunner {
 
   get info(): SessionMeta & { busy: boolean; compacting: boolean } {
     return { ...this.meta, busy: this.isBusy, compacting: this.compacting };
+  }
+
+  useSkill(skill: LoadedSkill): void {
+    if (this.isBusy) throw new SendRejected("会话正在运行，请先停止后再加载技能");
+    const skills = [...(this.meta.skills ?? []).filter((s) => s.name.toLowerCase() !== skill.name.toLowerCase()), skill];
+    const system = withSkills(this.baseSystem, skills);
+    if (skills.reduce((n, s) => n + s.content.length, 0) > MAX_LOADED_SKILL_CHARS ||
+      requestTokens({ system, tools: this.deps.tools.map((tool) => tool.spec), messages: [] }) >= this.inputLimit()) {
+      throw new SkillError("已加载技能超过上下文预算，请 /clear 后选择需要的技能");
+    }
+    this.meta = this.store.updateMeta(this.id, { skills });
+    this.deps.system = system;
+    this.deps.tracer.log("skills", { skills, system });
+    this.emit({ type: "skill_loaded", name: skill.name, path: skill.path });
+  }
+
+  // A fresh conversation keeps user settings and the old transcript; no plan or selected skills carry over.
+  freshSession(approvalMode = this.meta.approvalMode): SessionMeta {
+    if (this.isBusy) throw new SendRejected("会话正在运行，请先停止后再 /clear");
+    const { workspace, model, provider, thinkEffort, notifications, limits, budgetUsd, verification } = this.meta;
+    const fresh = this.store.create(workspace, model, approvalMode);
+    return this.store.updateMeta(fresh.id, { provider, thinkEffort, notifications, limits, budgetUsd, verification });
   }
 
   private async delegate(prompt: string, signal?: AbortSignal): Promise<string> {
