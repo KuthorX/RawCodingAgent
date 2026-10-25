@@ -2,7 +2,7 @@ import type { ToolCall } from "../types.ts";
 
 // D1: why a turn was stopped by the agent itself rather than finished by the model.
 // budget: a spending cap on the session, its workspace or its project (not just this turn) ran out.
-export type LimitHit = "max_steps" | "max_cost" | "repeated" | "budget";
+export type LimitHit = "max_steps" | "max_cost" | "repeated" | "budget" | "stagnant";
 
 // Stable regardless of key order, so {a,b} and {b,a} count as the same call.
 function stableJson(value: unknown): string {
@@ -33,6 +33,7 @@ export function limitDetail(
   if (hit === "max_steps") return `reached the step limit (${info.maxSteps} model calls)`;
   if (hit === "max_cost") return `reached the cost limit for one turn ($${info.maxCostUsd})`;
   if (hit === "budget") return `used up the spending budget of the ${info.budgetScope ?? "session"}`;
+  if (hit === "stagnant") return "repeated a tool cycle with unchanged results after being asked to change strategy";
   return `made the same tool call ${info.maxRepeats} times in a row`;
 }
 

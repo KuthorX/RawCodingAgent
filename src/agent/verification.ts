@@ -89,6 +89,9 @@ export class Verification {
   private readonly env?: NodeJS.ProcessEnv;
   private readonly save: (state: VerificationState) => void;
   private readonly policy: VerificationPolicy;
+  private progress = 0;
+
+  get progressVersion(): number { return this.progress; }
 
   private constructor(workspace: string, policy: VerificationPolicy, env: NodeJS.ProcessEnv | undefined, state: VerificationState, save: (state: VerificationState) => void) {
     this.workspace = workspace;
@@ -124,7 +127,9 @@ export class Verification {
 
   async afterTool(call: ToolCall): Promise<void> {
     if (call.name === "bash" && this.beforeBash) {
-      if (this.beforeBash === await fingerprint(this.workspace, this.env) && this.previousState) {
+      const after = await fingerprint(this.workspace, this.env);
+      if (after !== this.beforeBash) this.progress++;
+      if (this.beforeBash === after && this.previousState) {
         this.changed = this.previousState.changed;
         this.checked = this.previousState.checked;
       }
@@ -161,16 +166,22 @@ export class Verification {
         }
         const before = await fingerprint(this.workspace, this.env);
         const outputs: string[] = [];
-        for (const command of this.commands) {
-          const result = await runShell(command, { cwd: this.workspace, env: this.env, signal: ctx.signal, timeoutMs: TIMEOUT_MS });
-          outputs.push(`$ ${command}\n${formatShellResult(result)}`);
-          if (result.exitCode !== 0 || result.timedOut || result.stopped || result.leftRunning || result.startError) throw new ToolError(outputs.join("\n\n"));
+        let after: string | undefined;
+        try {
+          for (const command of this.commands) {
+            const result = await runShell(command, { cwd: this.workspace, env: this.env, signal: ctx.signal, timeoutMs: TIMEOUT_MS });
+            outputs.push(`$ ${command}\n${formatShellResult(result)}`);
+            if (result.exitCode !== 0 || result.timedOut || result.stopped || result.leftRunning || result.startError) throw new ToolError(outputs.join("\n\n"));
+          }
+          after = await fingerprint(this.workspace, this.env);
+          if (before !== after) throw new ToolError("Workspace contents changed during verification. Inspect the changes and run verify_changes again.");
+          this.checked = after;
+          this.persist();
+          return outputs.join("\n\n") + `\n\nVerification passed for workspace ${after}.`;
+        } finally {
+          // A failing check can still generate files or fix content before reporting its failure.
+          if (before !== (after ?? await fingerprint(this.workspace, this.env))) this.progress++;
         }
-        const after = await fingerprint(this.workspace, this.env);
-        if (before !== after) throw new ToolError("Workspace contents changed during verification. Inspect the changes and run verify_changes again.");
-        this.checked = after;
-        this.persist();
-        return outputs.join("\n\n") + `\n\nVerification passed for workspace ${after}.`;
       },
     };
   }

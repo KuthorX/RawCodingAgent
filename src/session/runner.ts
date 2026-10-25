@@ -197,6 +197,7 @@ export class SessionRunner {
       completionCheck: undefined,
       beforeTool: undefined,
       afterTool: undefined,
+      progressVersion: undefined,
       subagent: true,
       budget: undefined,
     } satisfies AgentDeps;
@@ -483,6 +484,7 @@ export class SessionRunner {
         deps.tools = [...deps.tools, verification.tool()];
         deps.beforeTool = (call) => verification.beforeTool(call);
         deps.afterTool = (call) => verification.afterTool(call);
+        deps.progressVersion = () => verification.progressVersion;
         deps.completionCheck = () => verification.check();
       }
       const result = await runTurn(this.history, input, deps, control);

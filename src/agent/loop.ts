@@ -7,10 +7,11 @@ import type { DelegateTask } from "../tools/delegate.ts";
 import { ToolError } from "../tools/index.ts";
 import type { CompletionRequest, CompletionResponse, Message, ModelDelta, Provider, StopReason, ToolCall, ToolResult, UserMessage } from "../types.ts";
 import { callSignature, isRepeating, limitDetail, limitNotice, type LimitHit } from "./limits.ts";
-import { needsApproval, type ApprovalMode, type ApprovalOutcome, type Confirm } from "./permissions.ts";
+import { isReadOnlyBashCommand, needsApproval, type ApprovalMode, type ApprovalOutcome, type Confirm } from "./permissions.ts";
 import type { Tracer } from "./trace.ts";
 import { truncateOutput } from "./truncate.ts";
 import { ContextLimitError, requestTokens } from "./context.ts";
+import { CycleGuard, cycleNotice, observationHash } from "./cycle-guard.ts";
 
 export interface AgentDeps {
   provider: Provider;
@@ -38,6 +39,8 @@ export interface AgentDeps {
   completionCheck?: () => Promise<string | null>;
   beforeTool?: (call: ToolCall) => Promise<void>;
   afterTool?: (call: ToolCall) => Promise<void>;
+  // Monotonic counter of observed workspace content changes, when the execution environment provides one.
+  progressVersion?: () => number;
   subagent?: boolean;
   // Read before every tool call, so a mode switched mid-turn applies to the next call.
   approvalMode: () => ApprovalMode;
@@ -129,7 +132,7 @@ export function isDroppedConnection(err: unknown): boolean {
 }
 
 function isContextOverflow(err: unknown): boolean {
-  return err instanceof Error && /context_length_exceeded|maximum context|context (?:length|window)|too many (?:input )?tokens/i.test(err.message);
+  return err instanceof ContextLimitError || err instanceof Error && /context_length_exceeded|maximum context|context (?:length|window)|too many (?:input )?tokens/i.test(err.message);
 }
 
 interface ToolRun {
@@ -162,7 +165,7 @@ async function runTool(call: ToolCall, deps: AgentDeps, signal?: AbortSignal): P
     signal?.throwIfAborted();
     const output = await tool.run(call.input, { workspace: deps.workspace, signal, env: deps.toolEnv, plan: deps.plan });
     await deps.afterTool?.(call);
-    return { result: { callId: call.id, content: truncateOutput(output), isError: false }, approval, approvalMs };
+    return { result: { callId: call.id, content: truncateOutput(output), isError: false, observationHash: observationHash(call.name, output) }, approval, approvalMs };
   } catch (err) {
     await deps.afterTool?.(call);
     // ToolError = expected failure the model should fix; anything else is reported with its type for debugging.
@@ -277,6 +280,7 @@ async function loop(
     onUsage?.(usage, model);
   } };
   let signatures: string[] = [];
+  const cycles = new CycleGuard();
   let truncations = 0; // consecutive responses cut off by max_tokens inside a tool call
   const spent = () => deps.turnSpentUsd?.() ?? localCost;
   const budgetHit = (): LimitHit | null => deps.checkBudget?.() ??
@@ -305,13 +309,30 @@ async function loop(
     // D18: user messages sent mid-turn join the context at the next step boundary.
     const interjections = step > 1 ? (control.takeInterjections?.() ?? []) : [];
     if (interjections.length > 0) {
+      signatures = [];
+      cycles.reset();
       messages = [...messages, ...interjections.map((message) => ({ ...message, content: `[User interjection]\n${message.content}` }))];
       deps.onEvent?.({ type: "interjection_delivered", count: interjections.length });
+    }
+
+    const cycle = cycles.evaluate();
+    const warning = cycle?.kind === "warning" ? cycleNotice(cycle.period) : null;
+    const keepWarning = () => {
+      const last = messages.at(-1);
+      if (warning && !(last?.role === "user" && last.content === warning)) messages = [...messages, { role: "user", content: warning }];
+    };
+    if (cycle?.kind === "stop") return stopAt("stagnant", step - 1);
+    if (cycle?.kind === "warning") {
+      keepWarning();
+      deps.tracer.log("loop_warning", { period: cycle.period });
+      deps.onEvent?.({ type: "assistant_text", text: `[agent] 检测到 ${cycle.period} 步调用及结果重复三轮，已提醒调整排查方向。` });
+      checkpoint();
     }
 
     let response: CompletionResponse;
     try {
       messages = await deps.prepareContext?.(messages, signal) ?? messages;
+      keepWarning();
       const onDelta = (delta: ModelDelta) => {
         if (delta.text) deps.onEvent?.({ type: "assistant_delta", text: delta.text });
         if (delta.reasoning) deps.onEvent?.({ type: "assistant_reasoning_delta", text: delta.reasoning });
@@ -320,6 +341,7 @@ async function loop(
       catch (err) {
         if (!deps.prepareContext || !isContextOverflow(err) || signal?.aborted) throw err;
         messages = await deps.prepareContext(messages, signal, true);
+        keepWarning();
         deps.onEvent?.({ type: "assistant_reset" });
         response = await callModel(messages, step, deps, turnId, signal, false, onDelta);
       }
@@ -389,7 +411,7 @@ async function loop(
         saveResults();
         continue;
       }
-      signatures = [...signatures, callSignature(call)];
+      signatures = [...signatures, callSignature(call)].slice(-Math.max(2, maxRepeats));
       if (isRepeating(signatures, maxRepeats)) {
         repeated = true;
         results[index] = { callId: call.id, content: REPEATED_RESULT, isError: true };
@@ -401,10 +423,17 @@ async function loop(
       results[index] = { callId: call.id, content: "execution outcome uncertain: the process stopped during this tool; inspect the workspace before retrying, do not automatically repeat side effects", isError: true };
       saveResults();
       deps.onEvent?.({ type: "tool_call", call });
+      const beforeProgress = deps.progressVersion?.();
       const result = await executeToolCall(call, deps, turnId, signal);
       results[index] = result;
       saveResults();
       deps.onEvent?.({ type: "tool_result", call, result });
+      const changed = beforeProgress !== deps.progressVersion?.();
+      const wroteFile = !result.isError && (call.name === "write_file" || call.name === "edit_file");
+      // Without workspace observations, a command may have progressed silently. Avoid guessing it did nothing.
+      const unknownMutation = call.name === "bash" && !deps.progressVersion && !isReadOnlyBashCommand(String(call.input.command ?? ""));
+      if (changed || wroteFile || unknownMutation) cycles.reset();
+      else cycles.observe(call, result);
     }
     if (signal?.aborted) return interrupted(step);
     if (repeated) return stopAt("repeated", step);

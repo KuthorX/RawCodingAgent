@@ -1574,7 +1574,7 @@ const handlers = {
     const ok = e.finishReason === "end_turn";
     setDot(ok ? "ok" : "error");
     if (!replaying) notifySessionEvent(current, e);
-    const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
+    const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止", stagnant: "交替调用仍无进展，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
     append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
     endTurn(e.continues);
   },

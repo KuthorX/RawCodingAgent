@@ -10,6 +10,8 @@ export interface ToolResult {
   callId: string;
   content: string;
   isError: boolean;
+  // Full-output digest for cycle detection, before display truncation. Not sent to the provider.
+  observationHash?: string;
 }
 
 // An image the user attached. Stored as a file in the session directory and read when a request is built,
