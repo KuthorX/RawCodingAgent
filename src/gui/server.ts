@@ -6,7 +6,9 @@ import { isApprovalMode } from "../agent/permissions.ts";
 import { SendRejected } from "../session/runner.ts";
 import { CommandError, commandCatalog, runCommand } from "../session/commands.ts";
 import { SkillError } from "../agent/skills.ts";
-import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId, type TurnLimits } from "../session/store.ts";
+import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId, type SessionMode, type TurnLimits } from "../session/store.ts";
+import { parsePlanItems } from "../tools/plan.ts";
+import { ToolError } from "../tools/types.ts";
 import { HttpError, readJson, sendBytes, sendJson, sendText, tokenMatches } from "./http.ts";
 import type { SessionManager } from "./manager.ts";
 import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.ts";
@@ -316,6 +318,31 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
     }
     case "POST stop": {
       return sendJson(res, 200, { ok: true, stopped: manager.get(id).stop() });
+    }
+    // /plan and /loop control from the GUI: "normal" exits either mode.
+    case "POST mode": {
+      const body = await readJson(req);
+      const mode = body.mode === "normal" ? null : body.mode;
+      if (mode !== null && mode !== "plan" && mode !== "loop") throw new HttpError(400, '"mode" must be "plan", "loop" or "normal"');
+      const prompt = body.prompt as unknown;
+      if (prompt !== undefined && typeof prompt !== "string") throw new HttpError(400, '"prompt" must be a string');
+      const max = body.max as unknown;
+      if (max !== undefined && (typeof max !== "number" || !Number.isInteger(max) || max < 1 || max > 50)) throw new HttpError(400, '"max" must be an integer between 1 and 50');
+      const runner = manager.get(id);
+      try { runner.setMode(mode as SessionMode | null, { ...(prompt === undefined ? {} : { prompt: prompt as string }), ...(max === undefined ? {} : { max: max as number }) }); }
+      catch (err) { if (err instanceof SendRejected) throw new HttpError(409, err.message); throw err; }
+      return sendJson(res, 200, { ...runner.info, budget: manager.budgetFor(runner.info) });
+    }
+    // The GUI edits or deletes individual plan items; the whole list is replaced atomically.
+    case "POST plan": {
+      const body = await readJson(req);
+      let items;
+      try { items = parsePlanItems(body.items); }
+      catch (err) { if (err instanceof ToolError) throw new HttpError(400, err.message); throw err; }
+      const runner = manager.get(id);
+      try { runner.setPlan(items); }
+      catch (err) { if (err instanceof SendRejected) throw new HttpError(409, err.message); throw err; }
+      return sendJson(res, 200, { items });
     }
     case "POST approve": {
       const body = await readJson(req);

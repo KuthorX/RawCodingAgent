@@ -13,7 +13,7 @@ import type { PlanController, PlanItem } from "../tools/plan.ts";
 import { planText } from "../tools/plan.ts";
 import type { DelegateTask } from "../tools/delegate.ts";
 import type { SessionEvent } from "./events.ts";
-import { titleFrom, type SessionMeta, type SessionStore } from "./store.ts";
+import { titleFrom, type SessionMeta, type SessionMode, type SessionStore } from "./store.ts";
 
 type Listener = (event: SessionEvent, cursor?: number) => void;
 
@@ -53,6 +53,18 @@ Drop greetings and repeated tool output. Return only the summary.`;
 // without duplicating everything the summary already says.
 const RECENT_CONTEXT_TOKENS = 20_000;
 const MAX_SUMMARY_CHARS = 150_000;
+
+// Plan mode exposes only tools that cannot change the workspace; bash is left out on purpose.
+const PLAN_TOOLS = new Set(["read_file", "list_dir", "glob", "grep", "web_fetch", "web_search", "plan"]);
+const PLAN_NOTE = "[Plan mode] This session is read-only until the user approves the plan. Explore with the available " +
+  "read-only tools, then call the plan tool with concrete items. Do not claim the task is complete: the user must " +
+  "approve the plan and leave plan mode first.";
+const LOOP_NOTE = "[Loop mode] After each turn the loop prompt is sent again while the plan still has unfinished items. " +
+  "Keep the plan tool current, complete its items, and finish normally when every item is completed.";
+const DEFAULT_LOOP_PROMPT = "继续执行计划里未完成的项目；全部完成后正常结束。";
+const DEFAULT_LOOP_MAX = 10;
+const MAX_LOOP_MAX = 50;
+const MAX_LOOP_PROMPT_CHARS = 2_000;
 
 function messageText(message: Message): string {
   if (message.role === "user") return `USER:\n${message.content}`;
@@ -170,7 +182,7 @@ export class SessionRunner {
       delegateTask: (prompt, signal) => this.delegate(prompt, signal),
     });
     this.baseSystem = this.deps.system;
-    this.deps.system = withSkills(this.baseSystem, this.meta.skills);
+    this.deps.system = this.systemFor();
     if (this.meta.skills?.length) this.deps.tracer.log("skills", { skills: this.meta.skills, system: this.deps.system });
     this.deps.onUsage = (usage, model) => { this.turnSpent += costUsd(usage, pricingForModel(this.deps.pricing ?? DEFAULT_PRICING, model)); };
     this.deps.turnSpentUsd = () => this.turnSpent;
@@ -190,7 +202,7 @@ export class SessionRunner {
   useSkill(skill: LoadedSkill): void {
     if (this.isBusy) throw new SendRejected("会话正在运行，请先停止后再加载技能");
     const skills = [...(this.meta.skills ?? []).filter((s) => s.name.toLowerCase() !== skill.name.toLowerCase()), skill];
-    const system = withSkills(this.baseSystem, skills);
+    const system = this.systemFor({ ...this.meta, skills });
     if (skills.reduce((n, s) => n + s.content.length, 0) > MAX_LOADED_SKILL_CHARS ||
       requestTokens({ system, tools: this.deps.tools.map((tool) => tool.spec), messages: [] }) >= this.inputLimit()) {
       throw new SkillError("已加载技能超过上下文预算，请 /clear 后选择需要的技能");
@@ -199,6 +211,58 @@ export class SessionRunner {
     this.deps.system = system;
     this.deps.tracer.log("skills", { skills, system });
     this.emit({ type: "skill_loaded", name: skill.name, path: skill.path });
+  }
+
+  // /plan (read-only until approved) and /loop (auto-continue while the plan is unfinished). null = normal session.
+  setMode(mode: SessionMode | null, options: { prompt?: string; max?: number } = {}): void {
+    // While a loop runs, editing its prompt/cap takes effect for the next iteration instead of being rejected.
+    const editRunningLoop = mode === "loop" && this.meta.mode === "loop" && this.isBusy;
+    if (this.isBusy && !editRunningLoop) throw new SendRejected("会话正在运行，请先停止后再切换模式");
+    if (options.max !== undefined && (!Number.isInteger(options.max) || options.max < 1 || options.max > MAX_LOOP_MAX)) {
+      throw new Error(`最多轮数必须是 1-${MAX_LOOP_MAX} 的整数`);
+    }
+    const prompt = options.prompt?.trim();
+    if (prompt !== undefined && prompt.length > MAX_LOOP_PROMPT_CHARS) throw new Error(`提示词最多 ${MAX_LOOP_PROMPT_CHARS} 个字符`);
+    if (mode === null) {
+      const wasLoop = this.meta.mode === "loop";
+      this.meta = this.store.updateMeta(this.id, { mode: undefined, loopPrompt: undefined, loopMax: undefined, loopCount: undefined });
+      this.applySystem();
+      this.emit({ type: "mode", mode: null, ...(wasLoop ? { note: "已退出循环模式" } : {}) });
+      return;
+    }
+    if (mode === "plan") {
+      this.meta = this.store.updateMeta(this.id, { mode: "plan", loopPrompt: undefined, loopMax: undefined, loopCount: undefined });
+      this.applySystem();
+      this.emit({ type: "mode", mode: "plan", note: "已进入计划模式：只读探索并给出计划，批准后执行" });
+      return;
+    }
+    const entering = this.meta.mode !== "loop";
+    const loopCount = entering ? 0 : this.meta.loopCount ?? 0;
+    this.meta = this.store.updateMeta(this.id, {
+      mode: "loop",
+      loopPrompt: prompt || this.meta.loopPrompt || DEFAULT_LOOP_PROMPT,
+      loopMax: options.max ?? this.meta.loopMax ?? DEFAULT_LOOP_MAX,
+      loopCount,
+    });
+    this.applySystem();
+    this.emit({ type: "mode", mode: "loop", prompt: this.meta.loopPrompt, max: this.meta.loopMax, count: loopCount, ...(entering ? { note: "已进入循环模式" } : {}) });
+  }
+
+  // Editing the plan from the GUI (edit, delete or reorder items) while the agent is idle.
+  setPlan(items: PlanItem[]): void {
+    if (this.isBusy) throw new SendRejected("会话正在运行，请先停止后再修改计划");
+    this.plan.replace(items);
+  }
+
+  private systemFor(meta: SessionMeta = this.meta): string {
+    const base = withSkills(this.baseSystem, meta.skills);
+    if (meta.mode === "plan") return `${base}\n\n${PLAN_NOTE}`;
+    if (meta.mode === "loop") return `${base}\n\n${LOOP_NOTE}`;
+    return base;
+  }
+
+  private applySystem(): void {
+    this.deps.system = this.systemFor();
   }
 
   // A fresh conversation keeps user settings and the old transcript; no plan or selected skills carry over.
@@ -313,6 +377,8 @@ export class SessionRunner {
     if (!this.running || !this.controller || this.controller.signal.aborted) return false;
     this.controller.abort();
     this.deps.tracer.log("stop", { pendingApprovals: this.pending.size, droppedInterjections: this.queue.length });
+    // Stopping a loop must survive this turn: otherwise the next message would auto-continue again.
+    if (this.meta.mode === "loop") this.finishLoop("循环已停止");
     for (const id of [...this.pending.keys()]) this.approve(id, false);
     if (this.queue.length > 0) {
       this.emit({ type: "interjection_dropped", count: this.queue.length });
@@ -350,6 +416,7 @@ export class SessionRunner {
     const limits = this.meta.limits ?? {};
     return {
       ...this.deps,
+      tools: this.meta.mode === "plan" ? this.deps.tools.filter((tool) => PLAN_TOOLS.has(tool.spec.name)) : this.deps.tools,
       ...(limits.maxSteps !== undefined ? { maxSteps: limits.maxSteps ?? Infinity } : {}),
       ...(limits.maxTurnCostUsd !== undefined ? { maxTurnCostUsd: limits.maxTurnCostUsd } : {}),
       budget: this.turnBudget,
@@ -424,8 +491,11 @@ export class SessionRunner {
       this.startBudget();
       const final = await this.run(input, this.controller.signal);
       const stopped = this.controller.signal.aborted;
-      input = !stopped && this.queue.length > 0 ? mergeMessages(this.queue) : null;
+      let next: UserMessage | null = !stopped && this.queue.length > 0 ? mergeMessages(this.queue) : null;
       this.queue = [];
+      // An interjection wins over the next loop iteration; the loop can start it once the session is idle again.
+      if (next === null && !stopped) next = this.loopTurn(final);
+      input = next;
       // Clear busy before announcing the end, so a client reacting to it can send immediately.
       if (input === null) {
         this.running = null;
@@ -433,6 +503,35 @@ export class SessionRunner {
       }
       this.safely(() => this.emit(input === null ? final : { ...final, continues: true }));
     }
+  }
+
+  // /loop: one more turn while the previous one ended with unfinished work. Ends the loop when the plan is
+  // complete (end_turn), on any other finish reason, or at the cap. loopCount counts finished turns.
+  private loopTurn(final: Extract<SessionEvent, { type: "turn_end" | "error" }>): UserMessage | null {
+    if (this.meta.mode !== "loop") return null;
+    const max = this.meta.loopMax ?? DEFAULT_LOOP_MAX;
+    const turns = (this.meta.loopCount ?? 0) + 1;
+    if (final.type === "error") {
+      this.finishLoop(`循环停止：出错`);
+      return null;
+    }
+    if (final.finishReason !== "unverified") {
+      this.finishLoop(final.finishReason === "end_turn" ? "循环结束：计划已完成" : `循环停止：${final.finishReason}`);
+      return null;
+    }
+    if (turns >= max) {
+      this.finishLoop(`循环结束：已达到 ${max} 轮上限`);
+      return null;
+    }
+    this.meta = this.store.updateMeta(this.id, { loopCount: turns });
+    this.emit({ type: "mode", mode: "loop", prompt: this.meta.loopPrompt, max, count: turns });
+    return { role: "user", content: this.meta.loopPrompt || DEFAULT_LOOP_PROMPT };
+  }
+
+  private finishLoop(note: string): void {
+    this.meta = this.store.updateMeta(this.id, { mode: undefined, loopPrompt: undefined, loopMax: undefined, loopCount: undefined });
+    this.applySystem();
+    this.emit({ type: "mode", mode: null, note });
   }
 
   private async summaryCall(transcript: string, focus: string, signal?: AbortSignal): Promise<string> {
@@ -522,7 +621,7 @@ export class SessionRunner {
     try {
       const deps = this.turnDeps();
       deps.prepareContext = (messages, signal, force) => this.prepareContext(messages, signal, force, deps.tools);
-      if (this.verifyChanges) {
+      if (this.verifyChanges && this.meta.mode !== "plan") {
         const verification = await Verification.create(this.meta.workspace, deps.toolEnv, this.meta.verification, (state) => {
           this.meta = this.store.updateMeta(this.id, { verification: state });
         });

@@ -7,6 +7,8 @@ export class CommandError extends Error {}
 export const BUILTIN_COMMANDS = [
   { command: "/clear", description: "切到同配置的空会话，保留旧会话" },
   { command: "/compact", description: "压缩当前会话上下文，可附加压缩重点" },
+  { command: "/loop", description: "循环模式：/loop [--max N] [任务]，自动继续到计划完成" },
+  { command: "/plan", description: "计划模式：只读探索并给出计划，/plan off 退出" },
   { command: "/help", description: "查看命令帮助" },
   { command: "/skills", description: "列出可用技能和已加载技能" },
   { command: "/skill", description: "加载技能：/skill 名称 [任务]" },
@@ -41,6 +43,27 @@ export function runCommand(runner: SessionRunner, text: string, approvalMode?: A
   if (["clear", "help", "skills"].includes(name) && args) throw new CommandError(`/${name} 不接受参数`);
   if (name === "clear") return { session: runner.freshSession(approvalMode) };
   if (name === "compact") return { done: runner.compact(args), compacting: true };
+  if (name === "plan") {
+    if (args === "off" || args === "exit") {
+      runner.setMode(null);
+      return { message: "已退出计划模式" };
+    }
+    runner.setMode("plan");
+    return args ? { task: args } : { message: "已进入计划模式：agent 只读探索并给出计划。点「执行计划」或发送 /plan off 退出。" };
+  }
+  if (name === "loop") {
+    if (args === "off" || args === "stop") {
+      runner.setMode(null);
+      return { message: "已退出循环模式" };
+    }
+    const match = /^--max(?:=|\s+)(\d+)(?:\s+|$)/.exec(args);
+    const max = match ? Number(match[1]) : undefined;
+    if (max !== undefined && (max < 1 || max > 50)) throw new CommandError("--max 必须是 1-50 的整数");
+    const task = args.slice(match?.[0].length ?? 0).trim();
+    try { runner.setMode("loop", max === undefined ? {} : { max }); }
+    catch (err) { throw new CommandError(err instanceof Error ? err.message : String(err)); }
+    return task ? { task } : { message: "已进入循环模式：每轮结束后自动继续，直到计划完成或达到轮数上限。" };
+  }
   if (name === "help") return { message: BUILTIN_COMMANDS.map((c) => `${c.command}  ${c.description}`).join("\n") +
     "\n/技能名 [任务]  加载指定技能；不带任务时不调用模型\n技能持续生效，/clear 后重置。终端另支持 /auto on|off、/exit。" };
   const available = skills ?? discoverSkills(runner.info.workspace);

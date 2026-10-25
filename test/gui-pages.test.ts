@@ -87,3 +87,39 @@ test("model controls preserve old session choices and only offer supported effor
   context.fillEffortOptions(select, [{ id: "native", provider: "deepseek", thinkingLevels: ["off"] }], "native", "off");
   assert.equal(select.options[0]?.textContent, "关闭");
 });
+
+test("plan panel renders items with status, edit and delete actions", () => {
+  const page = readFileSync(join(GUI, "index.html"), "utf8");
+  const constants = ["PLAN_MARK", "NEXT_STATUS"].map((name) => {
+    const source = page.match(new RegExp(`^const ${name} = .+;$`, "m"))?.[0];
+    assert.ok(source, name);
+    return source;
+  });
+  const renderPlan = page.match(/^function renderPlan\([^]*?^}/m)?.[0];
+  assert.ok(renderPlan);
+
+  const nodes = new Map();
+  const node = (id: string) => {
+    if (!nodes.has(id)) nodes.set(id, { hidden: false, textContent: "", children: [] as unknown[], append(...items: unknown[]) { (this as { children: unknown[] }).children.push(...items); }, replaceChildren(...items: unknown[]) { (this as { children: unknown[] }).children = items; } });
+    return nodes.get(id);
+  };
+  const el = (tag: string, className?: string, text?: string) => ({ tag, className: className ?? "", textContent: text ?? "", children: [] as unknown[], value: "", type: "", title: "", hidden: false,
+    append(...items: unknown[]) { this.children.push(...items); }, replaceChildren(...items: unknown[]) { this.children = items; }, addEventListener() {}, setAttribute() {}, focus() {}, select() {} });
+  const context = vm.createContext({
+    $: (id: string) => node(id), el, queueMicrotask: (fn: () => void) => fn(), notice() {}, savePlan() {}, savePlanEdit() {},
+    sessionMode: { mode: "plan", prompt: "", max: 10, count: 0 },
+    planItems: [{ text: "read", status: "completed" }, { text: "edit", status: "in_progress" }],
+    planEditing: 1,
+  });
+  vm.runInContext([...constants, renderPlan].join("\n"), context);
+  context.renderPlan();
+  assert.equal(node("plan-panel").hidden, false);
+  assert.equal(node("plan-count").textContent, "1/2");
+  assert.equal(node("plan-run").hidden, false);
+  assert.equal(node("plan-exit").hidden, false);
+  const rows = node("plan-items").children as { className: string; children: { tag?: string; value?: string }[] }[];
+  assert.equal(rows.length, 2);
+  assert.match(rows[0]!.className, /plan-item completed/);
+  const editing = rows[1]!.children.find((child) => child.tag === "input");
+  assert.equal(editing?.value, "edit");
+});

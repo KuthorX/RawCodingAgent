@@ -316,3 +316,21 @@ test("diff: a git workspace returns uncommitted changes; a plain directory says 
   const none = JSON.parse((await call("GET", `/api/sessions/${plainSession.id}/diff`)).body) as { isRepo: boolean };
   assert.equal(none.isRepo, false);
 });
+
+test("plan and loop endpoints edit the plan and switch modes", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+
+  const saved = JSON.parse((await call("POST", `/api/sessions/${id}/plan`, { body: { items: [{ text: "read", status: "completed" }, { text: "edit", status: "in_progress" }] } })).body) as { items: { text: string }[] };
+  assert.deepEqual(saved.items.map((item) => item.text), ["read", "edit"]);
+  assert.deepEqual((JSON.parse((await call("GET", `/api/sessions/${id}`)).body) as { plan: { text: string }[] }).plan.map((item) => item.text), ["read", "edit"]);
+  assert.equal((await call("POST", `/api/sessions/${id}/plan`, { body: { items: [{ text: "", status: "pending" }] } })).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${id}/plan`, { body: { items: [{ text: "x", status: "nope" }] } })).status, 400);
+
+  assert.equal((JSON.parse((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "plan" } })).body) as { mode: string }).mode, "plan");
+  assert.equal((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "wat" } })).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "loop", max: 0 } })).status, 400);
+
+  const loop = JSON.parse((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "loop", prompt: "continue please", max: 3 } })).body) as { mode: string; loopPrompt: string; loopMax: number; loopCount: number };
+  assert.deepEqual([loop.mode, loop.loopPrompt, loop.loopMax, loop.loopCount], ["loop", "continue please", 3, 0]);
+  assert.equal((JSON.parse((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "normal" } })).body) as { mode?: string }).mode, undefined);
+});

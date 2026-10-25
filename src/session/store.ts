@@ -25,6 +25,9 @@ import type { VerificationState } from "../agent/verification.ts";
 import type { ThinkEffort } from "../providers/catalog.ts";
 import type { LoadedSkill } from "../agent/skills.ts";
 
+// /plan keeps the turn read-only until the user approves; /loop re-sends the loop prompt while the plan is unfinished.
+export type SessionMode = "plan" | "loop";
+
 export interface SessionMeta {
   id: string;
   title: string;
@@ -46,6 +49,12 @@ export interface SessionMeta {
   // Hidden from the sidebar's project tree (still searchable, can be restored).
   archived?: boolean;
   plan?: PlanItem[];
+  // Set by /plan or /loop; missing = normal session.
+  mode?: SessionMode;
+  // /loop re-sends loopPrompt after a turn that ended with unfinished work, at most loopMax times (loopCount done).
+  loopPrompt?: string;
+  loopMax?: number;
+  loopCount?: number;
   verification?: VerificationState;
   // Snapshots keep explicitly selected instructions stable across restart and compaction.
   skills?: LoadedSkill[];

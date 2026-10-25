@@ -64,6 +64,8 @@ export async function runCli(runtime: Runtime, options: CliOptions): Promise<voi
         return renderError(new Error(event.message));
       case "approval_mode":
         return note(`approval mode: ${MODE_LABEL[event.mode]}`);
+      case "mode":
+        return note(event.note ?? (event.mode === "loop" ? `loop ${event.count}/${event.max}` : event.mode === "plan" ? "plan mode" : "normal mode"));
       case "skill_loaded":
         return note(`已加载技能 ${event.name} · ${event.path}`);
       case "compacted":

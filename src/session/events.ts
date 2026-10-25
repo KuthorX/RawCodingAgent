@@ -2,6 +2,7 @@ import type { AgentEvent, FinishReason } from "../agent/loop.ts";
 import type { ApprovalMode } from "../agent/permissions.ts";
 import type { ToolCall } from "../types.ts";
 import type { PlanItem } from "../tools/plan.ts";
+import type { SessionMode } from "./store.ts";
 
 // Everything a UI needs to render (and later replay) a conversation.
 export type SessionEvent =
@@ -21,4 +22,6 @@ export type SessionEvent =
   | { type: "error"; message: string; continues?: boolean }
   // First event of a forked session, right after the events copied from the source.
   | { type: "forked"; from: string; fromTitle: string; turns: number }
-  | { type: "plan"; items: PlanItem[] };
+  | { type: "plan"; items: PlanItem[] }
+  // mode null = back to a normal session. note explains an automatic end (plan complete, cap reached, stopped).
+  | { type: "mode"; mode: SessionMode | null; prompt?: string; max?: number; count?: number; note?: string };

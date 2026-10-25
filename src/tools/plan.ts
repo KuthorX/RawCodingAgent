@@ -10,7 +10,7 @@ export interface PlanController {
   replace(items: PlanItem[]): string;
 }
 
-function parseItems(raw: unknown): PlanItem[] {
+export function parsePlanItems(raw: unknown): PlanItem[] {
   if (!Array.isArray(raw) || raw.length > 30) throw new ToolError('"items" must be an array with at most 30 entries');
   return raw.map((item, i) => {
     if (typeof item !== "object" || item === null) throw new ToolError(`items[${i}] must be an object`);
@@ -38,7 +38,7 @@ export function planTool(controller: PlanController): Tool {
     },
     dangerous: false,
     async run(input) {
-      const items = parseItems(input.items);
+      const items = parsePlanItems(input.items);
       if (items.filter((item) => item.status === "in_progress").length > 1) throw new ToolError("plan may have at most one in_progress item");
       return controller.replace(items);
     },

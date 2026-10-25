@@ -158,7 +158,8 @@
   dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
   dialog label.radio { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); }
   dialog input[type=text], dialog select { font-size: 12px; padding: 0 8px; height: 26px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); }
-  dialog input[type=text]:focus, dialog select:focus { outline: none; border-color: var(--accent); }
+  dialog input[type=text]:focus, dialog select:focus, dialog textarea:focus { outline: none; border-color: var(--accent); }
+  dialog textarea { font-size: 12px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); resize: vertical; }
   dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
   dialog .row button { height: 26px; }
   dialog .hint { font-size: 12px; color: var(--muted); }
@@ -186,6 +187,29 @@
   .mode { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
   .mode.auto { color: var(--accent-ink); }
   .mode[hidden] { display: none; }
+  /* /plan and /loop: what the session is doing now, with the actions that end or tune it. */
+  .session-mode { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: var(--accent-ink); white-space: nowrap; }
+  .session-mode[hidden] { display: none; }
+  .session-mode .label { font-weight: 700; }
+  .session-mode button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; }
+  .session-mode button:hover:not(:disabled) { color: var(--ink); background: none; text-decoration: underline; }
+  .plan-panel { flex: none; border-bottom: 1px solid var(--line); padding: 6px 22px; font-size: 12px; }
+  .plan-panel[hidden] { display: none; }
+  .plan-head { display: flex; gap: 10px; align-items: baseline; color: var(--muted); }
+  .plan-head b { font-weight: 400; color: var(--ink); }
+  .plan-head .grow { flex: 1; }
+  .plan-head button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; }
+  .plan-head button:hover:not(:disabled) { color: var(--ink); background: none; text-decoration: underline; }
+  .plan-head button.primary-link { color: var(--accent-ink); }
+  .plan-items { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; }
+  .plan-item { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
+  .plan-item button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; }
+  .plan-item button:hover:not(:disabled) { color: var(--ink); background: none; }
+  .plan-item .plan-text { flex: 1; }
+  .plan-item.completed .plan-text { color: var(--muted); text-decoration: line-through; }
+  .plan-item.in_progress .plan-text { color: var(--bright); }
+  .plan-item .plan-edit { flex: 1; min-width: 0; height: 22px; padding: 0 6px; border: 1px solid var(--accent); background: var(--bg); color: var(--ink); font: inherit; }
+  .plan-item .plan-edit:focus { outline: none; }
   .note { color: var(--muted); font-size: 12px; }
   main { flex: 1; overflow-y: auto; padding: 18px 0; }
   #log { max-width: 960px; margin: 0 auto; padding: 0 22px; display: flex; flex-direction: column; gap: 12px; }
@@ -436,6 +460,7 @@
       <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
         <input type="checkbox" class="switch" id="mode-auto"> <span id="mode-text">每次询问</span>
       </label>
+      <span class="session-mode" id="session-mode" hidden></span>
       <span id="head-links"></span>
       <div class="model-fields" id="model-controls" hidden>
         <label class="provider-field" for="provider-select">厂商<select id="provider-select" title="本会话使用的厂商"></select></label>
@@ -444,6 +469,16 @@
       </div>
       <p class="model-hint" id="session-model-hint" role="status" aria-live="polite" hidden></p>
     </div>
+    <section class="plan-panel" id="plan-panel" hidden>
+      <div class="plan-head">
+        <b>计划 <span id="plan-count">0/0</span></b>
+        <span class="grow"></span>
+        <button type="button" id="plan-run" class="primary-link" hidden>执行计划</button>
+        <button type="button" id="plan-clear">清空</button>
+        <button type="button" id="plan-exit" hidden>退出计划模式</button>
+      </div>
+      <ol class="plan-items" id="plan-items"></ol>
+    </section>
     <main id="scroller"><div id="log"></div></main>
     <footer id="footer">
       <div class="slash-menu" id="slash-menu" role="listbox" aria-label="命令和技能" hidden></div>
@@ -491,6 +526,19 @@
     </div>
   </form>
 </dialog>
+<dialog id="loop-dialog">
+  <form method="dialog" id="loop-form">
+    <h3>循环设置</h3>
+    <p>每轮结束后，如果计划里还有未完成的项目，就把下面这段话再发给 agent。</p>
+    <label>自动继续的提示词<textarea id="loop-prompt" rows="3"></textarea></label>
+    <label>最多轮数（1-50）<input type="text" id="loop-max" inputmode="numeric" autocomplete="off"></label>
+    <div class="hint" id="loop-hint"></div>
+    <div class="row">
+      <button type="button" id="loop-cancel">取消</button>
+      <button type="submit" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="budget-dialog">
   <form method="dialog" id="budget-form">
     <h3 id="bd-title">额度</h3>
@@ -530,6 +578,10 @@ let streamBox = null;    // the assistant bubble currently receiving token delta
 let reasoningBox = null; // live reasoning text for thinking models
 let notificationStream = null;
 let notificationSessionKey = "";
+// /plan and /loop state for the open session, and the plan list shown above the transcript.
+let sessionMode = null; // { mode, prompt, max, count } or null
+let planItems = [];
+let planEditing = null; // index of the plan item being edited inline
 
 // Cards still running or waiting when a turn ends (stopped, or interrupted by a restart) will never get a result.
 function closeStaleCards() {
@@ -596,7 +648,7 @@ async function stopTurn() {
 }
 $("stop").onclick = stopTurn;
 // Esc in an open dialog only closes the dialog.
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !document.querySelector("dialog[open]")) stopTurn(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !ev.defaultPrevented && !document.querySelector("dialog[open]")) stopTurn(); });
 
 // ---------- session list ----------
 const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '["__other__"]'));
@@ -1625,8 +1677,18 @@ const handlers = {
   output_truncated(e) { append(el("div", "note", `输出超过 max_tokens，工具调用被截断：已让 agent 拆小重试（第 ${e.retry} 次）`)); },
   interjection_dropped(e) { settleQueued(e.count, "插话 · 未送达（已停止）", "dropped"); },
   plan(e) {
+    planItems = e.items;
+    planEditing = null;
+    renderPlan();
     const done = e.items.filter((item) => item.status === "completed").length;
     append(el("div", "note", `计划已更新：${done}/${e.items.length} 项完成`));
+  },
+  mode(e) {
+    sessionMode = e.mode ? { mode: e.mode, prompt: e.prompt ?? "", max: e.max ?? 10, count: e.count ?? 0 } : null;
+    renderSessionMode();
+    renderPlan();
+    if (e.note) append(el("div", "note", e.note));
+    if (!replaying) refreshSessions();
   },
   assistant_text(e) {
     streamBox?.remove();
@@ -1760,11 +1822,21 @@ const handlers = {
     updateGroup(card.closest(".tools"));
   },
   turn_end(e) {
+    const looping = e.continues && sessionMode?.mode === "loop";
+    // In plan mode "unverified" means the plan is ready and waiting for the user, not a failure.
+    const planning = !e.continues && sessionMode?.mode === "plan" && e.finishReason === "unverified";
     const ok = e.finishReason === "end_turn";
-    setDot(ok ? "ok" : "error");
+    setDot(looping ? "busy" : planning ? "ok" : ok ? "ok" : "error");
     if (!replaying) notifySessionEvent(current, e);
-    const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止", stagnant: "交替调用仍无进展，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
-    append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
+    if (looping) {
+      append(el("div", "note", `第 ${sessionMode.count}/${sessionMode.max} 轮结束，计划未完成，自动继续`));
+    } else if (planning) {
+      renderPlan();
+      append(el("div", "note", "计划已生成：可以修改、删除计划项，确认后点「执行计划」"));
+    } else {
+      const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止", stagnant: "交替调用仍无进展，已停止", unverified: "计划未完成或未通过检查" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
+      append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
+    }
     endTurn(e.continues);
   },
   error(e) {
@@ -1790,7 +1862,7 @@ function endTurn(continues) {
   if (continues) {
     setBusy(true);
     settleQueued(undefined, "插话 · 作为下一轮发送");
-    append(el("div", "note", "继续处理插话内容…"));
+    append(el("div", "note", sessionMode?.mode === "loop" ? "自动继续下一轮…" : "继续处理插话内容…"));
   } else {
     settleQueued(undefined, "插话 · 未送达", "dropped");
     setBusy(false);
@@ -1824,6 +1896,163 @@ $("mode-auto").addEventListener("change", async (ev) => {
   setApprovalMode(auto ? "auto" : "ask");
 });
 
+// ---------- /plan and /loop ----------
+const PLAN_MARK = { pending: "[ ]", in_progress: "[~]", completed: "[x]" };
+const NEXT_STATUS = { pending: "in_progress", in_progress: "completed", completed: "pending" };
+
+// The `hello` event carries the whole session; switch tabs only change which event stream is open.
+function applySessionInfo(info) {
+  sessionMode = info.mode ? { mode: info.mode, prompt: info.loopPrompt ?? "", max: info.loopMax ?? 10, count: info.loopCount ?? 0 } : null;
+  planItems = info.plan ?? [];
+  planEditing = null;
+  renderSessionMode();
+  renderPlan();
+}
+
+function renderSessionMode() {
+  const box = $("session-mode");
+  if (!sessionMode) {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
+  box.hidden = false;
+  const label = sessionMode.mode === "plan" ? "计划模式 · 只读" : `循环 ${sessionMode.count}/${sessionMode.max}`;
+  const action = (text, title, onclick) => {
+    const btn = el("button", "", text);
+    btn.type = "button";
+    btn.title = title;
+    btn.onclick = onclick;
+    return btn;
+  };
+  const parts = [el("span", "label", label)];
+  if (sessionMode.mode === "loop") {
+    parts.push(
+      action("停止", "停止当前一轮并退出循环", stopLoop),
+      action("设置", "修改自动继续的提示词和最多轮数", openLoopDialog),
+      action("退出", "退出循环模式，保留这一轮的对话", exitSessionMode),
+    );
+  } else {
+    parts.push(action("退出", "退出计划模式，恢复完整工具", exitSessionMode));
+  }
+  box.replaceChildren(...parts);
+}
+
+function renderPlan() {
+  const panel = $("plan-panel");
+  const show = planItems.length > 0 || sessionMode?.mode === "plan";
+  panel.hidden = !show;
+  if (!show) return;
+  const done = planItems.filter((item) => item.status === "completed").length;
+  $("plan-count").textContent = `${done}/${planItems.length}`;
+  $("plan-run").hidden = sessionMode?.mode !== "plan";
+  $("plan-exit").hidden = sessionMode?.mode !== "plan";
+  $("plan-clear").hidden = planItems.length === 0;
+  const rows = planItems.map((item, index) => {
+    const row = el("li", "plan-item " + item.status);
+    const status = el("button", "", PLAN_MARK[item.status] ?? "[ ]");
+    status.type = "button";
+    status.title = "切换状态";
+    status.onclick = () => savePlan(planItems.map((entry, i) => i === index ? { ...entry, status: NEXT_STATUS[entry.status] } : entry));
+    row.append(status);
+    if (planEditing === index) {
+      const editor = el("input", "plan-edit");
+      editor.value = item.text;
+      editor.setAttribute("aria-label", "编辑计划项");
+      editor.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") { ev.preventDefault(); savePlanEdit(index, editor.value); }
+        else if (ev.key === "Escape") { ev.preventDefault(); planEditing = null; renderPlan(); }
+      });
+      const save = el("button", "", "保存");
+      save.type = "button";
+      save.onclick = () => savePlanEdit(index, editor.value);
+      const cancel = el("button", "", "取消");
+      cancel.type = "button";
+      cancel.onclick = () => { planEditing = null; renderPlan(); };
+      row.append(editor, save, cancel);
+      queueMicrotask(() => { editor.focus(); editor.select(); });
+    } else {
+      row.append(el("span", "plan-text", item.text));
+      const edit = el("button", "", "编辑");
+      edit.type = "button";
+      edit.title = "修改这一项的文字";
+      edit.onclick = () => { planEditing = index; renderPlan(); };
+      const remove = el("button", "", "删除");
+      remove.type = "button";
+      remove.title = "从计划里删掉这一项";
+      remove.onclick = () => savePlan(planItems.filter((_, i) => i !== index));
+      row.append(edit, remove);
+    }
+    return row;
+  });
+  $("plan-items").replaceChildren(...(rows.length ? rows : [el("li", "note", "还没有计划项。")]));
+}
+
+async function savePlan(items) {
+  if (!current) return;
+  try {
+    const res = await api(`/api/sessions/${current}/plan`, { items });
+    planItems = res.items;
+    planEditing = null;
+    renderPlan();
+  } catch (e) { notice(e); }
+}
+
+function savePlanEdit(index, text) {
+  const value = text.trim();
+  if (!value) return notice(new Error("计划项不能为空"));
+  savePlan(planItems.map((entry, i) => i === index ? { ...entry, text: value } : entry));
+}
+
+// Leaving plan mode restores the full tool set; then the plan is handed back to the agent to execute.
+async function executePlan() {
+  if (!current) return;
+  try {
+    await api(`/api/sessions/${current}/mode`, { mode: "normal" });
+    await api(`/api/sessions/${current}/message`, { text: "按上面的计划开始执行。每完成一项，用 plan 工具更新状态。" });
+  } catch (e) { notice(e); }
+}
+
+async function exitSessionMode() {
+  if (!current) return;
+  try { await api(`/api/sessions/${current}/mode`, { mode: "normal" }); } catch (e) { notice(e); }
+}
+
+function stopLoop() {
+  return busy ? stopTurn() : exitSessionMode();
+}
+
+function openLoopDialog() {
+  $("loop-prompt").value = sessionMode?.prompt || "";
+  $("loop-max").value = sessionMode?.max ?? 10;
+  $("loop-hint").className = "hint";
+  $("loop-hint").textContent = `已完成 ${sessionMode?.count ?? 0} 轮。修改下一轮自动继续时使用。`;
+  $("loop-dialog").showModal();
+}
+
+$("loop-cancel").onclick = () => $("loop-dialog").close();
+$("loop-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const prompt = $("loop-prompt").value.trim();
+  const max = Number($("loop-max").value.trim());
+  if (!prompt) return notice(new Error("提示词不能为空"));
+  if (!Number.isInteger(max) || max < 1 || max > 50) return notice(new Error("最多轮数必须是 1-50 的整数"));
+  try {
+    await api(`/api/sessions/${current}/mode`, { mode: "loop", prompt, max });
+    $("loop-dialog").close();
+  } catch (e) {
+    $("loop-hint").className = "err-text";
+    $("loop-hint").textContent = e.message;
+  }
+});
+
+$("plan-run").onclick = executePlan;
+$("plan-exit").onclick = exitSessionMode;
+$("plan-clear").onclick = async () => {
+  if (!(await ask("清空这个会话的计划？只删清单，不改工作区文件。", { title: "清空计划", ok: "清空", danger: true }))) return;
+  savePlan([]);
+};
+
 // ---------- open a session ----------
 function openSession(id) {
   sessionModelVersion++;
@@ -1846,6 +2075,11 @@ function openSession(id) {
   $("mode").hidden = true;
   $("model-controls").hidden = true;
   $("session-model-hint").hidden = true;
+  sessionMode = null;
+  planItems = [];
+  planEditing = null;
+  renderSessionMode();
+  renderPlan();
   if (!current) {
     logBox.replaceChildren();
     $("head-title").textContent = "";
@@ -1888,6 +2122,7 @@ function openSession(id) {
     diffBtn.title = "查看工作区里未提交的改动（git diff）";
     diffBtn.onclick = () => openDiff().catch(notice);
     links.replaceChildren(fork, limitsBtn, diffBtn, link("#stats/" + current, "统计"), link(rawUrl(current, "events.jsonl"), "事件 ↗", true));
+    applySessionInfo(info);
     showMode(info.approvalMode);
     setBusy(info.busy);
     replaying = !info.resume;
