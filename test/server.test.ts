@@ -325,6 +325,7 @@ test("plan and loop endpoints edit the plan and switch modes", async () => {
   assert.deepEqual((JSON.parse((await call("GET", `/api/sessions/${id}`)).body) as { plan: { text: string }[] }).plan.map((item) => item.text), ["read", "edit"]);
   assert.equal((await call("POST", `/api/sessions/${id}/plan`, { body: { items: [{ text: "", status: "pending" }] } })).status, 400);
   assert.equal((await call("POST", `/api/sessions/${id}/plan`, { body: { items: [{ text: "x", status: "nope" }] } })).status, 400);
+  assert.equal((await call("POST", `/api/sessions/${id}/plan`, { body: { items: [{ text: "a", status: "in_progress" }, { text: "b", status: "in_progress" }] } })).status, 400);
 
   assert.equal((JSON.parse((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "plan" } })).body) as { mode: string }).mode, "plan");
   assert.equal((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "wat" } })).status, 400);

@@ -1953,7 +1953,12 @@ function renderPlan() {
     const status = el("button", "", PLAN_MARK[item.status] ?? "[ ]");
     status.type = "button";
     status.title = "切换状态";
-    status.onclick = () => savePlan(planItems.map((entry, i) => i === index ? { ...entry, status: NEXT_STATUS[entry.status] } : entry));
+    status.onclick = () => {
+      const next = NEXT_STATUS[item.status];
+      // The plan invariant is one in_progress item: starting one demotes the previous one.
+      savePlan(planItems.map((entry, i) => i === index ? { ...entry, status: next }
+        : next === "in_progress" && entry.status === "in_progress" ? { ...entry, status: "pending" } : entry));
+    };
     row.append(status);
     if (planEditing === index) {
       const editor = el("input", "plan-edit");

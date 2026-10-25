@@ -224,16 +224,15 @@ export class SessionRunner {
     const prompt = options.prompt?.trim();
     if (prompt !== undefined && prompt.length > MAX_LOOP_PROMPT_CHARS) throw new Error(`提示词最多 ${MAX_LOOP_PROMPT_CHARS} 个字符`);
     if (mode === null) {
-      const wasLoop = this.meta.mode === "loop";
       this.meta = this.store.updateMeta(this.id, { mode: undefined, loopPrompt: undefined, loopMax: undefined, loopCount: undefined });
       this.applySystem();
-      this.emit({ type: "mode", mode: null, ...(wasLoop ? { note: "已退出循环模式" } : {}) });
+      this.emit({ type: "mode", mode: null });
       return;
     }
     if (mode === "plan") {
       this.meta = this.store.updateMeta(this.id, { mode: "plan", loopPrompt: undefined, loopMax: undefined, loopCount: undefined });
       this.applySystem();
-      this.emit({ type: "mode", mode: "plan", note: "已进入计划模式：只读探索并给出计划，批准后执行" });
+      this.emit({ type: "mode", mode: "plan" });
       return;
     }
     const entering = this.meta.mode !== "loop";
@@ -245,7 +244,7 @@ export class SessionRunner {
       loopCount,
     });
     this.applySystem();
-    this.emit({ type: "mode", mode: "loop", prompt: this.meta.loopPrompt, max: this.meta.loopMax, count: loopCount, ...(entering ? { note: "已进入循环模式" } : {}) });
+    this.emit({ type: "mode", mode: "loop", prompt: this.meta.loopPrompt, max: this.meta.loopMax, count: loopCount });
   }
 
   // Editing the plan from the GUI (edit, delete or reorder items) while the agent is idle.
