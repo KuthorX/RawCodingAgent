@@ -312,6 +312,14 @@
       "problem": "计划清单只能由模型写，用户没法改、删或批准；多步任务每轮结束后还要手动说继续，长任务容易半途停下。",
       "change": "新增 /plan：会话进入只读模式，只暴露 read_file / list_dir / glob / grep / web_search / web_fetch / plan，探索后由模型写计划；网页顶部的计划面板可以切状态、原地改文字、删除单项、清空，点“执行计划”退出只读并让 agent 按清单开始。新增 /loop：一轮以 unverified 结束时用可编辑的提示词自动续跑，正常完成、出错、停止或达到最多轮数（默认 10）结束；模式条显示循环次数，可停止、改提示词和轮数、退出。模式和循环设置存进 meta.json，重启保留；/clear 和 fork 不继承模式，fork 仍复制计划。新增 POST /api/sessions/:id/mode 和 /plan 接口，运行中的会话拒绝改模式或计划。计划项同时只能有一个 in_progress：共享解析器和网页状态切换都保证这一点。",
       "commits": ["118183d", "8f7f404"]
+    },
+    {
+      "module": "agent",
+      "title": "一个会话里并发多个子 agent",
+      "problem": "只在会话内部署一个 agent：调查任务要么串行搜索，要么把大量工具输出塞进主历史挤占上下文；独立的多文件改动也没法并行做，因为会话只有一个工作区。已有的 delegate_task 只能串行、只读、看不见过程。",
+      "change": "新增 /multiagent 开关和 multi_agent 工具：一次调用最多 4 个子 agent 并发。scout 只拿只读工具，在会话工作区里并行搜索阅读；worker 按当前提交新建 git worktree 和 agent/multi-… 分支，在自己的工作区里改代码，父工作区不受影响。子 agent 的对话不进入父历史，只把最终回答、路径或分支写回工具结果；它们共享父 turn 的停止信号和预算，费用计入父 turn。连续只读工具调用也改成同一步并行（最多 3 个）。子 agent 事件带 agent id 写入 events.jsonl，网页在 multi_agent 卡片里为每个子 agent 开一个可折叠面板，实时显示它的工具调用、文本和结束时的步数/花费/分支。",
+      "commits": ["dd4b741"]
     }
+
   ]
 }
