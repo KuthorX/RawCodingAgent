@@ -272,18 +272,22 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       if (!text && images.length === 0) throw new HttpError(400, '"text" must be a non-empty string (or attach images)');
       const runner = manager.get(id);
       let task = text;
+      // A command is user input too: echo it before its output, whether or not it also starts a task.
+      let commandLine = text.startsWith("/") ? text : "";
       try {
         if (text.startsWith("/") && images.length) throw new CommandError("命令不接受图片，请先移除附件，再单独发送任务和图片");
         const result = runCommand(runner, text, startMode);
         if (result) {
           result.done?.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
           if (!result.task) {
+            runner.echoCommand(text);
             const { done: _, ...body } = result;
             return sendJson(res, result.done ? 202 : 200, { ok: true, ...body });
           }
           task = result.task;
         }
       } catch (err) {
+        if (commandLine) runner.echoCommand(commandLine);
         if (err instanceof SendRejected) throw new HttpError(409, err.message);
         if (err instanceof CommandError || err instanceof SkillError) throw new HttpError(400, err.message);
         throw err;
@@ -291,7 +295,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       const saved = images.map((img) => manager.store.saveAttachment(id, img.data, img.mediaType));
       let sent;
       try {
-        sent = runner.send(task, saved);
+        sent = runner.send(task, saved, commandLine || task);
       } catch (err) {
         if (err instanceof SendRejected) throw new HttpError(409, err.message);
         throw err;

@@ -398,6 +398,11 @@ export class SessionRunner {
     } else this.emit({ ...event, agent });
   }
 
+  // The command itself, for the transcript: commands stay out of the model history but are the user's words.
+  echoCommand(text: string): void {
+    this.emit({ type: "command", text });
+  }
+
   get isBusy(): boolean {
     return this.running !== null || this.compacting;
   }
@@ -431,18 +436,20 @@ export class SessionRunner {
 
   // Idle: starts a turn. Busy: queues the text as an interjection, delivered before the next model call
   // (or as the next turn if the current one ends first). `done` resolves when the session is idle again.
-  send(text: string, images: (ImageAttachment & { name: string })[] = []): { queued: boolean; done: Promise<void> } {
+  // display: what the transcript shows. A command that also carries a task sends only the task to the model, while
+  // the user still sees the line they typed ("/plan inspect the repo").
+  send(text: string, images: (ImageAttachment & { name: string })[] = [], display = text): { queued: boolean; done: Promise<void> } {
     const message: UserMessage = { role: "user", content: text, ...(images.length ? { images: images.map(({ path, mediaType }) => ({ path, mediaType })) } : {}) };
     const names = images.length ? { images: images.map((i) => i.name) } : {};
     if (this.running) {
       this.queue = [...this.queue, message];
-      this.emit({ type: "user", text, queued: true, ...names });
+      this.emit({ type: "user", text: display, queued: true, ...names });
       return { queued: true, done: this.running };
     }
     const budget = this.budget?.(this.meta);
     if (budget && budget.remainingUsd <= 0) throw new SendRejected(`${budget.label}的额度已经用完，调高或取消上限后才能继续`);
     if (!this.meta.title) this.meta = this.store.updateMeta(this.id, { title: titleFrom(text) || "（图片）" });
-    this.emit({ type: "user", text, ...names });
+    this.emit({ type: "user", text: display, ...names });
     const done = this.drain(message).finally(() => {
       // Always leave the busy state, even if persistence fails, so the session never gets stuck.
       this.running = null;

@@ -335,3 +335,14 @@ test("plan and loop endpoints edit the plan and switch modes", async () => {
   assert.deepEqual([loop.mode, loop.loopPrompt, loop.loopMax, loop.loopCount], ["loop", "continue please", 3, 0]);
   assert.equal((JSON.parse((await call("POST", `/api/sessions/${id}/mode`, { body: { mode: "normal" } })).body) as { mode?: string }).mode, undefined);
 });
+
+test("a command is echoed as user input but never enters the model history", async () => {
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body) as { id: string };
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "/help" } })).status, 200);
+  const echoed = () => runtime.store.loadEvents(id).filter((event) => event.type === "command").map((event) => event.text);
+  assert.deepEqual(echoed(), ["/help"]);
+  assert.equal(runtime.store.loadMessages(id).length, 0, "commands stay out of the model history");
+  // An unknown command is still the user's input: echo it before reporting the error.
+  assert.equal((await call("POST", `/api/sessions/${id}/message`, { body: { text: "/nope" } })).status, 400);
+  assert.deepEqual(echoed(), ["/help", "/nope"]);
+});

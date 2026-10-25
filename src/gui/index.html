@@ -1735,6 +1735,11 @@ const handlers = {
     append(bubble);
     setBusy(true);
   },
+  command(e) {
+    const bubble = el("div", "msg user command");
+    bubble.append(el("span", "tag", "命令"), e.text);
+    append(bubble);
+  },
   interjection_delivered(e) {
     settleQueued(e.count, "插话 · 已送达");
     append(el("div", "note", `agent 已收到 ${e.count} 条插话`));
