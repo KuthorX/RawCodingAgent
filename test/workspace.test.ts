@@ -77,7 +77,7 @@ test("a non-git project has only its main workspace", async () => {
 test("create a workspace: new branch next to the repo, .worktreeinclude copied, subdirectory followed", async () => {
   const dir = repo();
   const store = stores();
-  const project = store.add(join(dir, "app")); // a project inside the repo, like learn-ai/raw-coding-agent
+  const project = store.add(join(dir, "app")); // a project inside the repo, not the repo root
   const { workspace, copied } = await createWorkspace(project, store, { name: "fix login" });
   const root = worktreeRoot(dir, "fix-login");
   assert.equal(root, join(dirname(dir), `${basename(dir)}.worktrees`, "fix-login"));

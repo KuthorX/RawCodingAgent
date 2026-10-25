@@ -5,7 +5,7 @@ import { requireString, ToolError, type Tool } from "./types.ts";
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_CHARS = 50_000;
 const TIMEOUT_MS = 20_000;
-const USER_AGENT = "raw-coding-agent/0.1 (+https://github.com/KuthorX/learn-ai)";
+const USER_AGENT = "raw-coding-agent/0.1 (+https://github.com/KuthorX/RawCodingAgent)";
 
 // Cloud metadata endpoints are the one place a model-controlled URL can turn a read-only tool into a
 // credential leak. Everything else (including localhost dev servers) stays reachable.

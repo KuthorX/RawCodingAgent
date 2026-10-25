@@ -11,7 +11,7 @@ const sh = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" }).trim();
 
 test("webUrl: ssh and https remotes", () => {
-  assert.equal(webUrl("git@github.com:KuthorX/learn-ai.git\n"), "https://github.com/KuthorX/learn-ai");
+  assert.equal(webUrl("git@github.com:KuthorX/RawCodingAgent.git\n"), "https://github.com/KuthorX/RawCodingAgent");
   assert.equal(webUrl("https://github.com/a/b.git"), "https://github.com/a/b");
   assert.equal(webUrl("https://gitlab.example.com/g/sub/repo"), "https://gitlab.example.com/g/sub/repo");
   assert.equal(webUrl("/local/path"), null);
