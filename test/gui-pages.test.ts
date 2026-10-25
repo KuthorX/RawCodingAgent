@@ -51,6 +51,20 @@ for (const file of readdirSync(GUI).filter((f) => f.endsWith(".html") || f.endsW
   });
 }
 
+test("every settings block sits in a section and the section list matches the nav", () => {
+  const page = readFileSync(join(GUI, "index.html"), "utf8");
+  const view = page.slice(page.indexOf('id="view-settings"'), page.indexOf('<div class="view layout"'));
+  const nav = [...view.matchAll(/<button type="button" data-section="(\w+)">/g)].map((m) => m[1]);
+  const sections = [...view.matchAll(/<section class="settings-section" data-section="(\w+)">/g)].map((m) => m[1]);
+  assert.ok(nav.length >= 3, "expected several settings sections");
+  assert.deepEqual(sections, nav, "sections must match the nav, in the same order");
+  assert.equal((view.match(/<section/g) ?? []).length, (view.match(/<\/section>/g) ?? []).length);
+  // Nothing may escape a section: every .setting block appears after a section opens.
+  const beforeFirst = view.slice(0, view.indexOf("<section"));
+  assert.doesNotMatch(beforeFirst, /class="setting"/);
+  assert.match(view, /data-section="(\w+)">\s*<div class="setting">/);
+});
+
 test("model controls preserve old session choices and only offer supported effort levels", () => {
   const page = readFileSync(join(GUI, "index.html"), "utf8");
   const labels = page.match(/^const THINK_LABELS = .+;$/m)?.[0];

@@ -12,7 +12,7 @@
   /* Tabs: each view stays in the page once shown, switching only hides the others. */
   .topbar { padding: 0; gap: 0; }
   .tabs { display: flex; gap: 0; align-self: stretch; }
-  .tabs a { display: flex; align-items: center; gap: 6px; padding: 5px 16px; color: var(--muted); border-right: 1px solid var(--line); }
+  .tabs a { display: flex; align-items: center; gap: 4px; padding: 5px 8px; color: var(--muted); border-right: 1px solid var(--line); }
   .tabs a kbd { background: none; padding: 0; color: var(--accent-ink); }
   .tabs a:hover { color: var(--ink); text-decoration: none; background: var(--soft); }
   .tabs a.on { color: var(--on-accent); background: var(--accent); }
@@ -23,7 +23,14 @@
   .view.frame iframe { border: 0; width: 100%; height: 100%; display: block; background: var(--bg); }
   .view.settings { overflow-y: auto; }
   .settings-wrap { max-width: 680px; margin: 0 auto; padding: 24px 22px; }
-  .settings-wrap h2 { font-size: 13px; font-weight: 400; color: var(--muted); margin: 0 0 12px; }
+  .settings-wrap h2 { font-size: 13px; font-weight: 400; color: var(--muted); margin: 0 0 10px; }
+  /* Settings is longer than one screen: a section bar replaces one long scroll. */
+  .settings-nav { display: flex; flex-wrap: wrap; border: 1px solid var(--line); width: fit-content; max-width: 100%; margin: 0 0 12px; }
+  .settings-nav button { border: 0; padding: 3px 12px; color: var(--muted); background: none; }
+  .settings-nav button + button { border-left: 1px solid var(--line); }
+  .settings-nav button:hover:not(.on) { color: var(--ink); background: var(--soft); }
+  .settings-nav button.on { background: var(--sel); color: var(--ink); }
+  .settings-section[hidden] { display: none; }
   .setting { border: 1px solid var(--line); padding: 12px 14px; }
   .setting + .setting { border-top: 0; }
   .setting .row { display: flex; align-items: center; gap: 10px; }
@@ -406,10 +413,13 @@
 <div class="view settings" id="view-settings" hidden>
   <div class="settings-wrap">
     <h2>设置</h2>
-    <div class="setting">
-      <label><input type="checkbox" class="switch" id="set-auto"> 新会话自动批准改动</label>
-      <p>开启后，新建的会话里 agent 的文件改动和 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
+    <div class="settings-nav" id="settings-nav">
+      <button type="button" data-section="model">模型</button>
+      <button type="button" data-section="session">会话</button>
+      <button type="button" data-section="ui">界面</button>
+      <button type="button" data-section="remote">远程访问</button>
     </div>
+    <section class="settings-section" data-section="model">
     <div class="setting" id="model-defaults">
       <div class="row"><b>新会话默认模型</b><button type="button" id="set-model-save">保存默认选择</button></div>
       <div class="model-fields">
@@ -433,6 +443,12 @@
         <p class="flat setting-status" id="provider-status" role="status" aria-live="polite"></p>
       </form>
     </div>
+    </section>
+    <section class="settings-section" data-section="session">
+    <div class="setting">
+      <label><input type="checkbox" class="switch" id="set-auto"> 新会话自动批准改动</label>
+      <p>开启后，新建的会话里 agent 的文件改动和 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
+    </div>
     <div class="setting">
       <label><input type="checkbox" class="switch" id="set-notify"> turn 状态网页通知</label>
       <p>通知需要浏览器授权；会话右键菜单可以覆盖全局通知设置。</p>
@@ -441,15 +457,20 @@
       <label>自动压缩阈值 <input type="number" id="set-compact" min="0" step="1000" inputmode="numeric"> token（0 关闭）</label>
       <p>达到阈值后，agent 会先压缩当前会话上下文；也可以输入 /compact 手动执行。</p>
     </div>
+    </section>
+    <section class="settings-section" data-section="ui">
     <div class="setting">
       <div class="row"><b>外观</b><span class="seg" id="set-theme"><button type="button" data-theme="">跟随系统</button><button type="button" data-theme="light">浅色</button><button type="button" data-theme="dark">深色</button></span></div>
       <p style="margin-left:0">只影响这个浏览器。</p>
     </div>
+    </section>
+    <section class="settings-section" data-section="remote">
     <div class="setting" id="set-remote">
       <div class="row"><b>远程访问</b><button type="button" id="pair-new" hidden>配对新设备</button></div>
       <p class="flat" id="remote-status"></p>
       <ul class="devices" id="devices"></ul>
     </div>
+    </section>
   </div>
 </div>
 <div class="view layout" id="root">
@@ -2786,6 +2807,22 @@ $("set-theme").addEventListener("click", (ev) => {
   showTheme();
 });
 showTheme();
+
+// ---------- settings sections ----------
+// The settings page is long: one section shows at a time, and the choice survives reloads like the theme.
+const SETTINGS_SECTIONS = ["model", "session", "ui", "remote"];
+function showSettings(section = localStorage.getItem("rca.settings") || "model") {
+  const active = SETTINGS_SECTIONS.includes(section) ? section : "model";
+  for (const button of $("settings-nav").children) button.classList.toggle("on", button.dataset.section === active);
+  for (const box of $("view-settings").querySelectorAll(".settings-section")) box.hidden = box.dataset.section !== active;
+}
+$("settings-nav").addEventListener("click", (ev) => {
+  const section = ev.target.closest("button")?.dataset.section;
+  if (!section) return;
+  localStorage.setItem("rca.settings", section);
+  showSettings(section);
+});
+showSettings();
 
 // ---------- tabs ----------
 // The address says which tab shows: #stats[/<session>], #iterations[/<commit>], #settings, otherwise #<session> in the chat.
