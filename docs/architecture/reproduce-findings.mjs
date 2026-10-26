@@ -1,5 +1,5 @@
-// Diagnostic snapshot for docs/agent-architecture.md, based on 5c86e38.
-// These assertions confirm known defects; they are not passing correctness tests.
+// Regression snapshot for docs/agent-architecture.md.
+// These assertions cover two previously reproduced defects; they are not full correctness proof.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -45,8 +45,8 @@ async function mixedToolBatch() {
   });
   const batch = result.messages.find((message) => message.role === "tool_results");
   assert.ok(batch, "The model must receive the tool results");
-  assert.equal(batch.results[1].content, "before", "Known mixed-batch defect no longer reproduced; review the diagnosis");
-  assert.deepEqual(order, ["write started", "read observed before", "write finished"]);
+  assert.equal(batch.results[1].content, "after");
+  assert.deepEqual(order, ["write started", "write finished", "read observed after"]);
   return { order, results: batch.results.map((item) => item.content), finishReason: result.finishReason };
 }
 
@@ -72,8 +72,8 @@ async function workerBase() {
     const worker = await createWorkerWorkspace(feature, "base-probe");
     const actual = git(worker.root, "rev-parse", "--short", "HEAD");
     assert.equal(worker.base, parent);
-    assert.equal(actual, main, "Known worker-base defect no longer reproduced; review the diagnosis");
-    assert.notEqual(actual, parent);
+    assert.equal(actual, parent);
+    assert.notEqual(actual, main);
     return {
       reportedBase: worker.base, parentHead: parent, mainHead: main, workerHead: actual,
       workerFile: readFileSync(join(worker.root, "version.txt"), "utf8").trim(),

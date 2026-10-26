@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { runTurn } from "../src/agent/loop.ts";
@@ -8,6 +8,7 @@ import { runCommand } from "../src/session/commands.ts";
 import type { SessionEvent } from "../src/session/events.ts";
 import { SessionRunner } from "../src/session/runner.ts";
 import type { Tool } from "../src/tools/types.ts";
+import { createWorkerWorkspace, workerChangeCount } from "../src/workspace/worker.ts";
 import { makeDeps, ManualProvider, reply, ScriptedProvider, tempWorkspace, testRuntime } from "./helpers.ts";
 
 // A tool that records how many of its calls were running at the same time.
@@ -164,4 +165,105 @@ test("stopping the turn aborts the children too", async () => {
   assert.equal(end.finishReason, "interrupted");
   const turn = events.findLast((event) => event.type === "turn_end" || event.type === "error");
   assert.ok(turn?.type === "turn_end" && turn.finishReason === "interrupted");
+});
+
+test("a read after a write sees the completed mutation", async () => {
+  let value = "before";
+  const order: string[] = [];
+  const write: Tool = {
+    spec: { name: "write_file", description: "test", inputSchema: {} },
+    dangerous: true,
+    async run() {
+      order.push("write started");
+      await new Promise((resolve) => setImmediate(resolve));
+      value = "after";
+      order.push("write finished");
+      return value;
+    },
+  };
+  const read: Tool = {
+    spec: { name: "read_file", description: "test", inputSchema: {} },
+    dangerous: false,
+    async run() { order.push(`read ${value}`); return value; },
+  };
+  const provider = new ScriptedProvider([
+    reply("", [{ id: "w", name: "write_file", input: {} }, { id: "r", name: "read_file", input: {} }]),
+    reply("done"),
+  ]);
+  const deps = makeDeps(provider, { tools: [write, read] });
+  try {
+    const result = await runTurn([], "write then read", deps);
+    assert.equal(result.finishReason, "end_turn");
+    assert.deepEqual(order, ["write started", "write finished", "read after"]);
+    const batch = result.messages.find((message) => message.role === "tool_results");
+    assert.ok(batch?.role === "tool_results");
+    assert.deepEqual(batch.results.map((item) => item.content), ["after", "after"]);
+    assert.ok(batch.results.every((item) => !item.isError));
+  } finally { rmSync(deps.workspace, { recursive: true, force: true }); }
+});
+
+test("a read waits for the preceding write approval", async () => {
+  const requested = Promise.withResolvers<void>();
+  const approval = Promise.withResolvers<boolean>();
+  const order: string[] = [];
+  const provider = new ScriptedProvider([
+    reply("", [{ id: "w", name: "edit_file", input: {} }, { id: "r", name: "read_file", input: {} }]),
+    reply("done"),
+  ]);
+  const deps = makeDeps(provider, {
+    tools: ["edit_file", "read_file"].map((name) => ({
+      spec: { name, description: "test", inputSchema: {} },
+      dangerous: name === "edit_file",
+      async run() { order.push(name); return name; },
+    })),
+    approvalMode: () => "ask",
+    confirm: () => { requested.resolve(); return approval.promise; },
+  });
+  const done = runTurn([], "edit then read", deps);
+  try {
+    await requested.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(order, [], "later reads must not run while a preceding mutation awaits approval");
+    approval.resolve(true);
+    const result = await done;
+    assert.equal(result.finishReason, "end_turn");
+    assert.deepEqual(order, ["edit_file", "read_file"]);
+  } finally {
+    approval.resolve(false);
+    await done;
+    rmSync(deps.workspace, { recursive: true, force: true });
+  }
+});
+
+test("a worker starts at its parent worktree commit and preserves the project subdirectory", async () => {
+  const root = tempWorkspace();
+  const repo = join(root, "repo");
+  const feature = join(root, "feature");
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", [
+    "-c", "user.name=t", "-c", "user.email=t@t", ...args,
+  ], { cwd, encoding: "utf8" }).trim();
+  try {
+    mkdirSync(join(repo, "pkg"), { recursive: true });
+    git(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "pkg", "version.txt"), "main\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "main");
+    const mainHead = git(repo, "rev-parse", "HEAD");
+    git(repo, "worktree", "add", "-q", "-b", "feature", feature);
+    writeFileSync(join(feature, "pkg", "version.txt"), "feature\n");
+    git(feature, "add", ".");
+    git(feature, "commit", "-qm", "feature");
+    const parentHead = git(feature, "rev-parse", "HEAD");
+    writeFileSync(join(feature, "pkg", "version.txt"), "uncommitted\n");
+
+    const worker = await createWorkerWorkspace(join(feature, "pkg"), "parent-base");
+    assert.notEqual(parentHead, mainHead);
+    assert.equal(git(worker.root, "rev-parse", "HEAD"), parentHead);
+    assert.equal(worker.base, git(feature, "rev-parse", "--short", parentHead));
+    assert.equal(worker.path, join(worker.root, "pkg"));
+    assert.equal(readFileSync(join(worker.path, "version.txt"), "utf8"), "feature\n");
+    assert.equal(await workerChangeCount(worker), 0);
+    assert.equal(git(repo, "rev-parse", "HEAD"), mainHead);
+    assert.equal(readFileSync(join(feature, "pkg", "version.txt"), "utf8"), "uncommitted\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

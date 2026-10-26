@@ -2,7 +2,7 @@
 
 这份文档描述本仓库实现的本地编码 Agent，面向首次阅读源码的开发者。源码核对基线为 `5c86e38`；图中的调用关系来自代码，**不代表已验证某台机器的在线服务或部署状态**。
 
-深入理解 Agent 的运行机制、设计取舍和实现边界，见 [Agent 架构深入分析](agent-architecture.md)。其中记录了已复现的混合工具批次顺序问题和 worker 起点问题；结构图不表示这些约束已经全部正确实现。
+深入理解 Agent 的运行机制、设计取舍和实现边界，见 [Agent 架构深入分析](agent-architecture.md)。其中记录了已修复的混合工具批次顺序问题和 worker 起点问题，以及剩余边界；结构图不表示所有运行环境都已实测。
 
 范围包括 CLI、浏览器界面、共享 Agent 运行时、文件存储、工作区工具和两套评测入口。模型服务、Tavily、目标网页、Tailscale、Cloudflare、Docker 与待修改的项目属于外部依赖或执行环境。`opencode.json` 配置的是开发本仓库时使用的 OpenCode，不是 RawCodingAgent 的运行时入口。
 
@@ -72,7 +72,7 @@
 `/multiagent` 开启后，`multi_agent` 工具回调到 `SessionRunner.spawnAgents`，在**同一 Node.js 进程**里并发调用 `runTurn`，不是另起 Agent 服务或分布式 worker。每个子 Agent 有独立历史，费用与停止信号归父任务管理。
 
 - `scout` 读取父工作区当前文件，只拿只读工具，因此可以读到父工作区尚未提交的文件内容。
-- `worker` 创建独立 Git worktree；父工作区未提交的改动不随之迁移。`.worktreeinclude` 指定的未跟踪文件可被复制。设计目标是从父工作区当前提交开始，但非主 worktree 场景存在[已复现的起点偏差](agent-architecture.md#问题-bworker-可能从错误的提交启动)。
+- `worker` 创建独立 Git worktree；父工作区未提交的改动不随之迁移。`.worktreeinclude` 指定的未跟踪文件可被复制。worker 显式从父工作区当前提交开始，并保留项目子目录；回归依据见 [Agent 架构分析](agent-architecture.md#问题-bworker-可能从错误的提交启动)。
 - 返回的是总结、分支与改动信息；不会自动合并。Git worktree 隔离文件版本，不是 shell 安全沙箱。
 
 依据：[src/tools/multi-agent.ts](../src/tools/multi-agent.ts)、[src/session/runner.ts](../src/session/runner.ts#L316)、[src/workspace/worker.ts](../src/workspace/worker.ts)。

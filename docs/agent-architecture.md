@@ -4,7 +4,7 @@
 
 分析基线：`5c86e38`。文中的“确认”指已核对源码；“复现”指本次用假模型或临时 Git 仓库实际运行；“判断 / 建议”是基于实现的分析，不是性能测试结论。本文没有调用真实模型，没有修改 Agent 运行逻辑。
 
-阅读导航：[核心分层](#2-核心分层谁负责什么) · [任务全过程](#4-沿着一个修复任务走完整条链路) · [执行循环](#5-agent-循环怎样推进任务) · [工具与权限](#7-工具系统与权限边界) · [上下文](#8-上下文管理保留什么压掉什么) · [完成验收](#9-完成验收为什么说完成了还不够) · [恢复](#11-持久化与恢复保存的是哪一种状态) · [多-agent](#12-多-agent委派执行与结果整合) · [已复现问题](#15-已复现的两处实现偏差) · [验证与阅读路线](#17-验证证据与源码阅读路线)。
+阅读导航：[核心分层](#2-核心分层谁负责什么) · [任务全过程](#4-沿着一个修复任务走完整条链路) · [执行循环](#5-agent-循环怎样推进任务) · [工具与权限](#7-工具系统与权限边界) · [上下文](#8-上下文管理保留什么压掉什么) · [完成验收](#9-完成验收为什么说完成了还不够) · [恢复](#11-持久化与恢复保存的是哪一种状态) · [多-agent](#12-多-agent委派执行与结果整合) · [已修复问题](#15-已修复的两处实现偏差) · [验证与阅读路线](#17-验证证据与源码阅读路线)。
 
 ## 1. 先给出架构判断
 
@@ -145,7 +145,7 @@ runTurn(this.history, input, deps, control)
 
 输出被 `max_tokens` 截断且包含工具调用时，当前批次不执行；运行时最多允许 2 次这种重试，提示模型拆小调用。重试消耗后续循环步。`refusal` 下的工具同样不执行，但不会走这条截断修复路径。
 
-**已复现的偏差**：代码意图是“只读调用并行、写操作保持顺序”，但当前分组只检查后续成员，没有检查组首。`write_file` 后接 `read_file` 时也能进入同一个 `Promise.all`。不能根据注释把所有混合批次描述为安全串行，见[问题 A](#问题-a写操作可能与后续读取并发)。
+此前复现的偏差已修复：只有组首也是只读工具时才会扩展并行组；写后读和待审批写后读保持顺序。回归测试覆盖这两种情况。
 
 依据：[loop.ts / loop](../src/agent/loop.ts#L270)、[loop.ts / 批次与 checkpoint](../src/agent/loop.ts#L407)、[multi-agent.test.ts / 只读并行测试](../test/multi-agent.test.ts#L28)。
 
@@ -364,7 +364,7 @@ UI 事件、模型历史、执行 trace 分开保存，使前端展示不必成�
 - **返回分支名不表示修改已经提交**：worker 提示词明确要求不要 commit。未提交文件仍在它的 checkout 中，不能只运行一次 `git merge <branch>` 就假定带回这些修改。
 - **worktree 是代码版本隔离，不是权限隔离**：worker 的 shell 仍有宿主进程可用的权限。
 
-**基线偏差已复现**：设计目标是从父工作区当前提交开始，但代码在主 worktree 中解析创建命令的 `HEAD`。父会话位于另一个分支的 worktree 时，实际起点可与返回的 `base` 不一致，见[问题 B](#问题-bworker-可能从错误的提交启动)。
+此前复现的基线偏差已修复：worker 现在显式使用父工作区解析出的提交对象，并先规范化 worktree 路径。父会话位于另一个分支的 worktree 时，worker 与返回的 `base` 保持一致。
 
 依据：[tools/multi-agent.ts](../src/tools/multi-agent.ts)、[runner.ts / runAgent](../src/session/runner.ts#L321)、[runner.ts / agentNote](../src/session/runner.ts#L818)、[workspace/worker.ts](../src/workspace/worker.ts)。
 
@@ -400,9 +400,9 @@ UI 事件、模型历史、执行 trace 分开保存，使前端展示不必成�
 
 **维护判断**：最先需要明确的是“工具批次顺序”“子任务起点”“完成证据”这些契约。它们直接影响正确性。是否拆分 `SessionRunner`、引入异步存储或预算预留，应由后续功能和测量决定，而不是为了让架构图出现更多模块。
 
-## 15. 已复现的两处实现偏差
+## 15. 已修复的两处实现偏差
 
-这两项是当前版本的实际行为，不是对设计的泛泛担忧。本次只记录，未修复；正常测试全部通过也不能覆盖掉下面的反例。
+这两项曾在 `5c86e38` 复现。本次已修复，并补回归测试；诊断脚本现在检查修复后的行为。
 
 ### 问题 A：写操作可能与后续读取并发
 
@@ -418,9 +418,9 @@ tool_results = ["after", "before"]
 finishReason = end_turn
 ```
 
-**影响**：返回顺序仍与模型调用顺序一致，但读取观察到的是写入完成前的旧状态。审批等待也不能保证同批后续读取等待写操作。`test/multi-agent.test.ts` 验证了纯只读并行，没有覆盖这个混合批次。
+**修复**：只有 `call.name` 也是只读工具时才扩展并行组。写后读必须等待写完成；待审批写操作也会阻塞后续读取。新增两个回归测试。
 
-**建议**：只在组首也属于只读集合时继续扩组；写入、审批中的操作、依赖前一结果的读取保持顺序。补“写后读”和“待审批写后读”回归用例。
+**验证**：`test/multi-agent.test.ts` 的“a read after a write sees the completed mutation”和“a read waits for the preceding write approval”。
 
 依据：[loop.ts / 分组逻辑](../src/agent/loop.ts#L429)、[multi-agent.test.ts](../test/multi-agent.test.ts#L28)。
 
@@ -436,21 +436,21 @@ workerHead = mainHead = A
 worker 中 version.txt 的内容仍是 main
 ```
 
-**影响**：子任务看不到父分支已经提交的新代码；返回的基线描述与实际 checkout 不符，也会干扰按 `base` 计算的改动信息。现有 worker 测试从主工作区启动，因此没有触发这个分支差异。
+**修复**：先用 `samePath` 规范化父 workspace，再解析父 workspace 的 commit，最后把该 commit 显式传给 `git worktree add`。返回的 `base` 与实际 checkout 一致，并保留项目子目录。
 
-**建议**：先解析父工作区的明确提交对象，再把该提交作为 `worktree add` 的起点；不要让执行目录决定 `HEAD` 的含义。补“父 feature worktree 与主 worktree 不同提交”的用例。
+**验证**：`test/multi-agent.test.ts` 的“a worker starts at its parent worktree commit and preserves the project subdirectory”。
 
 依据：[workspace/worker.ts / createWorkerWorkspace](../src/workspace/worker.ts#L29)、[multi-agent.test.ts / worker 测试](../test/multi-agent.test.ts#L77)。
 
 ### 重复验证这两项
 
-[诊断脚本](architecture/reproduce-findings.mjs)只使用假模型、内存工具和临时 Git 仓库，不加载真实厂商配置、不发送模型请求。临时仓库在结束时删除：
+[诊断脚本](architecture/reproduce-findings.mjs)只使用假模型、内存工具和临时 Git 仓库，不加载真实厂商配置、不发送模型请求。它断言修复后的顺序和提交起点，临时仓库在结束时删除：
 
 ```bash
 node docs/architecture/reproduce-findings.mjs
 ```
 
-脚本断言的是“这两个已知偏差在当前基线上仍可复现”，**不是系统正确性通过证明**。以后修复代码后，应把预期行为写成正式回归测试，并移除或更新这份诊断脚本。
+脚本只覆盖这两个具体回归，**不是系统正确性通过证明**。正式回归测试位于 `test/multi-agent.test.ts`。
 
 ## 16. 后续改进应按什么顺序考虑
 
@@ -465,7 +465,7 @@ node docs/architecture/reproduce-findings.mjs
 
 ## 17. 验证证据与源码阅读路线
 
-本次重新执行 `npm test`：**322 通过、0 失败**；`npm run typecheck` 通过。另用上述诊断脚本复现两项偏差。没有运行付费模型评测、SWE-bench 容器评测、远程部署或长会话压力测试。
+本次重新执行 `npm test`：**325 通过、0 失败**；`npm run typecheck` 通过。另用上述诊断脚本验证两项修复。没有运行付费模型评测、SWE-bench 容器评测、远程部署或长会话压力测试。
 
 | 要理解 / 验证什么 | 先读实现 | 再读已有测试 |
 | --- | --- | --- |

@@ -430,7 +430,7 @@ async function loop(
       // Only read-only neighbours join the group: no call can observe another's write, and no approval is pending.
       const group = [call];
       const groupSignatures = [...signatures, callSignature(call)];
-      while (group.length < PARALLEL_READ_MAX && index + group.length < calls.length) {
+      while (PARALLEL_READ_TOOLS.has(call.name) && group.length < PARALLEL_READ_MAX && index + group.length < calls.length) {
         const next = calls[index + group.length]!;
         if (!PARALLEL_READ_TOOLS.has(next.name)) break;
         const signature = callSignature(next);
