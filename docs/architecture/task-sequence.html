@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一次读取任务的执行时序 · RawCodingAgent</title>
+<style>
+/* Project palette: src/gui/common.css. System fonts keep the diagram self-contained. */
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px; background: #f6f5f0; color: #26251f; font: 14px/1.7 system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+main { max-width: 960px; min-width: 0; margin: auto; }
+h1 { font-size: 16px; margin: 0 0 12px; }
+a { color: #1d7a75; }
+.diagram-container { width: 100%; overflow-x: auto; }
+svg { width: 100%; min-width: 960px; display: block; }
+footer { border-top: 1px solid #d6d3c7; padding-top: 12px; margin-top: 16px; }
+@media print { body { padding: 0; } .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+</style>
+</head>
+<body>
+<main>
+<h1>RawCodingAgent / 架构</h1>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 816" role="img" aria-labelledby="task-sequence-title task-sequence-desc">
+
+
+  <title id="task-sequence-title">一次读取任务的执行时序</title>
+
+
+  <desc id="task-sequence-desc">浏览器提交任务后收到受理响应，Agent 通过模型决定读取 README，再根据工具结果生成答复并通过 SSE 通知完成。</desc>
+
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#6e6b5e"/>
+    </marker>
+    <marker id="link" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#1d7a75"/>
+    </marker>
+    <marker id="accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#8f5c00"/>
+    </marker>
+    <marker id="open" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8" fill="none" stroke="#6e6b5e" stroke-width="1.5"/>
+    </marker>
+  </defs>
+
+
+  <rect width="960" height="816" fill="#f6f5f0"/>
+
+
+  <text x="40" y="44" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="600" fill="#26251f">一次读取任务的执行时序</text>
+
+
+  <text x="40" y="72" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">例：读取 README 并总结用途；已连接 SSE，省略逐字 delta 与异常分支。</text>
+  <path d="M 100 160 V 704" stroke="#6e6b5e" stroke-width="1" stroke-dasharray="3 5"/>
+  <path d="M 280 160 V 704" stroke="#6e6b5e" stroke-width="1" stroke-dasharray="3 5"/>
+  <path d="M 460 160 V 704" stroke="#6e6b5e" stroke-width="1" stroke-dasharray="3 5"/>
+  <path d="M 656 160 V 704" stroke="#6e6b5e" stroke-width="1" stroke-dasharray="3 5"/>
+  <path d="M 852 160 V 704" stroke="#6e6b5e" stroke-width="1" stroke-dasharray="3 5"/>
+  <rect x="276" y="208" width="8" height="480" fill="#edebe4" stroke="#6e6b5e" stroke-width="1"/>
+  <rect x="456" y="256" width="8" height="384" fill="#edebe4" stroke="#6e6b5e" stroke-width="1"/>
+  <rect x="652" y="352" width="8" height="48" fill="#edebe4" stroke="#6e6b5e" stroke-width="1"/>
+  <rect x="652" y="544" width="8" height="48" fill="#edebe4" stroke="#6e6b5e" stroke-width="1"/>
+  <rect x="848" y="448" width="8" height="48" fill="#edebe4" stroke="#6e6b5e" stroke-width="1"/>
+  <path data-edge="step-1" d="M 100 208 H 280" fill="none" stroke="#1d7a75" stroke-width="1.5" marker-end="url(#link)"/>
+  <g data-label="POST MESSAGE">
+    <rect x="128" y="178" width="124" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="190" y="192" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">POST MESSAGE</text>
+  </g>
+  <text x="40" y="212" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">1</text>
+  <path data-edge="step-2" d="M 280 256 H 460" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#open)"/>
+  <g data-label="启动 RUNTURN">
+    <rect x="310" y="226" width="120" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="370" y="240" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">启动 RUNTURN</text>
+  </g>
+  <text x="40" y="260" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">2</text>
+  <path data-edge="step-3" d="M 280 304 H 100" fill="none" stroke="#1d7a75" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#link)"/>
+  <g data-label="202 已受理">
+    <rect x="138" y="274" width="104" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="190" y="288" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">202 已受理</text>
+  </g>
+  <text x="40" y="308" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">3</text>
+  <path data-edge="step-4" d="M 460 352 H 656" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g data-label="COMPLETE">
+    <rect x="510" y="322" width="96" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="558" y="336" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">COMPLETE</text>
+  </g>
+  <text x="40" y="356" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">4</text>
+  <path data-edge="step-5" d="M 656 400 H 460" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <g data-label="read_file">
+    <rect x="510" y="370" width="96" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="558" y="384" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">read_file</text>
+  </g>
+  <text x="40" y="404" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">5</text>
+  <path data-edge="step-6" d="M 460 448 H 852" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g data-label="读取 README">
+    <rect x="700" y="418" width="112" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="756" y="432" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">读取 README</text>
+  </g>
+  <text x="40" y="452" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">6</text>
+  <path data-edge="step-7" d="M 852 496 H 460" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <g data-label="文件正文">
+    <rect x="708" y="466" width="96" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="756" y="480" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">文件正文</text>
+  </g>
+  <text x="40" y="500" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">7</text>
+  <path data-edge="step-8" d="M 460 544 H 656" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g data-label="带工具结果续问">
+    <rect x="492" y="514" width="132" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="558" y="528" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">带工具结果续问</text>
+  </g>
+  <text x="40" y="548" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">8</text>
+  <path data-edge="step-9" d="M 656 592 H 460" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <g data-label="最终答复">
+    <rect x="510" y="562" width="96" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="558" y="576" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">最终答复</text>
+  </g>
+  <text x="40" y="596" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">9</text>
+  <path data-edge="step-10" d="M 460 640 H 280" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <g data-label="提交最终历史">
+    <rect x="310" y="610" width="120" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="370" y="624" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">提交最终历史</text>
+  </g>
+  <text x="40" y="644" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">10</text>
+  <path data-edge="step-11" d="M 280 688 H 100" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#open)"/>
+  <g data-label="SSE TURN_END">
+    <rect x="124" y="658" width="132" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="190" y="672" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">SSE TURN_END</text>
+  </g>
+  <text x="40" y="692" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="400" fill="#6e6b5e">11</text>
+  <g id="client" data-node="client">
+    <rect x="40" y="88" width="120" height="72" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="56" y="108" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">CLIENT</text>
+    <text x="56" y="132" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">浏览器</text>
+  </g>
+  <g id="session" data-node="session">
+    <rect x="200" y="88" width="160" height="72" rx="6" fill="#f6ead0" stroke="#8f5c00" stroke-width="1.5"/>
+    <text x="216" y="108" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">SERVER + RUNNER</text>
+    <text x="216" y="132" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">接入 / 会话</text>
+  </g>
+  <g id="agent-loop" data-node="agent-loop">
+    <rect x="392" y="88" width="136" height="72" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="408" y="108" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">RUNTURN</text>
+    <text x="408" y="132" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">Agent 循环</text>
+  </g>
+  <g id="model" data-node="model">
+    <rect x="580" y="88" width="152" height="72" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="596" y="108" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">PROVIDER + API</text>
+    <text x="596" y="132" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">模型调用</text>
+  </g>
+  <g id="file-tool" data-node="file-tool">
+    <rect x="784" y="88" width="136" height="72" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="800" y="108" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">READ_FILE</text>
+    <text x="800" y="132" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">文件工具</text>
+  </g>
+  <text x="920" y="728" text-anchor="end" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">工具执行前后保存 checkpoint；最终提交后发送 turn_end。</text>
+  <path d="M 40 756 H 920" stroke="#d6d3c7"/>
+  <path data-edge="legend-call" d="M 40 780 H 76" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="88" y="784" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">调用</text>
+  <path data-edge="legend-return" d="M 176 780 H 212" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="224" y="784" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">返回</text>
+  <path data-edge="legend-event" d="M 376 780 H 412" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#open)"/>
+  <text x="424" y="784" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">异步启动 / 事件</text>
+  <text x="920" y="784" text-anchor="end" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">确认事实 · 运行时关系</text>
+
+
+</svg>
+
+</div>
+<footer><p>1–3：<a href="../../src/gui/server.ts">src/gui/server.ts / handleApi</a>；4–9：<a href="../../src/agent/loop.ts">src/agent/loop.ts</a>；10–11：<a href="../../src/session/runner.ts">src/session/runner.ts / commit、drain</a>。POST 路径为 /api/sessions/:id/message，SSE 为 /events/:id；202 不表示任务完成。</p><p>图中关系已从源码确认；不表示远程服务已部署或在线。<a href="../architecture.md">完整证据、静态依赖与部署关系</a>。</p></footer>
+</main>
+</body>
+</html>

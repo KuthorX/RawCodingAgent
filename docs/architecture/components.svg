@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 732" role="img" aria-labelledby="components-title components-desc" id="components-root">
+
+
+  <title id="components-title">核心运行时组件</title>
+
+
+  <desc id="components-desc">SessionRunner 驱动 Agent 主循环，循环通过 provider 和工具执行任务，并通过回调保存状态与输出事件。</desc>
+
+
+  <defs>
+      <style>#components-root { color: #26251f; }
+      #components-root a { color: #1d7a75; }
+      #components-root .diagram-container { width: 100%; overflow-x: auto; }
+      @media print {
+#components-root .diagram-container { overflow-x: visible; }
+}</style>
+    <marker id="components-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#6e6b5e"/>
+    </marker>
+    <marker id="components-link" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#1d7a75"/>
+    </marker>
+    <marker id="components-accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#8f5c00"/>
+    </marker>
+    <marker id="components-open" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8" fill="none" stroke="#6e6b5e" stroke-width="1.5"/>
+    </marker>
+  </defs>
+
+
+  <rect width="960" height="732" fill="#f6f5f0"/>
+
+
+  <text x="40" y="44" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="600" fill="#26251f">核心运行时组件</text>
+
+
+  <text x="40" y="72" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">一个 Node.js 进程内的责任划分；框不是独立部署服务。</text>
+  <path data-edge="entry-runner" d="M 256 168 H 352" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="组装 / SEND">
+    <rect x="260" y="138" width="88" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="304" y="152" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">组装 / SEND</text>
+  </g>
+  <path data-edge="runner-loop" d="M 416 236 V 344" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="RUNTURN">
+    <rect x="320" y="274" width="88" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="364" y="288" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">RUNTURN</text>
+  </g>
+  <path data-edge="loop-runner" d="M 536 344 V 236" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#components-open)"/>
+  <g data-label="事件 / 审批">
+    <rect x="544" y="294" width="104" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="596" y="308" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">事件 / 审批</text>
+  </g>
+  <path data-edge="runner-policy" d="M 600 168 H 704" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="注入策略">
+    <rect x="612" y="138" width="80" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="652" y="152" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">注入策略</text>
+  </g>
+  <path data-edge="loop-policy" d="M 600 380 H 644 Q 652 380 652 372 V 208 Q 652 200 660 200 H 704" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="上下文 / 验收">
+    <rect x="660" y="270" width="104" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="712" y="284" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">上下文 / 验收</text>
+  </g>
+  <path data-edge="loop-provider" d="M 600 420 H 704" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="COMPLETE">
+    <rect x="606" y="390" width="92" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="652" y="404" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">COMPLETE</text>
+  </g>
+  <path data-edge="runner-store" d="M 352 208 H 312 Q 304 208 304 216 V 380 Q 304 388 296 388 H 256" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="保存 / 恢复">
+    <rect x="192" y="266" width="104" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="244" y="280" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">保存 / 恢复</text>
+  </g>
+  <path data-edge="loop-trace" d="M 352 432 H 288 Q 280 432 280 440 V 596 Q 280 604 272 604 H 256" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="SPAN / LOG">
+    <rect x="192" y="490" width="80" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="232" y="504" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">SPAN / LOG</text>
+  </g>
+  <path data-edge="loop-tools" d="M 476 456 V 560" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <g data-label="执行 / 审批">
+    <rect x="492" y="502" width="104" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="544" y="516" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">执行 / 审批</text>
+  </g>
+  <g id="entry" data-node="entry">
+    <rect x="40" y="124" width="216" height="88" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="56" y="144" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">ENTRY / APP</text>
+    <text x="56" y="168" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">接入与装配</text>
+    <text x="56" y="188" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">CLI / GUI / eval</text>
+  </g>
+  <g id="runner" data-node="runner">
+    <rect x="352" y="124" width="248" height="112" rx="6" fill="#f6ead0" stroke="#8f5c00" stroke-width="1.5"/>
+    <text x="368" y="144" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">SESSION</text>
+    <text x="368" y="168" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">SessionRunner</text>
+    <text x="368" y="188" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">历史、模式、插话、预算</text>
+    <text x="368" y="208" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">审批等待与事件订阅</text>
+  </g>
+  <g id="policy" data-node="policy">
+    <rect x="704" y="124" width="216" height="112" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="720" y="144" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">POLICY HOOKS</text>
+    <text x="720" y="168" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">上下文与验收</text>
+    <text x="720" y="188" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">prepareContext</text>
+    <text x="720" y="208" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">Verification</text>
+  </g>
+  <g id="loop" data-node="loop">
+    <rect x="352" y="344" width="248" height="112" rx="6" fill="#f6ead0" stroke="#8f5c00" stroke-width="1.5"/>
+    <text x="368" y="364" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">RUNTURN</text>
+    <text x="368" y="388" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">Agent 主循环</text>
+    <text x="368" y="408" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">模型、工具、限制、停止</text>
+    <text x="368" y="428" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">每步 checkpoint</text>
+  </g>
+  <g id="provider" data-node="provider">
+    <rect x="704" y="344" width="216" height="112" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="720" y="364" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">PROVIDER</text>
+    <text x="720" y="388" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">模型适配器</text>
+    <text x="720" y="408" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">PiProvider</text>
+    <text x="720" y="428" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">OpenAIProvider</text>
+  </g>
+  <g id="store" data-node="store">
+    <rect x="40" y="344" width="216" height="112" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="56" y="364" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">SESSION STORE</text>
+    <text x="56" y="388" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">会话持久化</text>
+    <text x="56" y="408" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">messages / meta</text>
+    <text x="56" y="428" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">events / attachments</text>
+  </g>
+  <g id="trace" data-node="trace">
+    <rect x="40" y="560" width="216" height="88" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="56" y="580" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">TRACER</text>
+    <text x="56" y="604" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">执行记录</text>
+    <text x="56" y="624" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">trace.jsonl</text>
+  </g>
+  <g id="tools" data-node="tools">
+    <rect x="352" y="560" width="248" height="88" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="368" y="580" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">TOOLS</text>
+    <text x="368" y="604" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">工具集</text>
+    <text x="368" y="624" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">文件 / shell / 联网 / 计划</text>
+  </g>
+  <path d="M 40 672 H 920" stroke="#d6d3c7"/>
+  <path data-edge="legend-call" d="M 40 696 H 76" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#components-arrow)"/>
+  <text x="88" y="700" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">调用</text>
+  <path data-edge="legend-return" d="M 176 696 H 212" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#components-arrow)"/>
+  <text x="224" y="700" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">回调 / 事件</text>
+  <text x="920" y="700" text-anchor="end" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">确认事实 · 运行时关系</text>
+
+
+</svg>

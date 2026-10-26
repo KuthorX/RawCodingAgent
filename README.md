@@ -2,10 +2,27 @@
 
 从零搭的 coding agent，用于学习。主循环、工具、会话和评测由项目自己实现；原生多厂商协议使用 `@earendil-works/pi-ai`，现有 Chat Completions 兼容端点保留 `openai` SDK 适配。
 
+## 项目架构
+
+这是一个**在本机运行的 Node.js 编码 Agent**。CLI、网页和评测复用同一套会话与 Agent 核心；模型通过适配器接入，工具在目标工作区执行，会话与统计保存在本地文件中。
+
+![系统总览：终端或浏览器提交任务，本地 Agent 调用模型与工具，保存会话](docs/architecture/overview.svg)
+
+图中是运行时交互。Node.js 框内列出可选启动方式，不代表多个后端服务。关键依据：
+
+- **入口与装配**：[src/index.ts](src/index.ts)、[src/app.ts](src/app.ts)；浏览器通过 [gui/server.ts](src/gui/server.ts) 的 HTTP / SSE 接入。
+- **会话与执行**：[SessionRunner](src/session/runner.ts) 管理历史、审批、停止与插话；[agent/loop.ts](src/agent/loop.ts) 循环调用模型和工具。
+- **模型与工具**：[providers/](src/providers/) 适配原生厂商及兼容端点；[tools/](src/tools/) 读写工作区、执行 shell、获取网页资料。
+- **数据与评测**：[session/store.ts](src/session/store.ts) 保存 JSON / JSONL；[eval/](src/eval/) 独立启动，复用核心代码并运行隐藏检查。
+
+[完整架构与源码证据](docs/architecture.md)包含组件图、典型任务时序、静态依赖、部署关系及待确认项。[可编辑图源](docs/architecture/)为 HTML + 内联 SVG。
+
+导航：[运行](#运行) · [网页界面](#网页界面) · [终端](#终端) · [测试](#测试) · [评测](#评测) · [SWE-bench](#swe-bench-verified) · [会话数据](#会话数据) · [源码导览](#结构)
+
 ## 运行
 
 ```bash
-npm install
+npm ci
 npm run gui
 ```
 
@@ -15,11 +32,7 @@ npm run gui
 
 需要兼容端点时仍可 `cp .env.example .env`。模型回复默认流式显示；`OPENAI_STREAM=false` 可关闭逐字显示。兼容端点支持非流式 HTTP 回退，Pi 原生适配仍使用 SDK 的流式传输。
 
-### Orca / OpenCode
-
-Orca launches the OpenCode CLI inside this workspace. The checked-in `opencode.json` selects `deepseek/deepseek-chat` through DeepSeek's OpenAI-compatible endpoint; OpenCode reads `OPENAI_API_KEY` from this workspace's `.env` via Bun's automatic dotenv loading. No key is stored in the config. Open the workspace in Orca, launch the OpenCode agent, and confirm the model is `deepseek/deepseek-chat`.
-
-`.env` 里填了 `TAVILY_API_KEY`（[Tavily](https://tavily.com)，每月 1000 次免费）就会多一个 `web_search` 工具，用来查文档、报错信息等工作区里没有的资料。它只读、不需要审批，但查询内容会发到 Tavily；provider 和搜索凭据都不会传给 agent 的 bash。
+`.env` 里填了 `TAVILY_API_KEY`（[Tavily](https://tavily.com)）就会多一个 `web_search` 工具，用来查文档、报错信息等工作区里没有的资料。它只读、不需要审批，但查询内容会发到 Tavily；provider 和搜索凭据都不会传给 agent 的 bash。
 
 不配 key 也有 `web_fetch`：给一个 http(s) 地址，返回网页的正文（HTML 会去掉脚本和样式、压缩空白），用来读文档、issue 或 web_search 找到的页面。图片和其他二进制类型会被拒绝；云厂商的 metadata 地址也会被拒绝。网页内容是不可信数据，prompt 里明确要求模型不要执行页面里的指令。
 
@@ -40,7 +53,7 @@ GUI 输入 `/` 可选择命令或技能，方向键选择，Tab / 点击补全�
 
 `/plan` 进入计划模式后只暴露 `read_file`、`list_dir`、`glob`、`grep`、`web_search`、`web_fetch` 和 `plan`，没有 bash 和写文件的工具，所以探索阶段不会改工作区。计划项保存在 `meta.json` 的 `plan` 里，网页顶部可以编辑文字、点方框切换状态、删除单项或清空；点“执行计划”退出计划模式并让 agent 按清单开始，完整工具随之恢复。`/loop` 只在一轮以 `unverified` 结束（计划没做完或检查没过）时自动续跑，正常完成、出错、被停止或达到轮数上限就结束；自动继续的提示词和上限可以在网页顶部“设置”里改，“停止”会中断当前一轮并退出循环。两种模式都保存在会话里，重启后继续生效；`/clear` 和 fork 不继承模式，fork 只复制计划清单。
 
-`/multiagent` 开启后，模型可以一次调用 `multi_agent` 跑多个子 agent：`scout` 只拿只读工具，在会话工作区里并行搜索和阅读，回答写回父 turn 的工具结果，子 agent 自己的对话不进父历史；`worker` 在自己新建的 git worktree（`<仓库>.worktrees/multi-…`，分支 `agent/multi-…`）里改代码，父工作区不受影响，结果回给父 agent 的是分支名、改动文件数和总结，合并要父 agent 自己审查 diff 后再做。子 agent 共享父 turn 的停止信号和预算，费用计入父 turn；它们看不到未提交的改动和之后的用户插话。开关存在 `meta.json` 的 `multiagent` 里，`/clear` 后重置。
+`/multiagent` 开启后，模型可以一次调用 `multi_agent` 跑多个子 agent：`scout` 只拿只读工具，在会话工作区里并行搜索和阅读，回答写回父 turn 的工具结果，子 agent 自己的对话不进父历史；`worker` 在自己新建的 git worktree（`<仓库>.worktrees/multi-…`，分支 `agent/multi-…`）里改代码，父工作区不受影响，结果回给父 agent 的是分支名、改动文件数和总结，合并要父 agent 自己审查 diff 后再做。子 agent 共享父 turn 的停止信号和预算，费用计入父 turn；worker 不继承父工作区未提交的改动（`.worktreeinclude` 指定的未跟踪文件除外）；scout 读取父工作区当前文件。两者都不会接收之后的用户插话。开关存在 `meta.json` 的 `multiagent` 里，`/clear` 后重置。
 
 技能从工作区及祖先目录、用户目录下的 `.agents/skills`、`.codex/skills`、`.claude/skills` 发现。例如 `.agents/skills/review/SKILL.md` 可通过 `/review` 加载。支持常见 frontmatter `name` / `description`（含引号和多行描述）、符号链接和包内的 `skills/` 子目录。同名优先使用距离工作区最近的技能，同层按上述目录顺序；与内置命令重名时使用 `/skill 名称`。
 
@@ -82,7 +95,7 @@ npm run gui -- --cwd ../some-repo        # 可选：顺便把这个目录加入�
 - **迭代记录**：每次迭代解决了什么问题、改了什么，可以按时间线或按模块看，按模块筛选；点提交号在右侧看完整改动（`git show`），或跳到 GitHub。数据在 `docs/iterations.json`（模块列表 + 每条的 `module` / `title` / `problem` / `change` / `commits`），提交的时间和标题从 git 读。没被任何记录引用的提交会列在"未归档的提交"里；只改了这个文件的提交（补提交号）不算。`npm test` 会检查每条记录的模块和提交号都存在。
 - **原文件**（`/raw`）：每个统计数据旁都有"查看内容"（带行号、可逐行格式化 JSON、可跳到指定行）和"在 Finder 中显示"。
 
-服务只监听 `127.0.0.1`，所有接口都要求启动时随机生成的 token，并校验 Host 头。因为页面能触发 bash，不要把这个地址分享出去。
+服务只监听 `127.0.0.1`，本地请求校验 Host，API 和事件流要求启动时随机生成的 token；静态页面资源和配对入口另有路由规则。因为页面能触发 bash，不要把这个地址分享出去。
 
 #### 从其他设备访问（Tailscale）
 
@@ -152,7 +165,7 @@ npm start -- --resume 20261020-065311-5d6230       # 继续某个历史会话（
 npm start -- --yes ...                             # 新会话（或 --resume 的会话）设为自动批准（危险）
 ```
 
-终端里 agent 运行时直接输入就是插话，Ctrl-C 停止当前这一轮（空闲时 Ctrl-C 退出）。审批时输入 `a` 表示"本次允许，且本会话不再询问"；交互模式下 `/auto on`、`/auto off` 切换当前会话的审批模式。`--yes` 只决定新会话的默认模式，不再是全局开关。
+终端里 agent 运行时直接输入就是插话，Ctrl-C 停止当前这一轮（空闲时 Ctrl-C 退出）。审批时输入 `a` 表示"本次允许，且本会话不再询问"；交互模式下 `/auto on`、`/auto off` 切换当前会话的审批模式。`--yes` 会把本次新建或 `--resume` 恢复的会话设为自动批准，不是影响所有会话的全局开关。
 
 ### 测试
 
@@ -179,7 +192,7 @@ AGENT_PROMPT_RULES= npm run eval -- --repeat 3   # 换一组 system prompt 规�
 
 **PASS = 检查通过 + agent 自己结束 + 步数 ≤ 预算 + 成本 ≤ 预算。** 成本超了会立即停止这一轮。API 报错、评测程序异常记为 ERROR，单独统计，不计入通过率。结果写入 `.eval-runs/<运行编号>/results.json`；和上一次运行对比时，只比较内容没变过的任务（按任务目录的哈希判断），模型或单价不同会给出提示。
 
-结果表里的 **bash file ops** 一栏是"通过 bash 读、搜、改工作区内文件的次数 / 全部文件操作次数（bash + 专用工具）"，用来看 `tools` 这类提示词规则有没有让模型改用专用工具；访问工作区外路径的 bash 调用不计入（专用工具到不了那里）。分类是按命令文本的启发式（`src/trace/bash-usage.ts`），只适合比较两次运行，不适合判断单次调用。评测时不启用 web_search，结果不受网络影响。
+结果表里的 **bash file ops** 一栏是"通过 bash 读、搜、改工作区内文件的次数 / 全部文件操作次数（bash + 专用工具）"，用来看 `tools` 这类提示词规则有没有让模型改用专用工具；访问工作区外路径的 bash 调用不计入（专用工具到不了那里）。分类是按命令文本的启发式（`src/trace/bash-usage.ts`），只适合比较两次运行，不适合判断单次调用。评测不提供 `web_search` 和 `web_fetch`；模型 API 仍需联网，bash 也没有网络隔离，因此不能保证结果完全不受网络影响。
 
 新增任务：在 `eval/tasks/` 下建目录，放 `task.json`、`repo/`、`check/`、`solution/`，然后跑 `--validate`。
 
@@ -247,13 +260,22 @@ src/
     system-prompt.ts    ★ system prompt 与 AGENTS.md 注入
     truncate.ts         ★ 工具输出截断策略
     permissions.ts      ★ 审批策略：模式、只读 bash 命令放行
+    context.ts          请求 token 估算与上下文预算
+    verification.ts     固定检查命令、文件指纹与完成验收
+    skills.ts           技能发现、加载与会话快照
+    limits.ts / cycle-guard.ts  步数、费用、重复调用与停滞检测
     trace.ts            span / 事件写入（写入前脱敏常见凭据）
-  providers/openai.ts   内部格式 ↔ OpenAI Chat Completions（流式 tool_calls 拼接、非流式回退）
+  providers/
+    pi.ts               原生厂商适配：Pi SDK 流式传输、工具调用、思考与用量
+    openai.ts           Chat Completions 兼容适配：流式 tool_calls 拼接、非流式回退
+    catalog.ts          原生模型目录、能力与思考强度校验
+    store.ts            厂商凭据：用户目录保存、对界面掩码
   tools/                read_file / write_file / edit_file / list_dir / glob / grep / plan / multi_agent / bash / web_search / web_fetch
   session/
     store.ts            会话目录读写
     runner.ts           单个会话：历史、事件回放、审批、计划、子 agent（scout/worker、worktree）、运行中的 turn、压缩、每步保存
     events.ts           界面事件类型
+    commands.ts         CLI / GUI 共用的斜杠命令
   trace/analyze.ts      从 trace.jsonl 计算统计（含成本）、按 turn 组织 span
   trace/bash-usage.ts   bash 命令分类：读/搜/改文件、工作区外、其他（eval 的 bash file ops 指标）
   eval/
@@ -272,8 +294,14 @@ src/
     pick-folder.ts      弹出系统文件夹选择框
     remote/             --remote / --public：tailscale 状态与 serve（tailscale.ts）、Cloudflare Access 令牌校验（cf-access.ts）、来访者校验（access.ts）、设备与配对码（devices.ts）、审计日志（audit.ts）、接口（routes.ts）
     *.html / common.*   主页面（会话 / 设置，统计和迭代记录以 iframe 嵌入）、统计、迭代记录、原文件、配对页
-eval/tasks/             10 个练习任务（repo / check / solution / task.json）
+eval/tasks/             15 个练习任务（repo / check / solution / task.json；npm run eval -- --list 查看）
 test/                   loop、tools、权限、协议转换（含流式）、trace/脱敏、会话、HTTP 接口、eval
 ```
 
 ★ 标记的文件是"决策点"，详见 [DECISIONS.md](DECISIONS.md)。
+
+<a id="orca--opencode"></a>
+
+## 开发本仓库：Orca / OpenCode
+
+[opencode.json](opencode.json) 为开发本仓库的 OpenCode CLI 指定 `deepseek/deepseek-chat` 和 DeepSeek 兼容端点，并通过 `{env:OPENAI_API_KEY}` 引用环境变量，不保存密钥。在 Orca 中启动 OpenCode 时需确保该环境变量可用。这份配置不控制 RawCodingAgent 的模型选择；后者通过网页设置或 `.env` 中的兼容端点配置完成。
