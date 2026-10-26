@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 612" role="img" aria-labelledby="overview-title overview-desc" id="overview-root">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 584" role="img" aria-labelledby="overview-title overview-desc" id="overview-root">
 
 
   <title id="overview-title">系统总览</title>
@@ -30,99 +30,98 @@
   </defs>
 
 
-  <rect width="960" height="612" fill="#f6f5f0"/>
+  <rect width="720" height="584" fill="#f6f5f0"/>
 
 
   <text x="40" y="44" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="600" fill="#26251f">系统总览</text>
 
 
-  <text x="40" y="72" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">同一套 Agent 核心，按 CLI / GUI / 评测入口启动。</text>
-  <path data-edge="user-runtime" d="M 480 168 V 224" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
+  <text x="40" y="72" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">源码确认 · CLI、GUI 与评测复用同一套 Agent 核心。</text>
+  <path data-edge="user-runtime" d="M 360 168 V 224" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
   <g data-label="启动进程">
-    <rect x="496" y="182" width="80" height="20" rx="2" fill="#f6f5f0"/>
-    <text x="536" y="196" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">启动进程</text>
+    <rect x="376" y="182" width="80" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="416" y="196" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">启动进程</text>
   </g>
-  <path data-edge="browser-runtime" d="M 256 264 H 344" fill="none" stroke="#1d7a75" stroke-width="1.5" marker-end="url(#overview-link)"/>
+  <path data-edge="browser-runtime" d="M 208 264 H 272" fill="none" stroke="#1d7a75" stroke-width="1.5" marker-end="url(#overview-link)"/>
   <g data-label="HTTP">
-    <rect x="268" y="234" width="64" height="20" rx="2" fill="#f6f5f0"/>
-    <text x="300" y="248" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">HTTP</text>
+    <rect x="214" y="234" width="52" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="240" y="248" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">HTTP</text>
   </g>
-  <path data-edge="runtime-browser" d="M 344 300 H 256" fill="none" stroke="#1d7a75" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#overview-open)"/>
+  <path data-edge="runtime-browser" d="M 272 300 H 208" fill="none" stroke="#1d7a75" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#overview-open)"/>
   <g data-label="SSE">
-    <rect x="274" y="306" width="52" height="20" rx="2" fill="#f6f5f0"/>
-    <text x="300" y="320" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">SSE</text>
+    <rect x="218" y="306" width="44" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="240" y="320" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">SSE</text>
   </g>
-  <path data-edge="runtime-model" d="M 616 264 H 704" fill="none" stroke="#1d7a75" stroke-width="1.5" marker-end="url(#overview-link)"/>
+  <path data-edge="runtime-model" d="M 448 264 H 512" fill="none" stroke="#1d7a75" stroke-width="1.5" marker-end="url(#overview-link)"/>
   <g data-label="HTTP(S)">
-    <rect x="622" y="234" width="76" height="20" rx="2" fill="#f6f5f0"/>
-    <text x="660" y="248" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">HTTP(S)</text>
+    <rect x="448" y="234" width="64" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="480" y="248" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">HTTP(S)</text>
   </g>
-  <path data-edge="runtime-web" d="M 616 316 H 664 Q 672 316 672 324 V 476 Q 672 484 680 484 H 704" fill="none" stroke="#1d7a75" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#overview-link)"/>
+  <path data-edge="runtime-web" d="M 448 316 H 472 Q 480 316 480 324 V 452 Q 480 460 488 460 H 512" fill="none" stroke="#1d7a75" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#overview-link)"/>
   <g data-label="联网工具">
-    <rect x="680" y="374" width="96" height="20" rx="2" fill="#f6f5f0"/>
-    <text x="728" y="388" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">联网工具</text>
+    <rect x="488" y="374" width="96" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="536" y="388" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#1d7a75">联网工具</text>
   </g>
-  <path data-edge="runtime-data" d="M 400 336 V 380 Q 400 388 392 388 H 156 Q 148 388 148 396 V 440" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
+  <path data-edge="runtime-data" d="M 304 336 V 372 Q 304 380 296 380 H 128 Q 120 380 120 388 V 416" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
   <g data-label="保存 / 恢复">
-    <rect x="208" y="358" width="104" height="20" rx="2" fill="#f6f5f0"/>
-    <text x="260" y="372" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">保存 / 恢复</text>
+    <rect x="156" y="350" width="104" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="208" y="364" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">保存 / 恢复</text>
   </g>
-  <path data-edge="runtime-workspace" d="M 536 336 V 440" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
+  <path data-edge="runtime-workspace" d="M 400 336 V 416" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
   <g data-label="文件 / SHELL">
-    <rect x="544" y="374" width="104" height="20" rx="2" fill="#f6f5f0"/>
-    <text x="596" y="388" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">文件 / SHELL</text>
+    <rect x="288" y="386" width="104" height="20" rx="2" fill="#f6f5f0"/>
+    <text x="340" y="400" text-anchor="middle" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="500" fill="#6e6b5e">文件 / SHELL</text>
   </g>
   <g id="developer" data-node="developer">
-    <rect x="344" y="88" width="272" height="80" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
-    <text x="360" y="108" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">USER</text>
-    <text x="360" y="132" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">开发者</text>
-    <text x="360" y="152" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">npm start / gui / eval</text>
+    <rect x="272" y="88" width="176" height="80" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="288" y="108" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">USER</text>
+    <text x="288" y="132" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">开发者</text>
+    <text x="288" y="152" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">npm start / gui / eval</text>
   </g>
   <g id="browser" data-node="browser">
-    <rect x="40" y="232" width="216" height="96" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
-    <text x="56" y="252" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">CLIENT</text>
-    <text x="56" y="276" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">浏览器界面</text>
-    <text x="56" y="296" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">HTML + JS · GUI 模式</text>
+    <rect x="32" y="232" width="176" height="96" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="48" y="252" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">CLIENT</text>
+    <text x="48" y="276" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">浏览器界面</text>
+    <text x="48" y="296" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">HTML + JS · GUI</text>
   </g>
   <g id="runtime" data-node="runtime">
-    <rect x="344" y="224" width="272" height="112" rx="6" fill="#f6ead0" stroke="#8f5c00" stroke-width="1.5"/>
-    <text x="360" y="244" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">NODE.JS 24+</text>
-    <text x="360" y="268" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">RawCodingAgent</text>
-    <text x="360" y="288" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">CLI / GUI / eval / eval:swe</text>
-    <text x="360" y="308" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">会话、主循环、工具</text>
+    <rect x="272" y="224" width="176" height="112" rx="6" fill="#f6ead0" stroke="#8f5c00" stroke-width="1.5"/>
+    <text x="288" y="244" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">NODE.JS 24+</text>
+    <text x="288" y="268" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">Agent 运行时</text>
+    <text x="288" y="288" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">CLI / GUI / 评测</text>
+    <text x="288" y="308" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">会话 / 主循环 / 工具</text>
   </g>
   <g id="models" data-node="models">
-    <rect x="704" y="224" width="216" height="88" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
-    <text x="720" y="244" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">EXTERNAL</text>
-    <text x="720" y="268" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">模型服务</text>
-    <text x="720" y="288" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">原生厂商 / 兼容端点</text>
+    <rect x="512" y="224" width="176" height="88" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="528" y="244" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">EXTERNAL</text>
+    <text x="528" y="268" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">模型服务</text>
+    <text x="528" y="288" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">原生厂商 / 兼容端点</text>
   </g>
   <g id="web" data-node="web">
-    <rect x="704" y="440" width="216" height="88" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4"/>
-    <text x="720" y="460" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">OPTIONAL</text>
-    <text x="720" y="484" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">外部资料</text>
-    <text x="720" y="504" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">网页 / Tavily</text>
+    <rect x="512" y="416" width="176" height="88" rx="6" fill="#f6f5f0" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="528" y="436" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">OPTIONAL</text>
+    <text x="528" y="460" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">外部资料</text>
+    <text x="528" y="480" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">网页 / Tavily</text>
   </g>
   <g id="data" data-node="data">
-    <rect x="40" y="440" width="216" height="88" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
-    <text x="56" y="460" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">LOCAL FILES</text>
-    <text x="56" y="484" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">会话与配置文件</text>
-    <text x="56" y="504" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">JSON / JSONL / 凭据</text>
+    <rect x="32" y="416" width="176" height="88" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="48" y="436" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">LOCAL FILES</text>
+    <text x="48" y="460" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">会话与配置文件</text>
+    <text x="48" y="480" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">JSON / JSONL / 凭据</text>
   </g>
   <g id="workspace" data-node="workspace">
-    <rect x="344" y="440" width="272" height="88" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
-    <text x="360" y="460" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">HOST RESOURCES</text>
-    <text x="360" y="484" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">目标工作区与命令</text>
-    <text x="360" y="504" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">项目文件 / Git / shell</text>
+    <rect x="272" y="416" width="176" height="88" rx="6" fill="#edebe4" stroke="#6e6b5e" stroke-width="1.5"/>
+    <text x="288" y="436" text-anchor="start" font-family="ui-monospace, 'Cascadia Mono', Consolas, monospace" font-size="9" font-weight="500" fill="#6e6b5e">HOST RESOURCES</text>
+    <text x="288" y="460" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" font-weight="600" fill="#26251f">目标工作区</text>
+    <text x="288" y="480" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">项目文件 / Git / shell</text>
   </g>
-  <path d="M 40 552 H 920" stroke="#d6d3c7"/>
-  <path data-edge="legend-call" d="M 40 576 H 76" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
-  <text x="88" y="580" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">调用</text>
-  <path data-edge="legend-return" d="M 176 576 H 212" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#overview-arrow)"/>
-  <text x="224" y="580" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">可选 / 回调</text>
-  <path data-edge="legend-api" d="M 424 576 H 460" fill="none" stroke="#1d7a75" stroke-width="1.5" marker-end="url(#overview-link)"/>
-  <text x="472" y="580" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">HTTP(S) / SSE</text>
-  <text x="920" y="580" text-anchor="end" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">确认事实 · 运行时关系</text>
+  <path d="M 32 532 H 688" stroke="#d6d3c7"/>
+  <path data-edge="legend-call" d="M 32 556 H 64" fill="none" stroke="#6e6b5e" stroke-width="1.5" marker-end="url(#overview-arrow)"/>
+  <text x="76" y="560" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">调用</text>
+  <path data-edge="legend-optional" d="M 180 556 H 212" fill="none" stroke="#6e6b5e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#overview-arrow)"/>
+  <text x="224" y="560" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">可选 / 事件</text>
+  <path data-edge="legend-api" d="M 440 556 H 472" fill="none" stroke="#1d7a75" stroke-width="1.5" marker-end="url(#overview-link)"/>
+  <text x="484" y="560" text-anchor="start" font-family="system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12" font-weight="400" fill="#6e6b5e">HTTP(S) / SSE</text>
 
 
 </svg>
