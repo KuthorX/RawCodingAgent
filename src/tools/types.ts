@@ -3,6 +3,8 @@ import type { PlanController } from "./plan.ts";
 
 export interface ToolContext {
   workspace: string;
+  // Files the user attached to this session; readable even though they live outside the workspace.
+  attachmentsDir?: string;
   // The tool_call this run belongs to; child-agent tools use it to group their events.
   callId?: string;
   // Sanitized process environment for subprocess tools. Omitted in direct tool tests, where process.env is used.

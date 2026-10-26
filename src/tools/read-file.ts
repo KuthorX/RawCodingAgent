@@ -33,7 +33,13 @@ export const readFileTool: Tool = {
     const path = requireString(input, "path");
     const offset = optionalPositiveInt(input, "offset") ?? 1;
     const limit = optionalPositiveInt(input, "limit") ?? DEFAULT_LIMIT;
-    const text = await readFile(resolveInWorkspace(ctx.workspace, path), "utf8");
+    const resolved = resolveInWorkspace(ctx.workspace, path, ctx.attachmentsDir ? [ctx.attachmentsDir] : []);
+    const bytes = await readFile(resolved);
+    // A PDF or an archive attached by the user would otherwise be shown as replacement characters.
+    if (bytes.subarray(0, 4096).includes(0)) {
+      throw new ToolError(`${path} looks like binary data (${bytes.length} bytes); read_file only reads UTF-8 text`);
+    }
+    const text = bytes.toString("utf8");
     // Split on \n only and drop a trailing \r, so CRLF files show the same text the model will pass to edit_file.
     const lines = text.split("\n").map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
     if (text.endsWith("\n")) lines.pop();

@@ -82,7 +82,12 @@ export function createRuntime(defaultApprovalMode: ApprovalMode, options: Runtim
   const webTools = options.webSearch === false ? [] : [webFetchTool, ...(webSearch ? [webSearch] : [])];
   const toolEnv = sanitizeToolEnv(process.env);
   delete process.env.TAVILY_API_KEY;
-  const makeSystem = (workspace: string) => buildSystemPrompt(workspace, config.promptRules, loadProjectInstructions(workspace));
+  const makeSystem = (workspace: string) => buildSystemPrompt(
+    workspace,
+    config.promptRules,
+    loadProjectInstructions(workspace),
+    settings.get().customInstructions.trim() || null,
+  );
 
   return {
     store,

@@ -22,7 +22,15 @@ export interface ImageAttachment {
   mediaType: string; // image/png, image/jpeg, ...
 }
 
-export type UserMessage = { role: "user"; content: string; images?: ImageAttachment[] };
+// Any other file: saved in the session's attachments directory and readable through the file tools.
+export interface FileAttachment {
+  path: string; // absolute, inside <session>/attachments/
+  name: string; // what the user called it, e.g. report.pdf
+  mediaType: string;
+  bytes: number;
+}
+
+export type UserMessage = { role: "user"; content: string; images?: ImageAttachment[]; files?: FileAttachment[] };
 
 export type Message =
   | UserMessage

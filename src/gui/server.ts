@@ -10,6 +10,7 @@ import { IMAGE_TYPES, isAttachmentName, isSessionFile, isSessionId, type Session
 import { parsePlanItems } from "../tools/plan.ts";
 import { ToolError } from "../tools/types.ts";
 import { HttpError, readJson, sendBytes, sendJson, sendText, tokenMatches } from "./http.ts";
+import { MAX_CUSTOM_INSTRUCTIONS } from "./settings.ts";
 import type { SessionManager } from "./manager.ts";
 import { pickFolder as nativePickFolder, type PickFolder } from "./pick-folder.ts";
 import { commitDetail, loadIterations } from "./iterations.ts";
@@ -48,8 +49,10 @@ function fileName(raw: unknown) {
 
 const MAX_IMAGES = 8;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_FILES = 4;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
 // Base64 is 4/3 of the raw size; plus room for the text.
-const MAX_MESSAGE_BODY = Math.ceil((MAX_IMAGES * MAX_IMAGE_BYTES * 4) / 3) + 1_000_000;
+const MAX_MESSAGE_BODY = Math.ceil(((MAX_IMAGES * MAX_IMAGE_BYTES + MAX_FILES * MAX_FILE_BYTES) * 4) / 3) + 1_000_000;
 
 // "images": data URLs of pasted images (png / jpeg / gif / webp, at most MAX_IMAGES of MAX_IMAGE_BYTES each).
 function parseImages(raw: unknown): { data: Buffer; mediaType: string }[] {
@@ -62,6 +65,25 @@ function parseImages(raw: unknown): { data: Buffer; mediaType: string }[] {
     const data = Buffer.from(m[2]!, "base64");
     if (data.length > MAX_IMAGE_BYTES) throw new HttpError(413, `image ${i + 1} is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
     return { data, mediaType: m[1]! };
+  });
+}
+
+// "files": any other attachment. Each item is { name, mediaType, data } with data a base64 data URL; the file is
+// saved in the session's attachments directory and the agent reads it with read_file.
+function parseFiles(raw: unknown): { name: string; mediaType: string; data: Buffer }[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new HttpError(400, '"files" must be an array');
+  if (raw.length > MAX_FILES) throw new HttpError(400, `at most ${MAX_FILES} files per message`);
+  return raw.map((item, i) => {
+    if (typeof item !== "object" || item === null) throw new HttpError(400, `file ${i + 1}: expected an object`);
+    const { name, mediaType, data } = item as { name?: unknown; mediaType?: unknown; data?: unknown };
+    if (typeof name !== "string" || !name.trim() || name.length > 200) throw new HttpError(400, `file ${i + 1}: "name" must be 1-200 characters`);
+    if (mediaType !== undefined && typeof mediaType !== "string") throw new HttpError(400, `file ${i + 1}: "mediaType" must be a string`);
+    const match = typeof data === "string" ? /^data:([^;,]*);base64,([A-Za-z0-9+/=]+)$/.exec(data) : null;
+    if (!match) throw new HttpError(400, `file ${i + 1}: "data" must be a base64 data URL`);
+    const bytes = Buffer.from(match[2]!, "base64");
+    if (bytes.length > MAX_FILE_BYTES) throw new HttpError(413, `file ${i + 1} is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB`);
+    return { name: name.trim(), mediaType: String(mediaType ?? match[1] ?? ""), data: bytes };
   });
 }
 
@@ -250,8 +272,8 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
     case "GET attachment": {
       const name = url.searchParams.get("name") ?? "";
       if (!isAttachmentName(name)) throw new HttpError(400, "invalid attachment name");
-      const ext = name.split(".").pop();
-      const type = Object.keys(IMAGE_TYPES).find((t) => IMAGE_TYPES[t] === ext)!;
+      const ext = name.split(".").pop()?.toLowerCase() ?? "";
+      const type = Object.entries(IMAGE_TYPES).find(([, known]) => known === ext)?.[0] ?? "application/octet-stream";
       const path = manager.store.attachmentPath(id, name);
       if (!existsSync(path)) throw new HttpError(404, "attachment not found");
       return sendBytes(res, type, readFileSync(path));
@@ -269,13 +291,14 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       const body = await readJson(req, MAX_MESSAGE_BODY);
       const text = typeof body.text === "string" ? body.text.trim() : "";
       const images = parseImages(body.images);
-      if (!text && images.length === 0) throw new HttpError(400, '"text" must be a non-empty string (or attach images)');
+      const files = parseFiles(body.files);
+      if (!text && images.length === 0 && files.length === 0) throw new HttpError(400, '"text" must be a non-empty string (or attach files)');
       const runner = manager.get(id);
       let task = text;
       // A command is user input too: echo it before its output, whether or not it also starts a task.
       let commandLine = text.startsWith("/") ? text : "";
       try {
-        if (text.startsWith("/") && images.length) throw new CommandError("命令不接受图片，请先移除附件，再单独发送任务和图片");
+        if (text.startsWith("/") && (images.length || files.length)) throw new CommandError("命令不接受附件，请先移除附件，再单独发送任务");
         const result = runCommand(runner, text, startMode);
         if (result) {
           result.done?.catch((err: unknown) => process.stderr.write(`session ${id}: ${String(err)}\n`));
@@ -293,9 +316,13 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
         throw err;
       }
       const saved = images.map((img) => manager.store.saveAttachment(id, img.data, img.mediaType));
+      const savedFiles = files.map((file) => {
+        const stored = manager.store.saveAttachment(id, file.data, file.mediaType, file.name);
+        return { path: stored.path, name: file.name, mediaType: file.mediaType, bytes: stored.bytes };
+      });
       let sent;
       try {
-        sent = runner.send(task, saved, commandLine || task);
+        sent = runner.send(task, saved, savedFiles, commandLine || task);
       } catch (err) {
         if (err instanceof SendRejected) throw new HttpError(409, err.message);
         throw err;
@@ -465,8 +492,9 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
         if (body.defaultModel !== undefined && (typeof body.defaultModel !== "string" || !body.defaultModel.trim())) throw new HttpError(400, '"defaultModel" must be a non-empty string');
         if (body.notifications !== undefined && typeof body.notifications !== "boolean") throw new HttpError(400, '"notifications" must be a boolean');
         if (body.compactionTokens !== undefined && (typeof body.compactionTokens !== "number" || !Number.isInteger(body.compactionTokens) || body.compactionTokens < 0)) throw new HttpError(400, '"compactionTokens" must be an integer >= 0');
+        if (body.customInstructions !== undefined && (typeof body.customInstructions !== "string" || body.customInstructions.length > MAX_CUSTOM_INSTRUCTIONS)) throw new HttpError(400, `"customInstructions" must be a string of at most ${MAX_CUSTOM_INSTRUCTIONS} characters`);
         const modelSettings = body.defaultModel !== undefined || body.defaultProvider !== undefined || body.defaultThinkEffort !== undefined;
-        if (body.newSessionApproval === undefined && !modelSettings && body.notifications === undefined && body.compactionTokens === undefined) throw new HttpError(400, "nothing to change");
+        if (body.newSessionApproval === undefined && !modelSettings && body.notifications === undefined && body.compactionTokens === undefined && body.customInstructions === undefined) throw new HttpError(400, "nothing to change");
         const current = manager.settings.get();
         const selection = modelSettings ? await manager.validateSelection({ provider: body.defaultProvider, model: body.defaultModel, thinkEffort: body.defaultThinkEffort }, { provider: current.defaultProvider, model: current.defaultModel, thinkEffort: current.defaultThinkEffort }) : null;
         sendJson(res, 200, manager.settings.update({
@@ -474,6 +502,7 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
           ...(selection ? { defaultProvider: selection.provider, defaultModel: selection.model, defaultThinkEffort: selection.thinkEffort } : {}),
           ...(body.notifications !== undefined ? { notifications: body.notifications } : {}),
           ...(body.compactionTokens !== undefined ? { compactionTokens: body.compactionTokens } : {}),
+          ...(body.customInstructions !== undefined ? { customInstructions: body.customInstructions } : {}),
         }));
       });
     }

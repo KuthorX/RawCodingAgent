@@ -10,7 +10,7 @@ type SessionEventBody =
   | AgentEvent
   // queued: sent while a turn was running (an interjection), delivered at the next step.
   // images: attachment file names in the session's attachments/ directory.
-  | { type: "user"; text: string; queued?: boolean; images?: string[] }
+  | { type: "user"; text: string; queued?: boolean; images?: string[]; files?: { name: string; label: string; bytes: number }[] }
   // A command the user typed (/help, /plan, /multiagent …). It never enters the model history, but it is user input,
   // so the transcript and its replay show it before the command's own output.
   | { type: "command"; text: string }

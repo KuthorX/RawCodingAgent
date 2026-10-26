@@ -103,3 +103,21 @@ test("store: attachment names are validated", () => {
   assert.throws(() => store.attachmentPath(meta.id, "../meta.json"), /invalid attachment name/);
   assert.throws(() => store.saveAttachment(meta.id, PNG, "image/svg+xml"), /unsupported image type/);
 });
+
+test("an attached file is saved and named in the message the model sees", async () => {
+  const provider = new ScriptedProvider([reply("ok")]);
+  const runtime = testRuntime(provider);
+  const meta = runtime.store.create(tempWorkspace(), "m", "auto");
+  const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
+  const stored = runtime.store.saveAttachment(meta.id, Buffer.from("hello attachment"), "text/plain", "note.txt");
+  assert.equal(stored.name.endsWith(".txt"), true);
+  const done = runner.send("read it", [], [{ path: stored.path, name: "note.txt", mediaType: "text/plain", bytes: stored.bytes }]);
+  await done.done;
+  const first = runtime.store.loadMessages(meta.id)[0]!;
+  assert.ok(first.role === "user");
+  assert.match(first.content, /\[Attached files\]/);
+  assert.match(first.content, /note\.txt/);
+  assert.match(first.content, new RegExp(stored.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const event = runtime.store.loadEvents(meta.id).find((entry): entry is Extract<SessionEvent, { type: "user" }> => entry.type === "user");
+  assert.deepEqual(event!.files, [{ name: stored.name, label: "note.txt", bytes: stored.bytes }]);
+});

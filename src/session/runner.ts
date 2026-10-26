@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentDeps, AgentEvent, TurnResult } from "../agent/loop.ts";
 import { completeModel, ModelBudgetError, runTurn, TurnAbortedError } from "../agent/loop.ts";
 import type { ApprovalMode, Confirm } from "../agent/permissions.ts";
-import type { ImageAttachment, Message, Provider, UserMessage } from "../types.ts";
+import type { FileAttachment, ImageAttachment, Message, Provider, UserMessage } from "../types.ts";
 import type { ModelSelection } from "../providers/catalog.ts";
 import { ContextLimitError, estimateTokens, requestTokens, textTokens } from "../agent/context.ts";
 import { Verification } from "../agent/verification.ts";
@@ -137,7 +137,13 @@ function isInterrupted(events: SessionEvent[]): boolean {
 // Interjections that arrived too late for their turn start the next one as a single message.
 function mergeMessages(queue: UserMessage[]): UserMessage {
   const images = queue.flatMap((m) => m.images ?? []);
-  return { role: "user", content: queue.map((m) => m.content).filter(Boolean).join("\n\n"), ...(images.length ? { images } : {}) };
+  const files = queue.flatMap((m) => m.files ?? []);
+  return {
+    role: "user",
+    content: queue.map((m) => m.content).filter(Boolean).join("\n\n"),
+    ...(images.length ? { images } : {}),
+    ...(files.length ? { files } : {}),
+  };
 }
 
 // Owns one persisted conversation: history, replayable event log, approvals, and the running turn.
@@ -201,6 +207,7 @@ export class SessionRunner {
       plan: this.plan,
       spawnAgents: (tasks, callId, signal) => this.spawnAgents(tasks, callId, signal),
     });
+    this.deps.attachmentsDir = this.store.attachmentsDir(this.id);
     this.baseSystem = this.deps.system;
     this.deps.system = this.systemFor();
     if (this.meta.skills?.length) this.deps.tracer.log("skills", { skills: this.meta.skills, system: this.deps.system });
@@ -438,9 +445,28 @@ export class SessionRunner {
   // (or as the next turn if the current one ends first). `done` resolves when the session is idle again.
   // display: what the transcript shows. A command that also carries a task sends only the task to the model, while
   // the user still sees the line they typed ("/plan inspect the repo").
-  send(text: string, images: (ImageAttachment & { name: string })[] = [], display = text): { queued: boolean; done: Promise<void> } {
-    const message: UserMessage = { role: "user", content: text, ...(images.length ? { images: images.map(({ path, mediaType }) => ({ path, mediaType })) } : {}) };
-    const names = images.length ? { images: images.map((i) => i.name) } : {};
+  send(
+    text: string,
+    images: (ImageAttachment & { name: string })[] = [],
+    files: FileAttachment[] = [],
+    display = text,
+  ): { queued: boolean; done: Promise<void> } {
+    // The model needs the paths: attached files live outside the workspace, so read_file is the only way in.
+    const manifest = files.length
+      ? `[Attached files]\n${files.map((file) => `- ${file.path} (${file.name}, ${file.bytes} bytes, ${file.mediaType || "unknown type"})`).join("\n")}\n` +
+        "Read them with read_file; the paths are absolute. Images are attached to the message itself."
+      : "";
+    const content = [text, manifest].filter(Boolean).join("\n\n");
+    const message: UserMessage = {
+      role: "user",
+      content,
+      ...(images.length ? { images: images.map(({ path, mediaType }) => ({ path, mediaType })) } : {}),
+      ...(files.length ? { files } : {}),
+    };
+    const names = {
+      ...(images.length ? { images: images.map((i) => i.name) } : {}),
+      ...(files.length ? { files: files.map((file) => ({ name: file.path.split("/").pop() ?? "", label: file.name, bytes: file.bytes })) } : {}),
+    };
     if (this.running) {
       this.queue = [...this.queue, message];
       this.emit({ type: "user", text: display, queued: true, ...names });

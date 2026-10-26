@@ -72,7 +72,7 @@ export const listDirTool: Tool = {
   dangerous: false,
   async run(input, ctx) {
     const rel = optionalString(input, "path") ?? ".";
-    const root = resolveInWorkspace(ctx.workspace, rel);
+    const root = resolveInWorkspace(ctx.workspace, rel, ctx.attachmentsDir ? [ctx.attachmentsDir] : []);
     const depth = optionalDepth(input);
     const info = await stat(root);
     if (!info.isDirectory()) throw new ToolError(`"${rel}" is not a directory`);

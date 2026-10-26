@@ -42,3 +42,11 @@ test("an empty AGENTS.md is ignored and a huge one is truncated", () => {
   assert.equal(loaded.length > MAX_PROJECT_INSTRUCTIONS_CHARS, true);
   assert.match(loaded, /truncated at 20000 characters/);
 });
+
+test("custom instructions come before the repository's own instructions", () => {
+  const prompt = buildSystemPrompt("/w", [], "REPO RULES", "回答用中文，改完先跑测试");
+  assert.match(prompt, /## Custom instructions\n回答用中文，改完先跑测试/);
+  assert.ok(prompt.indexOf("回答用中文") < prompt.indexOf("REPO RULES"), "the repository gets the last word");
+  // Nothing extra when the setting is empty.
+  assert.doesNotMatch(buildSystemPrompt("/w", [], null, ""), /Custom instructions/);
+});

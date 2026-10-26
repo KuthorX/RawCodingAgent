@@ -69,9 +69,16 @@ export function loadProjectInstructions(workspace: string): string | null {
     : `${text.slice(0, MAX_PROJECT_INSTRUCTIONS_CHARS)}\n[... repository instructions truncated at ${MAX_PROJECT_INSTRUCTIONS_CHARS} characters]`;
 }
 
-export function buildSystemPrompt(workspace: string, rules: readonly PromptRule[] = [], projectInstructions: string | null = null): string {
+export function buildSystemPrompt(
+  workspace: string,
+  rules: readonly PromptRule[] = [],
+  projectInstructions: string | null = null,
+  customInstructions: string | null = null,
+): string {
   const lines = BASE.map((line) => line.replace("{workspace}", () => workspace));
   lines.push(...rules.map((r) => PROMPT_RULES[r]));
+  // The user's own instructions (Settings → 指令) apply to every session, in every workspace.
+  if (customInstructions) lines.push(`## Custom instructions\n${customInstructions}`);
   // Last, so repository-specific conventions can refine the generic rules above.
   if (projectInstructions) lines.push(`## Repository instructions (AGENTS.md)\n${projectInstructions}`);
   return lines.join("\n");

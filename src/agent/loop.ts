@@ -20,6 +20,8 @@ export interface AgentDeps {
   workspace: string;
   // Environment passed to subprocess tools; credentials are removed by createRuntime.
   toolEnv?: NodeJS.ProcessEnv;
+  // The session's attachments directory: file tools may read attached files even though they sit outside the workspace.
+  attachmentsDir?: string;
   plan?: PlanController;
   // Spawns child agents for the multi_agent tool. Children inherit this deps object with their own overrides.
   spawnAgents?: SpawnAgents;
@@ -167,7 +169,7 @@ async function runTool(call: ToolCall, deps: AgentDeps, signal?: AbortSignal): P
     signal?.throwIfAborted();
     await deps.beforeTool?.(call);
     signal?.throwIfAborted();
-    const output = await tool.run(call.input, { workspace: deps.workspace, callId: call.id, signal, env: deps.toolEnv, plan: deps.plan });
+    const output = await tool.run(call.input, { workspace: deps.workspace, attachmentsDir: deps.attachmentsDir, callId: call.id, signal, env: deps.toolEnv, plan: deps.plan });
     await deps.afterTool?.(call);
     return { result: { callId: call.id, content: truncateOutput(output), isError: false, observationHash: observationHash(call.name, output) }, approval, approvalMs };
   } catch (err) {

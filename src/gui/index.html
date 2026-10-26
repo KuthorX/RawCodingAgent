@@ -43,6 +43,9 @@
   .setting input[type=number], .setting input[type=url], .setting input[type=password], .setting select { height: 26px; min-width: 150px; padding: 0 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font: inherit; }
   .setting input:focus, .setting select:focus { outline: none; border-color: var(--accent); }
   .setting p { margin: 4px 0 0 36px; font-size: 12px; color: var(--muted); }
+  /* The one free-form setting: a real textarea, not the 20-column default. */
+  .setting textarea { display: block; width: 100%; min-height: 120px; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); font-size: 12px; resize: vertical; }
+  .setting textarea:focus { outline: none; border-color: var(--accent); }
   .setting p.flat { margin-left: 0; }
   .model-fields { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(110px, 2fr) minmax(80px, 1fr); gap: 10px; margin: 10px 0 0; min-width: 0; }
   .model-fields label { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; color: var(--muted); font-size: 12px; }
@@ -352,6 +355,37 @@
   .slash-menu .description { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #form { max-width: 960px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-start; }
   #form button { height: 30px; padding: 0 14px; }
+  /* Composer: textarea on top; permission on the left, model choice and send on the right. */
+  #form { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: 0; border: 1px solid var(--line); background: var(--panel); }
+  #form:focus-within { border-color: var(--accent); }
+  #form textarea { padding: 8px 10px 2px; min-height: calc(3 * 1.5em + 10px); max-height: 25vh; overflow-y: auto; }
+  .composer-bar { display: flex; align-items: center; gap: 6px; padding: 2px 6px 6px; min-width: 0; }
+  .composer-bar .grow { flex: 1; min-width: 0; }
+  #form .composer-bar .icon { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 0; background: none; color: var(--muted); font-size: 16px; line-height: 22px; }
+  #form .composer-bar .icon:hover:not(:disabled) { color: var(--ink); background: var(--soft); }
+  #form .composer-bar #send, #form .composer-bar .stop { height: 24px; padding: 0 12px; }
+  .composer-model { display: flex; gap: 4px; min-width: 0; flex: 0 1 auto; }
+  .composer-model label { display: block; min-width: 0; }
+  .composer-model .pick-wrap { width: auto; max-width: 160px; }
+  .composer-model .pick { height: 24px; padding: 0 6px; border-color: transparent; background: none; color: var(--muted); }
+  .composer-model .pick:hover:not(:disabled), .composer-model .pick.on { color: var(--ink); border-color: var(--line); background: var(--bg); }
+  .composer-model label:nth-child(1) .pick-wrap { max-width: 130px; }
+  .composer-model label:nth-child(2) .pick-wrap { max-width: 190px; }
+  .composer-model label:nth-child(3) .pick-wrap { max-width: 110px; }
+  /* The event/statistics dialog: the page in a frame, the raw file in a pre, one way out plus a new tab. */
+  #data-dialog { width: min(1100px, 92vw); max-width: calc(100vw - 24px); padding: 0; }
+  .data-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .data-head h3 { flex: 1; margin: 0; font-size: 13px; font-weight: 600; }
+  .data-head button { border: 0; padding: 0 6px; color: var(--muted); background: none; }
+  .data-body { height: min(70vh, 760px); overflow: auto; background: var(--bg); }
+  .data-body iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--bg); }
+  .data-body pre { margin: 0; padding: 10px 12px; font-size: 11px; line-height: 1.5; white-space: pre; }
+  .data-foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); }
+  .attachment.file { width: auto; min-width: 132px; max-width: 240px; height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 6px 24px 6px 8px; text-align: left; }
+  .attachment.file .name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment.file .size { color: var(--muted); font-size: 11px; }
+  .user .files { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0; }
+  .user .files .size { color: var(--muted); font-size: 11px; margin-right: 8px; }
   textarea { flex: 1; resize: none; font: inherit; background: transparent; border: 0; padding: 5px 0; min-height: 30px; max-height: 200px; caret-color: var(--accent-ink); }
   textarea::placeholder { color: var(--muted); }
   textarea:focus { outline: none; }
@@ -392,6 +426,11 @@
     #log { padding: 0 12px; }
     main { padding: 12px 0; }
     footer { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+    .composer-bar { flex-wrap: wrap; row-gap: 4px; }
+    .composer-model { flex: 1 0 100%; justify-content: flex-end; }
+    .composer-model .pick { height: 30px; }
+    .composer-model .pick-wrap { max-width: none; }
+    .composer-model label { flex: 1; }
     .slash-menu { left: 10px; right: 10px; }
     /* Below 16px iOS zooms the page in on focus. */
     textarea, input[type=text], input[type=search], input[type=password], input[type=url], select { font-size: 16px !important; }
@@ -432,6 +471,7 @@
     <div class="settings-nav" id="settings-nav">
       <button type="button" data-section="model">模型</button>
       <button type="button" data-section="session">会话</button>
+      <button type="button" data-section="instructions">指令</button>
       <button type="button" data-section="ui">界面</button>
       <button type="button" data-section="remote">远程访问</button>
     </div>
@@ -474,6 +514,15 @@
       <p>达到阈值后，agent 会先压缩当前会话上下文；也可以输入 /compact 手动执行。</p>
     </div>
     </section>
+    <section class="settings-section" data-section="instructions">
+    <div class="setting">
+      <label for="set-instructions">自定义指令</label>
+      <textarea id="set-instructions" rows="6" maxlength="8000" placeholder="例如：回答用中文；改完代码先跑 npm test；不要新建 README。"></textarea>
+      <p class="flat">每个会话都会把这段文字加进 system prompt（在仓库的 AGENTS.md 之前），对所有工作区生效。改完要开新会话或重新加载会话才应用到已有的对话。</p>
+      <div class="row"><span class="grow"></span><button type="button" id="set-instructions-save">保存</button></div>
+      <p class="flat setting-status" id="set-instructions-status" role="status" aria-live="polite"></p>
+    </div>
+    </section>
     <section class="settings-section" data-section="ui">
     <div class="setting">
       <div class="row"><b>外观</b><span class="seg" id="set-theme"><button type="button" data-theme="">跟随系统</button><button type="button" data-theme="light">浅色</button><button type="button" data-theme="dark">深色</button></span></div>
@@ -508,17 +557,9 @@
       <span class="dot" id="dot"></span>
       <span class="title" id="head-title"></span>
       <span class="meta grow" id="meta"></span>
-      <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
-        <input type="checkbox" class="switch" id="mode-auto"> <span id="mode-text">每次询问</span>
-      </label>
       <span class="session-mode" id="session-mode" hidden></span>
       <span class="ma-chip" id="ma-chip" hidden></span>
       <span id="head-links"></span>
-      <div class="model-fields" id="model-controls" hidden>
-        <label class="provider-field" for="provider-select">厂商<select id="provider-select" title="本会话使用的厂商"></select></label>
-        <label class="model-field" for="model-select">模型<select id="model-select" title="本会话使用的模型"></select></label>
-        <label class="effort-field" for="effort-select">思考强度<select id="effort-select" title="本会话的思考强度"></select></label>
-      </div>
       <p class="model-hint" id="session-model-hint" role="status" aria-live="polite" hidden></p>
     </div>
     <section class="plan-panel" id="plan-panel" hidden>
@@ -536,13 +577,35 @@
       <div class="slash-menu" id="slash-menu" role="listbox" aria-label="命令和技能" hidden></div>
       <div class="attachments" id="attachments" hidden></div>
       <form id="form">
-        <textarea id="input" rows="1" aria-label="任务或命令" aria-autocomplete="list" aria-controls="slash-menu" aria-expanded="false" placeholder="描述任务，输入 / 选择命令或技能，Shift+Enter 换行"></textarea>
-        <button class="stop" id="stop" type="button" hidden title="中断模型请求和正在运行的命令（Esc）">停止</button>
-        <button class="primary" id="send" type="submit">发送</button>
+        <textarea id="input" rows="3" aria-label="任务或命令" aria-autocomplete="list" aria-controls="slash-menu" aria-expanded="false" placeholder="描述任务，输入 / 选择命令或技能，Shift+Enter 换行"></textarea>
+        <div class="composer-bar">
+          <button class="icon" id="attach" type="button" title="添加附件：也可以直接粘贴或拖入文件" aria-label="添加附件">+</button>
+          <label class="mode" id="mode" hidden title="本会话的权限设置，立即生效（包括正在等待批准的调用）">
+            <input type="checkbox" class="switch" id="mode-auto"> <span id="mode-text">每次询问</span>
+          </label>
+          <span class="grow"></span>
+          <div class="composer-model" id="model-controls" hidden>
+            <label for="provider-select" title="本会话使用的厂商"><select id="provider-select" aria-label="厂商"></select></label>
+            <label for="model-select" title="本会话使用的模型"><select id="model-select" aria-label="模型"></select></label>
+            <label for="effort-select" title="本会话的思考强度"><select id="effort-select" aria-label="思考强度"></select></label>
+          </div>
+          <button class="stop" id="stop" type="button" hidden title="中断模型请求和正在运行的命令（Esc）">停止</button>
+          <button class="primary" id="send" type="submit">发送</button>
+        </div>
+        <input type="file" id="file-picker" multiple hidden>
       </form>
     </footer>
   </section>
 </div>
+<dialog id="data-dialog">
+  <div class="data-head"><h3 id="data-title"></h3><button type="button" id="data-x" title="关闭">×</button></div>
+  <div class="data-body" id="data-body"></div>
+  <div class="data-foot">
+    <button type="button" id="data-newtab">在新标签页打开 ↗</button>
+    <span class="grow"></span>
+    <button type="button" class="primary" id="data-ok">关闭</button>
+  </div>
+</dialog>
 <div class="status" id="status"><span class="state" id="st-state">IDLE</span><span id="st-ctx" hidden></span><span id="st-cost" hidden></span><span class="keys" id="st-keys"></span></div>
 <dialog id="ws-dialog">
   <form method="dialog" id="ws-dialog-form">
@@ -1726,6 +1789,14 @@ const handlers = {
       }
       bubble.append(imgs);
     }
+    if (e.files?.length) {
+      const list = el("div", "files");
+      for (const file of e.files) {
+        list.append(link(withToken(`/api/sessions/${current}/attachment`, { name: file.name }), file.label || file.name, true));
+        list.append(el("span", "size", formatBytes(file.bytes)));
+      }
+      bubble.append(list);
+    }
     if (e.text) bubble.append(e.text);
     if (e.queued) {
       bubble._tag = el("span", "tag", "插话 · 等待送达");
@@ -2225,15 +2296,6 @@ function openSession(id) {
     currentWorkspace = info.workspace;
     loadSessionSelection(info);
     const links = $("head-links");
-    const fork = el("button", "link", "fork");
-    fork.type = "button";
-    fork.id = "fork";
-    fork.title = "复制这个会话的历史，在新会话里继续（原会话不受影响）";
-    fork.onclick = (ev) => {
-      ev.stopPropagation();
-      const r = fork.getBoundingClientRect();
-      sessionMenu({ preventDefault() {}, clientX: r.left, clientY: r.bottom + 4 }, { ...info, workspace: currentWorkspace });
-    };
     const limitsBtn = el("button", "link", "额度");
     limitsBtn.type = "button";
     limitsBtn.title = "本会话的每轮步数、每轮花费和累计花费上限";
@@ -2242,7 +2304,16 @@ function openSession(id) {
     diffBtn.type = "button";
     diffBtn.title = "查看工作区里未提交的改动（git diff）";
     diffBtn.onclick = () => openDiff().catch(notice);
-    links.replaceChildren(fork, limitsBtn, diffBtn, link("#stats/" + current, "统计"), link(rawUrl(current, "events.jsonl"), "事件 ↗", true));
+    const statsBtn = el("button", "link", "统计");
+    statsBtn.type = "button";
+    statsBtn.title = "这个会话的调用、花费和耗时统计";
+    statsBtn.onclick = () => openData("stats").catch(notice);
+    const eventsBtn = el("button", "link", "事件");
+    eventsBtn.type = "button";
+    eventsBtn.title = "这个会话的事件日志（events.jsonl）";
+    eventsBtn.onclick = () => openData("events").catch(notice);
+    // fork 还在会话的右键菜单里；顶部只保留常用的查看入口。
+    links.replaceChildren(limitsBtn, diffBtn, statsBtn, eventsBtn);
     applySessionInfo(info);
     showMode(info.approvalMode);
     setBusy(info.busy);
@@ -2303,7 +2374,9 @@ function restoreDraft(id) {
   if (!draft || draft.session !== id) return;
   sessionStorage.removeItem(DRAFT_KEY);
   input.value = draft.text;
-  attachments = draft.images;
+  attachments = (draft.images ?? []).map((item) => typeof item === "string"
+    ? { kind: "image", data: item, name: "图片", type: "image/png", size: 0 }
+    : item);
 }
 
 // iOS Safari freezes a page in the background and drops its connections, often without an error event, so the
@@ -2329,45 +2402,77 @@ if (REMOTE) {
   addEventListener("online", reconnectEvents);
 }
 
-// ---------- image attachments ----------
-const MAX_IMAGES = 8, MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// ---------- attachments ----------
+// Images go to vision models as attachments; every other file is saved in the session and the agent reads it with
+// read_file. Both arrive through the same tray, paste, drop or the + button.
+const MAX_ATTACHMENTS = 8, MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-let attachments = []; // data URLs, in the order they were added
+let attachments = []; // { kind: "image"|"file", data: dataURL, name, type, size }, in the order added
+
+function formatBytes(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function renderAttachments() {
   const tray = $("attachments");
   tray.hidden = attachments.length === 0;
-  tray.replaceChildren(...attachments.map((url, i) => {
-    const box = el("div", "attachment");
-    const img = el("img");
-    img.src = url;
+  tray.replaceChildren(...attachments.map((item, i) => {
+    const box = el("div", "attachment" + (item.kind === "file" ? " file" : ""));
+    if (item.kind === "image") {
+      const img = el("img");
+      img.src = item.data;
+      img.alt = item.name;
+      box.append(img);
+    } else {
+      box.append(el("span", "name", item.name), el("span", "size", formatBytes(item.size)));
+      box.title = item.name;
+    }
     const remove = el("button", "", "×");
     remove.type = "button";
     remove.title = "移除";
     remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); };
-    box.append(img, remove);
+    box.append(remove);
     return box;
   }));
 }
 
-function addImages(files) {
+function addFiles(files) {
   for (const file of files) {
-    if (!IMAGE_TYPES.includes(file.type)) { toast(`不支持的图片格式：${file.type || file.name}`); continue; }
-    if (file.size > MAX_IMAGE_BYTES) { toast(`图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024} MB：${file.name}`); continue; }
-    if (attachments.length >= MAX_IMAGES) { toast(`一条消息最多 ${MAX_IMAGES} 张图片`); break; }
+    if (attachments.length >= MAX_ATTACHMENTS) { toast(`一条消息最多 ${MAX_ATTACHMENTS} 个附件`); break; }
+    if (file.size > MAX_ATTACHMENT_BYTES) { toast(`附件超过 ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB：${file.name}`); continue; }
+    const image = IMAGE_TYPES.includes(file.type);
+    if (file.type.startsWith("image/") && !image) { toast(`不支持的图片格式：${file.type || file.name}`); continue; }
     const reader = new FileReader();
-    const slot = attachments.push("") - 1; // keep paste order even though reads finish in any order
-    reader.onload = () => { attachments[slot] = reader.result; renderAttachments(); };
+    const slot = attachments.push(null) - 1; // keep paste order even though reads finish in any order
+    reader.onload = () => {
+      attachments[slot] = {
+        kind: image ? "image" : "file",
+        data: reader.result,
+        name: file.name || (image ? "图片" : "附件"),
+        type: file.type,
+        size: file.size,
+      };
+      renderAttachments();
+    };
     reader.onerror = () => { attachments.splice(slot, 1); renderAttachments(); };
     reader.readAsDataURL(file);
   }
 }
 
 input.addEventListener("paste", (ev) => {
-  const files = [...(ev.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
-  if (files.length === 0) return; // plain text paste
+  // A file copied in Finder arrives here as a File; plain text paste has none and is left alone.
+  const files = [...(ev.clipboardData?.files ?? [])];
+  if (files.length === 0) return;
   ev.preventDefault();
-  addImages(files);
+  addFiles(files);
+});
+$("attach").onclick = () => $("file-picker").click();
+$("file-picker").addEventListener("change", (ev) => {
+  addFiles([...ev.target.files]);
+  ev.target.value = "";
 });
 const footer = $("footer");
 footer.addEventListener("dragover", (ev) => {
@@ -2380,7 +2485,7 @@ footer.addEventListener("drop", (ev) => {
   footer.classList.remove("dragging");
   if (!ev.dataTransfer.files.length) return;
   ev.preventDefault();
-  addImages([...ev.dataTransfer.files]);
+  addFiles([...ev.dataTransfer.files]);
 });
 
 let slashCommands = [];
@@ -2467,13 +2572,18 @@ $("form").addEventListener("submit", async (ev) => {
   const draft = input.value;
   const submittedAttachments = attachments;
   const text = input.value.trim();
-  const images = attachments.filter(Boolean);
-  if ((!text && images.length === 0) || !current) return;
+  const images = attachments.filter((item) => item?.kind === "image").map((item) => item.data);
+  const files = attachments.filter((item) => item?.kind === "file").map((item) => ({ name: item.name, mediaType: item.type || "", data: item.data }));
+  if ((!text && images.length === 0 && files.length === 0) || !current) return;
   const session = current;
   const compacting = text === "/compact" || text.startsWith("/compact ");
   if (compacting) setBusy(true);
   try {
-    const result = await api(`/api/sessions/${session}/message`, { text, ...(images.length ? { images } : {}) });
+    const result = await api(`/api/sessions/${session}/message`, {
+      text,
+      ...(images.length ? { images } : {}),
+      ...(files.length ? { files } : {}),
+    });
     if (current !== session) { refreshSessions(); return; }
     // A previous request must not erase the next command or its attachments while the user is typing.
     if (input.value === draft) {
@@ -2691,6 +2801,7 @@ async function loadSettings() {
   if (!providerSaving) fillProviderEditor();
   $("set-notify").checked = settings.notifications;
   $("set-compact").value = settings.compactionTokens;
+  if (document.activeElement !== $("set-instructions")) $("set-instructions").value = settings.customInstructions ?? "";
   syncNotificationStreams();
   return settings;
 }
@@ -2710,6 +2821,18 @@ $("set-notify").addEventListener("change", async (ev) => {
     syncNotificationStreams();
     toast("已保存");
   } catch (e) { ev.target.checked = !ev.target.checked; notice(e); }
+});
+$("set-instructions-save").addEventListener("click", async () => {
+  const status = $("set-instructions-status");
+  status.className = "flat setting-status";
+  status.textContent = "保存中…";
+  try {
+    settings = await api("/api/settings", { customInstructions: $("set-instructions").value });
+    status.textContent = "已保存。新会话开始时就带着这段指令；已经打开的会话要重新打开才生效。";
+  } catch (e) {
+    status.textContent = e.message;
+    status.className = "flat setting-status error";
+  }
 });
 $("set-compact").addEventListener("change", async (ev) => {
   const value = Number(ev.target.value);
@@ -2919,7 +3042,7 @@ for (const select of document.querySelectorAll("select")) enhanceSelect(select);
 
 // ---------- settings sections ----------
 // The settings page is long: one section shows at a time, and the choice survives reloads like the theme.
-const SETTINGS_SECTIONS = ["model", "session", "ui", "remote"];
+const SETTINGS_SECTIONS = ["model", "session", "instructions", "ui", "remote"];
 function showSettings(section = localStorage.getItem("rca.settings") || "model") {
   const active = SETTINGS_SECTIONS.includes(section) ? section : "model";
   for (const button of $("settings-nav").children) button.classList.toggle("on", button.dataset.section === active);
@@ -2932,6 +3055,42 @@ $("settings-nav").addEventListener("click", (ev) => {
   showSettings(section);
 });
 showSettings();
+
+// ---------- statistics / events dialog ----------
+// Both used to leave the page (a tab switch and a new browser tab). They open here instead, with the same content one
+// click away in its own tab via the button at the bottom left.
+async function openData(kind) {
+  const id = current;
+  if (!id) return;
+  const title = kind === "stats" ? "统计" : "事件";
+  // The new tab gets the formatted viewer; the dialog reads the file itself through the file API.
+  // The stats page is one frame that reads its session from the hash, like the stats tab does.
+  const target = kind === "stats" ? `${withToken("/stats")}#${id}` : rawUrl(id, "events.jsonl");
+  $("data-title").textContent = `${title} · ${$("head-title").textContent || id}`;
+  $("data-newtab").onclick = () => window.open(target, "_blank");
+  const body = $("data-body");
+  if (!$("data-dialog").open) $("data-dialog").showModal();
+  if (kind === "stats") {
+    const frame = el("iframe");
+    frame.src = target;
+    frame.title = title;
+    body.replaceChildren(frame);
+    return;
+  }
+  body.replaceChildren(el("div", "empty", "加载中…"));
+  try {
+    const res = await fetch(withToken(`/api/sessions/${id}/file`, { name: "events.jsonl" }));
+    if (!res.ok) throw new Error(String(res.status));
+    const text = await res.text();
+    const MAX = 400_000; // a long session writes a lot; the full file is the button at the bottom
+    const cut = text.length > MAX;
+    body.replaceChildren(el("pre", "", (cut ? `[只显示最后 ${MAX} 个字符，共 ${text.length}；完整内容用左下角按钮]\n\n` : "") + (cut ? text.slice(-MAX) : text)));
+  } catch (err) {
+    body.replaceChildren(el("div", "err", "读取事件失败：" + err.message));
+  }
+}
+$("data-ok").onclick = () => $("data-dialog").close();
+$("data-x").onclick = () => $("data-dialog").close();
 
 // ---------- tabs ----------
 // The address says which tab shows: #stats[/<session>], #iterations[/<commit>], #settings, otherwise #<session> in the chat.

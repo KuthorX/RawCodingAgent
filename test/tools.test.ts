@@ -328,3 +328,13 @@ test("web_fetch refuses non-http URLs, metadata hosts and binary content", async
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("attached files are readable outside the workspace; binaries are refused", async () => {
+  const workspace = tempWorkspace();
+  const attachmentsDir = tempWorkspace();
+  writeFileSync(join(attachmentsDir, "note.txt"), "hello attachment");
+  writeFileSync(join(attachmentsDir, "blob.bin"), Buffer.from([0, 1, 2, 3]));
+  await assert.rejects(readFileTool.run({ path: join(attachmentsDir, "note.txt") }, { workspace }), /outside the workspace/);
+  assert.match(await readFileTool.run({ path: join(attachmentsDir, "note.txt") }, { workspace, attachmentsDir }), /hello attachment/);
+  await assert.rejects(readFileTool.run({ path: join(attachmentsDir, "blob.bin") }, { workspace, attachmentsDir }), /binary/);
+});

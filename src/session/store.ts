@@ -77,9 +77,15 @@ export function isSessionFile(name: string): name is SessionFile {
 const ID_PATTERN = /^[0-9]{8}-[0-9]{6}-[a-f0-9]{6}$/;
 const TITLE_CHARS = 60;
 
-// Pasted images, kept in <session>/attachments/ and referenced from messages and events by file name.
+// Attachments (pasted images and other files) live in <session>/attachments/ and are referenced by file name.
 export const IMAGE_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
-const ATTACHMENT_PATTERN = /^[0-9]+-[a-f0-9]{6}\.(png|jpg|gif|webp)$/;
+// A pasted image keeps its known extension; any other file keeps its own, sanitized.
+const ATTACHMENT_PATTERN = /^[0-9]+-[a-f0-9]{6}(\.[a-z0-9]{1,12})?$/;
+
+function fileExtension(filename: string): string {
+  const ext = /\.([A-Za-z0-9]{1,12})$/.exec(filename)?.[1]?.toLowerCase() ?? "";
+  return ext;
+}
 
 export function isAttachmentName(name: string): boolean {
   return ATTACHMENT_PATTERN.test(name);
@@ -166,14 +172,21 @@ export class SessionStore {
     return this.filePath(id, "trace.jsonl");
   }
 
-  saveAttachment(id: string, data: Buffer, mediaType: string): ImageAttachment & { name: string } {
-    const ext = IMAGE_TYPES[mediaType];
-    if (!ext) throw new Error(`unsupported image type "${mediaType}"`);
-    const dir = join(this.dir(id), "attachments");
+  attachmentsDir(id: string): string {
+    return join(this.dir(id), "attachments");
+  }
+
+  // Images go through the vision path and keep a known image extension; every other file keeps its own extension
+  // (sanitized) so the tools and the browser can tell what it is.
+  saveAttachment(id: string, data: Buffer, mediaType: string, filename = ""): ImageAttachment & { name: string; bytes: number } {
+    const dir = this.attachmentsDir(id);
     mkdirSync(dir, { recursive: true });
-    const name = `${Date.now()}-${randomBytes(3).toString("hex")}.${ext}`;
+    // A picture the vision path cannot take would be stored but never seen by the model: refuse it instead.
+    if (mediaType.startsWith("image/") && !IMAGE_TYPES[mediaType]) throw new Error(`unsupported image type "${mediaType}"`);
+    const ext = IMAGE_TYPES[mediaType] ?? fileExtension(filename);
+    const name = `${Date.now()}-${randomBytes(3).toString("hex")}${ext ? `.${ext}` : ""}`;
     writeFileSync(join(dir, name), data);
-    return { name, path: join(dir, name), mediaType };
+    return { name, path: join(dir, name), mediaType, bytes: data.length };
   }
 
   attachmentPath(id: string, name: string): string {
