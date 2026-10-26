@@ -502,6 +502,19 @@
     </section>
     <section class="settings-section" data-section="session">
     <div class="setting">
+      <form id="set-limits-form">
+        <div class="row"><b>会话额度（全局默认）</b><button type="submit" id="set-limits-save">保存额度</button></div>
+        <div class="provider-fields">
+          <label for="set-steps">每轮步数<input type="number" id="set-steps" min="1" step="1" inputmode="numeric" placeholder="不限"></label>
+          <label for="set-cost">每轮花费（$）<input type="number" id="set-cost" min="0" step="any" inputmode="decimal" placeholder="不限"></label>
+          <label for="set-budget">累计花费（$）<input type="number" id="set-budget" min="0" step="any" inputmode="decimal" placeholder="不限"></label>
+        </div>
+        <p class="flat">对所有项目的新旧会话生效；单独设置过额度的会话优先使用自己的值。步数指每轮模型调用次数，累计花费按每个会话分别计算。</p>
+        <p class="flat">留空表示不限，花费填 0 表示不允许继续付费调用。每轮限额下一轮生效；累计额度会按已花费用重新校验。</p>
+        <p class="flat setting-status" id="set-limits-status" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+    <div class="setting">
       <label><input type="checkbox" class="switch" id="set-auto"> 新会话自动批准改动</label>
       <p>开启后，新建的会话里 agent 的文件改动和 bash 命令直接执行，不再逐个询问。每个会话仍可以在对话页顶部单独切换，已有的会话不受影响。</p>
     </div>
@@ -633,7 +646,9 @@
     <label>每轮最多花费（美元）
       <span class="pair"><select id="ld-cost-mode"><option value="default"></option><option value="none">不限</option><option value="custom">自定义</option></select>
       <input type="text" id="ld-cost" inputmode="decimal" hidden></span></label>
-    <label>本会话累计最多花费（美元，留空不限）<input type="text" id="ld-budget" inputmode="decimal" autocomplete="off"></label>
+    <label>本会话累计最多花费（美元）
+      <span class="pair"><select id="ld-budget-mode"><option value="default"></option><option value="none">不限</option><option value="custom">自定义</option></select>
+      <input type="text" id="ld-budget" inputmode="decimal" autocomplete="off" hidden></span></label>
     <div class="hint" id="ld-effective"></div>
     <div class="row">
       <button type="button" id="ld-cancel">取消</button>
@@ -1482,17 +1497,15 @@ $("budget-form").addEventListener("submit", async (ev) => {
   } catch (e) { $("bd-hint").textContent = e.message; $("bd-hint").className = "err-text"; }
 });
 
-let defaultLimits = null; // { maxSteps, maxTurnCostUsd } from .env
 let limitsTarget = null; // session id the dialog edits
 async function openLimitsDialog(id = current) {
   const [info, defaults, stats] = await Promise.all([
     api(`/api/sessions/${id}`),
-    defaultLimits ?? api("/api/projects/limits"),
+    api("/api/settings"),
     api(`/api/sessions/${id}/stats`),
   ]);
   limitsTarget = id;
   $("ld-title").textContent = id === current ? "本会话的额度" : `额度 · ${info.title || "（未命名）"}`;
-  defaultLimits = defaults;
   const limits = info.limits ?? {};
   const pick = (mode, input, value, defaultLabel) => {
     mode.options[0].textContent = `默认（${defaultLabel}）`;
@@ -1500,15 +1513,15 @@ async function openLimitsDialog(id = current) {
     input.value = typeof value === "number" ? String(value) : "";
     input.hidden = mode.value !== "custom";
   };
-  pick($("ld-steps-mode"), $("ld-steps"), limits.maxSteps, defaults.maxSteps === null ? "不限" : `${defaults.maxSteps} 步`);
-  pick($("ld-cost-mode"), $("ld-cost"), limits.maxTurnCostUsd, defaults.maxTurnCostUsd === null ? "不限" : `$${defaults.maxTurnCostUsd}`);
-  $("ld-budget").value = typeof info.budgetUsd === "number" ? String(info.budgetUsd) : "";
-  $("ld-spent").textContent = `已花 $${stats.totals.costUsd.toFixed(4)}（${stats.totals.turns} 轮）。修改从下一轮开始生效。项目和工作区的额度在侧栏右键设置。`;
+  pick($("ld-steps-mode"), $("ld-steps"), limits.maxSteps, defaults.limits.maxSteps === null ? "不限" : `${defaults.limits.maxSteps} 步`);
+  pick($("ld-cost-mode"), $("ld-cost"), limits.maxTurnCostUsd, defaults.limits.maxTurnCostUsd === null ? "不限" : `$${defaults.limits.maxTurnCostUsd}`);
+  pick($("ld-budget-mode"), $("ld-budget"), info.budgetUsd, defaults.budgetUsd === null ? "不限" : `$${defaults.budgetUsd}`);
+  $("ld-spent").textContent = `已花 $${stats.totals.costUsd.toFixed(4)}（${stats.totals.turns} 轮）。每轮限额下一轮生效；累计额度按已花费用重新校验。项目和工作区的额度在侧栏右键设置。`;
   $("ld-effective").className = "hint";
   $("ld-effective").textContent = info.budget ? `当前最紧的累计额度：${info.budget.label.trim()}，还剩 $${Math.max(0, info.budget.remainingUsd).toFixed(4)}` : "没有累计额度限制。";
   $("limits-dialog").showModal();
 }
-for (const [mode, input] of [["ld-steps-mode", "ld-steps"], ["ld-cost-mode", "ld-cost"]]) {
+for (const [mode, input] of [["ld-steps-mode", "ld-steps"], ["ld-cost-mode", "ld-cost"], ["ld-budget-mode", "ld-budget"]]) {
   $(mode).addEventListener("change", () => { $(input).hidden = $(mode).value !== "custom"; if (!$(input).hidden) $(input).focus(); });
 }
 $("ld-cancel").onclick = () => $("limits-dialog").close();
@@ -1520,7 +1533,7 @@ $("limits-form").addEventListener("submit", async (ev) => {
     if (steps === "none") limits.maxSteps = null;
     if (steps === "custom") {
       const n = Number($("ld-steps").value.trim());
-      if (!Number.isInteger(n) || n < 1) throw new Error("步数要填一个正整数");
+      if (!Number.isSafeInteger(n) || n < 1) throw new Error("步数要填一个正整数");
       limits.maxSteps = n;
     }
     if (cost === "none") limits.maxTurnCostUsd = null;
@@ -1529,9 +1542,12 @@ $("limits-form").addEventListener("submit", async (ev) => {
       if (n === null) throw new Error("每轮花费要填一个数字，不限请选“不限”");
       limits.maxTurnCostUsd = n;
     }
-    await api(`/api/sessions/${limitsTarget}/settings`, { limits, budgetUsd: parseUsd($("ld-budget").value, "累计花费") });
+    const budgetMode = $("ld-budget-mode").value;
+    const budgetUsd = budgetMode === "default" ? "default" : budgetMode === "none" ? null : parseUsd($("ld-budget").value, "累计花费");
+    if (budgetMode === "custom" && budgetUsd === null) throw new Error("累计花费要填一个数字，不限请选“不限”");
+    await api(`/api/sessions/${limitsTarget}/settings`, { limits, budgetUsd });
     $("limits-dialog").close();
-    toast("额度已保存，从下一轮开始生效");
+    toast("额度已保存");
   } catch (e) { $("ld-effective").textContent = e.message; $("ld-effective").className = "err-text"; }
 });
 
@@ -2794,17 +2810,39 @@ async function ensureNotificationPermission() {
 }
 
 async function loadSettings() {
-  settings ??= await api("/api/settings");
+  settings = await api("/api/settings");
   $("set-auto").checked = settings.newSessionApproval === "auto";
   await loadDefaultModelSelection({ provider: settings.defaultProvider || "legacy", model: settings.defaultModel, thinkEffort: settings.defaultThinkEffort || "off" });
   fillProviderOptions($("provider-config"), $("provider-config").value || settings.defaultProvider || "legacy");
   if (!providerSaving) fillProviderEditor();
   $("set-notify").checked = settings.notifications;
   $("set-compact").value = settings.compactionTokens;
+  $("set-steps").value = settings.limits.maxSteps ?? "";
+  $("set-cost").value = settings.limits.maxTurnCostUsd ?? "";
+  $("set-budget").value = settings.budgetUsd ?? "";
   if (document.activeElement !== $("set-instructions")) $("set-instructions").value = settings.customInstructions ?? "";
   syncNotificationStreams();
   return settings;
 }
+$("set-limits-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const status = $("set-limits-status"), button = $("set-limits-save");
+  status.className = "flat setting-status";
+  button.disabled = true;
+  try {
+    const raw = $("set-steps").value.trim();
+    const maxSteps = raw ? Number(raw) : null;
+    if (maxSteps !== null && (!Number.isSafeInteger(maxSteps) || maxSteps < 1)) throw new Error("步数要填一个正整数，留空表示不限");
+    settings = await api("/api/settings", {
+      limits: { maxSteps, maxTurnCostUsd: parseUsd($("set-cost").value, "每轮花费") },
+      budgetUsd: parseUsd($("set-budget").value, "累计花费"),
+    });
+    status.textContent = "已保存，对所有跟随默认额度的会话生效。";
+  } catch (e) {
+    status.textContent = e.message;
+    status.className = "flat setting-status error";
+  } finally { button.disabled = false; }
+});
 $("set-auto").addEventListener("change", async (ev) => {
   try {
     settings = await api("/api/settings", { newSessionApproval: ev.target.checked ? "auto" : "ask" });

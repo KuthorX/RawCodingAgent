@@ -284,11 +284,11 @@ test("search matches titles, user messages and replies, not tool calls", async (
 });
 
 test("GUI settings: new sessions auto-approve by default, can be switched off", async () => {
-  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "auto", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: false, compactionTokens: 400000, customInstructions: "" });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "auto", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: false, compactionTokens: 400000, limits: { maxSteps: 10, maxTurnCostUsd: null }, budgetUsd: null, customInstructions: "" });
   assert.equal((await call("POST", "/api/settings", { body: { newSessionApproval: "yolo" } })).status, 400);
-  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { newSessionApproval: "ask" } })).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: false, compactionTokens: 400000, customInstructions: "" });
-  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { notifications: true, compactionTokens: 123000 } })).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: true, compactionTokens: 123000, customInstructions: "" });
-  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: true, compactionTokens: 123000, customInstructions: "" });
+  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { newSessionApproval: "ask" } })).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: false, compactionTokens: 400000, limits: { maxSteps: 10, maxTurnCostUsd: null }, budgetUsd: null, customInstructions: "" });
+  assert.deepEqual(JSON.parse((await call("POST", "/api/settings", { body: { notifications: true, compactionTokens: 123000 } })).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: true, compactionTokens: 123000, limits: { maxSteps: 10, maxTurnCostUsd: null }, budgetUsd: null, customInstructions: "" });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), { newSessionApproval: "ask", defaultProvider: "legacy", defaultModel: "scripted", defaultThinkEffort: "off", notifications: true, compactionTokens: 123000, limits: { maxSteps: 10, maxTurnCostUsd: null }, budgetUsd: null, customInstructions: "" });
   assert.equal((await call("POST", "/api/settings", { body: { defaultModel: "missing-model" } })).status, 400);
   assert.equal((await call("POST", "/api/settings", { body: { defaultModel: "scripted" } })).status, 200);
   assert.equal((await call("GET", "/api/settings", { token: null })).status, 401);
@@ -296,6 +296,33 @@ test("GUI settings: new sessions auto-approve by default, can be switched off", 
   assert.equal(JSON.parse((await call("POST", "/api/settings", { body: { customInstructions: "回答用中文" } })).body).customInstructions, "回答用中文");
   assert.equal(JSON.parse((await call("GET", "/api/settings")).body).customInstructions, "回答用中文");
   assert.equal((await call("POST", "/api/settings", { body: { customInstructions: "x".repeat(8001) } })).status, 400);
+});
+
+test("global quotas validate atomically, and a session can restore budget inheritance", async () => {
+  const before = JSON.parse((await call("GET", "/api/settings")).body);
+  for (const body of [
+    { limits: null }, { limits: [] }, { limits: { maxSteps: 0 } },
+    { limits: { maxSteps: 1.5 } }, { limits: { maxSteps: 1e20 } },
+    { limits: { maxTurnCostUsd: -1 } }, { limits: { maxTurnCostUsd: "1" } },
+    { limits: { maxSteps: 4 }, budgetUsd: -1 }, { budgetUsd: "default" },
+  ]) {
+    assert.equal((await call("POST", "/api/settings", { body: { notifications: false, ...body } })).status, 400);
+    assert.deepEqual(JSON.parse((await call("GET", "/api/settings")).body), before);
+  }
+  const { id } = JSON.parse((await call("POST", "/api/sessions", { body: { workspace } })).body);
+  const changed = await call("POST", "/api/settings", { body: { limits: { maxSteps: 7, maxTurnCostUsd: 0 }, budgetUsd: 0 } });
+  assert.equal(changed.status, 200);
+  assert.deepEqual(JSON.parse(changed.body).limits, { maxSteps: 7, maxTurnCostUsd: 0 });
+  assert.deepEqual(JSON.parse((await call("GET", "/api/projects/limits")).body), { maxSteps: 7, maxTurnCostUsd: 0 });
+  assert.equal(JSON.parse((await call("GET", `/api/sessions/${id}`)).body).budget.remainingUsd, 0);
+  const set = (budgetUsd: unknown) => call("POST", `/api/sessions/${id}/settings`, { body: { budgetUsd } });
+  assert.equal(JSON.parse((await set(null)).body).budget, null);
+  assert.equal(JSON.parse((await set(5)).body).budget.remainingUsd, 5);
+  const inherited = JSON.parse((await set("default")).body);
+  assert.equal(inherited.budgetUsd, undefined);
+  assert.equal(inherited.budget.remainingUsd, 0);
+  assert.equal(runtime.store.getMeta(id).budgetUsd, undefined);
+  await call("POST", "/api/settings", { body: { limits: {}, budgetUsd: null } });
 });
 
 test("diff: a git workspace returns uncommitted changes; a plain directory says so", async () => {

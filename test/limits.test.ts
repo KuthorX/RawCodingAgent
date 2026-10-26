@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import { SessionManager } from "../src/gui/manager.ts";
+import { SettingsStore } from "../src/gui/settings.ts";
 import { SendRejected, SessionRunner } from "../src/session/runner.ts";
 import { reply, ScriptedProvider, tempWorkspace, testRuntime } from "./helpers.ts";
 
@@ -8,6 +11,78 @@ const call = (id: string) => ({ id, name: "glob", input: { pattern: `*${id}` } }
 // 0.3 $/MTok input (default pricing): 10k input tokens = $0.003 per model call.
 const usage = { inputTokens: 10_000, outputTokens: 0, cachedInputTokens: 0 };
 const toolReply = (id: string) => reply("", [call(id)], undefined, usage);
+
+test("global limits reach loaded and new sessions, while explicit session overrides win", async (t) => {
+  const provider = new ScriptedProvider([
+    toolReply("a"), reply("step limit summary"),
+    toolReply("b"), toolReply("c"), reply("done"),
+    toolReply("d"), toolReply("e"),
+  ]);
+  const runtime = testRuntime(provider);
+  const manager = new SessionManager(runtime);
+  t.after(() => manager.shutdown());
+  const old = await manager.create(tempWorkspace(), "auto");
+  const runner = manager.get(old.id);
+  runtime.settings.update({ limits: { maxSteps: 1 } });
+  await runner.send("go").done;
+  assert.deepEqual(runtime.store.loadEvents(old.id).at(-1), { type: "turn_end", finishReason: "max_steps", steps: 1 });
+
+  runtime.settings.update({ limits: { maxSteps: null, maxTurnCostUsd: null } });
+  await runner.send("continue with the new global settings").done;
+  assert.deepEqual(runtime.store.loadEvents(old.id).at(-1), { type: "turn_end", finishReason: "end_turn", steps: 3 });
+
+  const fresh = await manager.create(tempWorkspace(), "auto");
+  runtime.settings.update({ limits: { maxSteps: 1, maxTurnCostUsd: 0.005 } });
+  manager.get(fresh.id).setLimits({ limits: { maxSteps: null } });
+  await manager.get(fresh.id).send("go").done;
+  assert.deepEqual(runtime.store.loadEvents(fresh.id).at(-1), { type: "turn_end", finishReason: "max_cost", steps: 2 });
+  assert.equal(runtime.store.getMeta(old.id).limits, undefined);
+  assert.deepEqual(manager.defaults, { maxSteps: 1, maxTurnCostUsd: 0.005 });
+});
+
+test("global cumulative caps count existing spending per session and survive reload", async (t) => {
+  const provider = new ScriptedProvider([toolReply("a"), toolReply("b")]);
+  const runtime = testRuntime(provider);
+  const manager = new SessionManager(runtime);
+  t.after(() => manager.shutdown());
+  const old = await manager.create(tempWorkspace(), "auto");
+  const fresh = await manager.create(tempWorkspace(), "auto");
+  runtime.settings.update({ budgetUsd: 0.005 });
+  await manager.get(old.id).send("go").done;
+  assert.deepEqual(runtime.store.loadEvents(old.id).at(-1), { type: "turn_end", finishReason: "budget", steps: 2 });
+  assert.equal(provider.requests.length, 2);
+  assert.throws(() => manager.get(old.id).send("more"), SendRejected);
+  assert.equal(manager.budgetFor(fresh)?.remainingUsd, 0.005);
+  runtime.settings.update({ budgetUsd: 0.01 });
+  assert.ok(Math.abs(manager.budgetFor(old)!.remainingUsd - 0.004) < 1e-10);
+  manager.get(old.id).setLimits({ budgetUsd: null });
+  assert.equal(manager.budgetFor(manager.get(old.id).info), null);
+  manager.get(old.id).setLimits({ budgetUsd: undefined });
+  assert.ok(Math.abs(manager.budgetFor(manager.get(old.id).info)!.remainingUsd - 0.004) < 1e-10);
+  await manager.shutdown();
+  const reloaded = new SessionManager(runtime);
+  t.after(() => reloaded.shutdown());
+  assert.ok(Math.abs(reloaded.budgetFor(reloaded.get(old.id).info)!.remainingUsd - 0.004) < 1e-10);
+  runtime.settings.update({ budgetUsd: 0 });
+  assert.throws(() => reloaded.get(fresh.id).send("no paid requests"), SendRejected);
+  assert.equal(provider.requests.length, 2);
+});
+
+test("global quota preferences persist, preserve legacy defaults, and reject corrupt stored numbers", () => {
+  const file = join(tempWorkspace(), "settings.json");
+  writeFileSync(file, JSON.stringify({ notifications: true }));
+  const settings = new SettingsStore(file);
+  assert.deepEqual(settings.get().limits, {});
+  assert.equal(settings.get().budgetUsd, null);
+  settings.update({ limits: { maxSteps: null, maxTurnCostUsd: 0 }, budgetUsd: 3 });
+  const saved = new SettingsStore(file).get();
+  assert.deepEqual(saved.limits, { maxSteps: null, maxTurnCostUsd: 0 });
+  assert.equal(saved.budgetUsd, 3);
+  assert.equal(saved.notifications, true);
+  writeFileSync(file, '{"limits":{"maxSteps":1.5,"maxTurnCostUsd":-1},"budgetUsd":"3"}');
+  assert.deepEqual(settings.get().limits, {});
+  assert.equal(settings.get().budgetUsd, null);
+});
 
 test("session limits override the defaults: unlimited steps, but a per-turn cost cap", async () => {
   // Default maxSteps in the test runtime is 10; 12 steps only fit when the session lifts it.

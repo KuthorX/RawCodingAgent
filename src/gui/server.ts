@@ -90,7 +90,7 @@ function parseFiles(raw: unknown): { name: string; mediaType: string; data: Buff
 // A spending cap or limit: a number >= 0 (steps: a positive integer), or null for "no limit".
 function capValue(raw: unknown, name: string, integer = false): number | null {
   if (raw === null) return null;
-  const ok = typeof raw === "number" && Number.isFinite(raw) && (integer ? Number.isInteger(raw) && raw > 0 : raw >= 0);
+  const ok = typeof raw === "number" && Number.isFinite(raw) && (integer ? Number.isSafeInteger(raw) && raw > 0 : raw >= 0);
   if (!ok) throw new HttpError(400, `"${name}" must be ${integer ? "a positive integer" : "a number >= 0"} or null`);
   return raw as number;
 }
@@ -392,16 +392,16 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, ma
       }
       if (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) throw new HttpError(400, '"model" must be a non-empty string');
       const limits = body.limits === undefined ? undefined : parseLimits(body.limits);
-      const budgetUsd = body.budgetUsd === undefined ? undefined : capValue(body.budgetUsd, "budgetUsd");
+      const budgetUsd = body.budgetUsd === undefined || body.budgetUsd === "default" ? undefined : capValue(body.budgetUsd, "budgetUsd");
       const modelSettings = body.model !== undefined || body.provider !== undefined || body.thinkEffort !== undefined;
-      if (body.approvalMode === undefined && limits === undefined && budgetUsd === undefined && body.notifications === undefined && !modelSettings) {
+      if (body.approvalMode === undefined && limits === undefined && body.budgetUsd === undefined && body.notifications === undefined && !modelSettings) {
         throw new HttpError(400, 'nothing to change: give "approvalMode", "limits", "budgetUsd", "notifications" or "model"');
       }
       const runner = manager.get(id);
       if (modelSettings) await manager.setSelection(id, { provider: body.provider, model: body.model, thinkEffort: body.thinkEffort });
       if (body.approvalMode !== undefined) runner.setApprovalMode(body.approvalMode as "ask" | "auto");
-      if (limits !== undefined || budgetUsd !== undefined) {
-        runner.setLimits({ ...(limits !== undefined ? { limits } : {}), ...(budgetUsd !== undefined ? { budgetUsd } : {}) });
+      if (limits !== undefined || body.budgetUsd !== undefined) {
+        runner.setLimits({ ...(limits !== undefined ? { limits } : {}), ...(body.budgetUsd !== undefined ? { budgetUsd } : {}) });
       }
       if (body.notifications !== undefined) runner.setNotifications(body.notifications);
       return sendJson(res, 200, { ...runner.info, budget: manager.budgetFor(runner.info) });
@@ -485,7 +485,7 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
   if (url.pathname.startsWith("/api/sessions")) return handleApi(req, res, url, manager, caller);
   if (url.pathname.startsWith("/api/projects")) return handleProjects(req, res, url, manager, pick);
   if (url.pathname === "/api/settings") {
-    if (req.method === "GET") return sendJson(res, 200, manager.settings.get());
+    if (req.method === "GET") return sendJson(res, 200, { ...manager.settings.get(), limits: manager.defaults });
     if (req.method === "POST") {
       return readJson(req).then(async (body) => {
         if (body.newSessionApproval !== undefined && !isApprovalMode(body.newSessionApproval)) throw new HttpError(400, '"newSessionApproval" must be "ask" or "auto"');
@@ -493,17 +493,22 @@ function route(req: IncomingMessage, res: ServerResponse, url: URL, caller: Call
         if (body.notifications !== undefined && typeof body.notifications !== "boolean") throw new HttpError(400, '"notifications" must be a boolean');
         if (body.compactionTokens !== undefined && (typeof body.compactionTokens !== "number" || !Number.isInteger(body.compactionTokens) || body.compactionTokens < 0)) throw new HttpError(400, '"compactionTokens" must be an integer >= 0');
         if (body.customInstructions !== undefined && (typeof body.customInstructions !== "string" || body.customInstructions.length > MAX_CUSTOM_INSTRUCTIONS)) throw new HttpError(400, `"customInstructions" must be a string of at most ${MAX_CUSTOM_INSTRUCTIONS} characters`);
+        const limits = body.limits === undefined ? undefined : parseLimits(body.limits);
+        const budgetUsd = body.budgetUsd === undefined ? undefined : capValue(body.budgetUsd, "budgetUsd");
         const modelSettings = body.defaultModel !== undefined || body.defaultProvider !== undefined || body.defaultThinkEffort !== undefined;
-        if (body.newSessionApproval === undefined && !modelSettings && body.notifications === undefined && body.compactionTokens === undefined && body.customInstructions === undefined) throw new HttpError(400, "nothing to change");
+        if (body.newSessionApproval === undefined && !modelSettings && body.notifications === undefined && body.compactionTokens === undefined && body.customInstructions === undefined && limits === undefined && budgetUsd === undefined) throw new HttpError(400, "nothing to change");
         const current = manager.settings.get();
         const selection = modelSettings ? await manager.validateSelection({ provider: body.defaultProvider, model: body.defaultModel, thinkEffort: body.defaultThinkEffort }, { provider: current.defaultProvider, model: current.defaultModel, thinkEffort: current.defaultThinkEffort }) : null;
-        sendJson(res, 200, manager.settings.update({
+        const saved = manager.settings.update({
           ...(body.newSessionApproval !== undefined ? { newSessionApproval: body.newSessionApproval } : {}),
           ...(selection ? { defaultProvider: selection.provider, defaultModel: selection.model, defaultThinkEffort: selection.thinkEffort } : {}),
           ...(body.notifications !== undefined ? { notifications: body.notifications } : {}),
           ...(body.compactionTokens !== undefined ? { compactionTokens: body.compactionTokens } : {}),
           ...(body.customInstructions !== undefined ? { customInstructions: body.customInstructions } : {}),
-        }));
+          ...(limits !== undefined ? { limits } : {}),
+          ...(budgetUsd !== undefined ? { budgetUsd } : {}),
+        });
+        sendJson(res, 200, { ...saved, limits: manager.defaults });
       });
     }
   }

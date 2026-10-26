@@ -3,6 +3,7 @@ import { styleText } from "node:util";
 import type { Runtime } from "./app.ts";
 import type { ApprovalMode } from "./agent/permissions.ts";
 import { SessionRunner } from "./session/runner.ts";
+import { SessionManager } from "./gui/manager.ts";
 import { commandCatalog, runCommand } from "./session/commands.ts";
 import type { SessionMeta } from "./session/store.ts";
 import type { ToolCall } from "./types.ts";
@@ -49,7 +50,9 @@ export async function runCli(runtime: Runtime, options: CliOptions): Promise<voi
         resolve(answer === "y" || answer === "a");
       };
     });
-  const makeRunner = (meta: SessionMeta): SessionRunner => new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm, contextWindow: (session) => runtime.contextWindow(session.model, session.provider), makeProvider: runtime.makeProvider, makeSystem: runtime.makeSystem });
+  const manager = new SessionManager(runtime);
+  await manager.describeProjects();
+  const makeRunner = (meta: SessionMeta): SessionRunner => new SessionRunner({ store, meta, makeDeps: runtime.makeDeps, confirm, defaultLimits: () => manager.defaults, budget: (session) => manager.budgetFor(session), contextWindow: (session) => runtime.contextWindow(session.model, session.provider), makeProvider: runtime.makeProvider, makeSystem: runtime.makeSystem });
   let runner = makeRunner(meta);
   if (options.forceAuto) runner.setApprovalMode("auto");
 

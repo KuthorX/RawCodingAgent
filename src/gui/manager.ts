@@ -102,8 +102,9 @@ export class SessionManager {
   // The tightest of the session's, its workspace's and its project's caps, as what is left of it.
   budgetFor(meta: SessionMeta): Budget | null {
     const candidates: Budget[] = [];
-    if (typeof meta.budgetUsd === "number") {
-      candidates.push({ remainingUsd: meta.budgetUsd - this.sessionSpent(meta.id), scope: "session", label: "这个会话" });
+    const budgetUsd = meta.budgetUsd === undefined ? this.settings.get().budgetUsd : meta.budgetUsd;
+    if (typeof budgetUsd === "number") {
+      candidates.push({ remainingUsd: budgetUsd - this.sessionSpent(meta.id), scope: "session", label: "这个会话" });
     }
     const workspace = normalizePath(meta.workspace);
     const project = this.known.find((p) => p.workspaces.some((w) => w.path === workspace));
@@ -132,7 +133,7 @@ export class SessionManager {
   }
 
   get defaults() {
-    return this.runtime.limits;
+    return { ...this.runtime.limits, ...this.settings.get().limits };
   }
 
   async branches(project: Project): Promise<{ branches: string[]; base: string }> {
@@ -226,6 +227,7 @@ export class SessionManager {
       store: this.store,
       meta: this.store.getMeta(id),
       makeDeps: this.runtime.makeDeps,
+      defaultLimits: () => this.defaults,
       budget: (meta) => this.budgetFor(meta),
       compactionTokens: (meta) => Math.min(this.settings.get().compactionTokens, this.runtime.contextWindow(meta.model, meta.provider)),
       contextWindow: (meta) => this.runtime.contextWindow(meta.model, meta.provider),

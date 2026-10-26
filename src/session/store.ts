@@ -42,9 +42,9 @@ export interface SessionMeta {
   notifications?: boolean;
   // Set on a session created by fork(): where its history came from.
   forkedFrom?: { id: string; turns: number };
-  // This session's turn guards. A missing key follows the global default (.env), null means no limit.
+  // This session's turn guards. A missing key follows global settings (then .env), null means no limit.
   limits?: TurnLimits;
-  // Cap on everything this session spends, across turns; missing/null = no cap.
+  // Cap on everything this session spends, across turns; missing follows global settings, null = no cap.
   budgetUsd?: number | null;
   // Hidden from the sidebar's project tree (still searchable, can be restored).
   archived?: boolean;

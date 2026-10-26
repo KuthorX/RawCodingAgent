@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isApprovalMode, type ApprovalMode } from "../agent/permissions.ts";
 import type { ThinkEffort } from "../providers/catalog.ts";
+import type { TurnLimits } from "../session/store.ts";
 
 // Preferences of the web UI, kept in one JSON file next to .projects.json.
 export const MAX_CUSTOM_INSTRUCTIONS = 8_000;
@@ -13,6 +14,8 @@ export interface GuiSettings {
   defaultThinkEffort: ThinkEffort;
   notifications: boolean;
   compactionTokens: number;
+  limits: TurnLimits;
+  budgetUsd: number | null;
   // Added to the system prompt of every session, before the repository's own AGENTS.md.
   customInstructions: string;
 }
@@ -27,10 +30,14 @@ export class SettingsStore {
   }
 
   get(): GuiSettings {
-    const defaults: GuiSettings = { newSessionApproval: "auto", defaultProvider: "legacy", defaultModel: this.defaultModel, defaultThinkEffort: "off", notifications: false, compactionTokens: 400_000, customInstructions: "" };
+    const defaults: GuiSettings = { newSessionApproval: "auto", defaultProvider: "legacy", defaultModel: this.defaultModel, defaultThinkEffort: "off", notifications: false, compactionTokens: 400_000, limits: {}, budgetUsd: null, customInstructions: "" };
     if (!existsSync(this.file)) return { ...defaults };
     try {
       const saved = JSON.parse(readFileSync(this.file, "utf8")) as Partial<GuiSettings>;
+      const limits: TurnLimits = {};
+      const steps = saved.limits?.maxSteps, cost = saved.limits?.maxTurnCostUsd;
+      if (steps === null || (typeof steps === "number" && Number.isSafeInteger(steps) && steps > 0)) limits.maxSteps = steps;
+      if (cost === null || (typeof cost === "number" && Number.isFinite(cost) && cost >= 0)) limits.maxTurnCostUsd = cost;
       return {
         newSessionApproval: isApprovalMode(saved.newSessionApproval) ? saved.newSessionApproval : defaults.newSessionApproval,
         defaultModel: typeof saved.defaultModel === "string" && saved.defaultModel.trim() ? saved.defaultModel.trim() : defaults.defaultModel,
@@ -38,6 +45,8 @@ export class SettingsStore {
         defaultThinkEffort: ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(saved.defaultThinkEffort ?? "") ? saved.defaultThinkEffort! : defaults.defaultThinkEffort,
         notifications: saved.notifications === true,
         compactionTokens: Number.isInteger(saved.compactionTokens) && (saved.compactionTokens as number) >= 0 ? saved.compactionTokens as number : defaults.compactionTokens,
+        limits,
+        budgetUsd: typeof saved.budgetUsd === "number" && Number.isFinite(saved.budgetUsd) && saved.budgetUsd >= 0 ? saved.budgetUsd : null,
         customInstructions: typeof saved.customInstructions === "string" ? saved.customInstructions.slice(0, MAX_CUSTOM_INSTRUCTIONS) : "",
       };
     } catch {

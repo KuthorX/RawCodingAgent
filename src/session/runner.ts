@@ -14,7 +14,7 @@ import { planText } from "../tools/plan.ts";
 import type { AgentOutcome, AgentRole, AgentTask } from "../tools/multi-agent.ts";
 import { createWorkerWorkspace, workerChangeCount, type WorkerWorkspace } from "../workspace/worker.ts";
 import type { SessionEvent } from "./events.ts";
-import { titleFrom, type SessionMeta, type SessionMode, type SessionStore } from "./store.ts";
+import { titleFrom, type SessionMeta, type SessionMode, type SessionStore, type TurnLimits } from "./store.ts";
 
 type Listener = (event: SessionEvent, cursor?: number) => void;
 
@@ -29,6 +29,7 @@ export interface RunnerOptions {
   // Tightest spending cap left over this session and the workspace/project it belongs to; null = no cap.
   // `label` is for the user, `scope` for the model's limit notice.
   budget?: (meta: SessionMeta) => Budget | null;
+  defaultLimits?: () => TurnLimits;
   compactionTokens?: (meta: SessionMeta) => number;
   contextWindow?: (meta: SessionMeta) => number;
   // Evaluators with their own independent acceptance tests do not use the interactive completion gate.
@@ -161,6 +162,7 @@ export class SessionRunner {
   private readonly listeners = new Set<Listener>();
   private readonly pending = new Map<string, (allow: boolean) => void>();
   private readonly budget: RunnerOptions["budget"];
+  private readonly defaultLimits: RunnerOptions["defaultLimits"];
   private readonly compactionTokens: RunnerOptions["compactionTokens"];
   private readonly releaseLock: () => void;
   private readonly plan: PlanController;
@@ -175,6 +177,7 @@ export class SessionRunner {
   constructor(options: RunnerOptions) {
     this.store = options.store;
     this.budget = options.budget;
+    this.defaultLimits = options.defaultLimits;
     this.compactionTokens = options.compactionTokens;
     this.contextWindow = options.contextWindow;
     this.verifyChanges = options.verifyChanges !== false;
@@ -543,7 +546,7 @@ export class SessionRunner {
   // The session's own turn guards override the defaults baked into deps; the budget is looked up per turn,
   // since other sessions of the same workspace/project spend from it too.
   private turnDeps(): AgentDeps {
-    const limits = this.meta.limits ?? {};
+    const limits = { ...this.defaultLimits?.(), ...this.meta.limits };
     return {
       ...this.deps,
       tools: this.meta.mode === "plan"
