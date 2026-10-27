@@ -80,6 +80,18 @@ function sessionWith(provider: ManualProvider, approvalMode: "ask" | "auto" = "a
   return { runner, events, runtime, meta };
 }
 
+test("runner exposes the active turn start and clears it when the turn ends", async () => {
+  const provider = new ManualProvider();
+  const { runner } = sessionWith(provider, "auto");
+  const { done } = runner.send("start");
+  await provider.requested(1);
+  assert.equal(runner.isBusy, true);
+  assert.equal(typeof runner.info.turnStartedAt, "number");
+  provider.respond(reply("done"));
+  await done;
+  assert.equal(runner.info.turnStartedAt, null);
+});
+
 test("a message sent mid-turn is queued, then delivered at the next step", async () => {
   const provider = new ManualProvider();
   const { runner, events } = sessionWith(provider, "auto");

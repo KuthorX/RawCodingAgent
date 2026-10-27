@@ -156,6 +156,7 @@ export class SessionRunner {
   private log: SessionEvent[];
   private running: Promise<void> | null = null;
   private compacting = false;
+  private turnStartedAt: number | null = null;
   private controller: AbortController | null = null;
   private queue: UserMessage[] = [];
   private readonly store: SessionStore;
@@ -225,8 +226,8 @@ export class SessionRunner {
     return this.meta.id;
   }
 
-  get info(): SessionMeta & { busy: boolean; compacting: boolean } {
-    return { ...this.meta, busy: this.isBusy, compacting: this.compacting };
+  get info(): SessionMeta & { busy: boolean; compacting: boolean; turnStartedAt: number | null } {
+    return { ...this.meta, busy: this.isBusy, compacting: this.compacting, turnStartedAt: this.turnStartedAt };
   }
 
   useSkill(skill: LoadedSkill): void {
@@ -478,11 +479,13 @@ export class SessionRunner {
     const budget = this.budget?.(this.meta);
     if (budget && budget.remainingUsd <= 0) throw new SendRejected(`${budget.label}的额度已经用完，调高或取消上限后才能继续`);
     if (!this.meta.title) this.meta = this.store.updateMeta(this.id, { title: titleFrom(text) || "（图片）" });
+    this.turnStartedAt = Date.now();
     this.emit({ type: "user", text: display, ...names });
     const done = this.drain(message).finally(() => {
       // Always leave the busy state, even if persistence fails, so the session never gets stuck.
       this.running = null;
       this.controller = null;
+      this.turnStartedAt = null;
     });
     this.running = done;
     return { queued: false, done };
@@ -492,6 +495,7 @@ export class SessionRunner {
     if (this.running) throw new SendRejected("session is busy");
     this.refreshProvider();
     this.startBudget();
+    this.turnStartedAt = Date.now();
     this.controller = new AbortController();
     this.compacting = true;
     this.safely(() => this.emit({ type: "compaction_start", manual: true }));
@@ -499,7 +503,7 @@ export class SessionRunner {
       const message = err instanceof Error ? err.message : String(err);
       this.safely(() => this.emit({ type: "error", message }));
       throw err;
-    }).finally(() => { this.compacting = false; this.running = null; this.controller = null; });
+    }).finally(() => { this.compacting = false; this.running = null; this.controller = null; this.turnStartedAt = null; });
     this.running = done;
     return this.running;
   }
@@ -635,6 +639,9 @@ export class SessionRunner {
       if (input === null) {
         this.running = null;
         this.controller = null;
+        this.turnStartedAt = null;
+      } else {
+        this.turnStartedAt = Date.now();
       }
       this.safely(() => this.emit(input === null ? final : { ...final, continues: true }));
     }

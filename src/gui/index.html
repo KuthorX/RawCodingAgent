@@ -69,7 +69,7 @@
   /* Bottom status line: the open session's state, then the keys that work right now. */
   .status { display: flex; flex: none; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; }
   .status > span { padding: 1px 12px; border-right: 1px solid var(--line); }
-  .status .state { color: var(--bg); background: var(--muted); }
+  .status .state { color: var(--bg); background: var(--muted); font-variant-numeric: tabular-nums; }
   .status .state.busy { background: var(--accent); color: var(--on-accent); }
   .status .state.idle { background: var(--ok); }
   .status .keys { margin-left: auto; border-left: 1px solid var(--line); border-right: 0; }
@@ -212,6 +212,7 @@
   .plan-head button:hover:not(:disabled) { color: var(--ink); background: none; text-decoration: underline; }
   .plan-head button.primary-link { color: var(--accent-ink); }
   .plan-items { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; }
+  .plan-items[hidden] { display: none; }
   .plan-item { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
   .plan-item button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; }
   .plan-item button:hover:not(:disabled) { color: var(--ink); background: none; }
@@ -578,6 +579,7 @@
     <section class="plan-panel" id="plan-panel" hidden>
       <div class="plan-head">
         <b>计划 <span id="plan-count">0/0</span></b>
+        <button type="button" id="plan-toggle" aria-expanded="true" aria-controls="plan-items">收起</button>
         <span class="grow"></span>
         <button type="button" id="plan-run" class="primary-link" hidden>执行计划</button>
         <button type="button" id="plan-clear">清空</button>
@@ -701,6 +703,9 @@ let current = null;      // session id
 let events = null;       // EventSource for current session
 let sessionCursor = 0;
 let busy = false;
+let turnStartedAt = null;
+let statusTimer = null;
+let replayTurnStartedAt = null;
 let dotState = "idle";
 let replaying = false;   // true while the server replays stored events after (re)connect
 const toolCards = new Map();
@@ -716,6 +721,7 @@ let notificationSessionKey = "";
 let sessionMode = null; // { mode, prompt, max, count } or null
 let planItems = [];
 let planEditing = null; // index of the plan item being edited inline
+let planCollapsed = false;
 
 // Cards still running or waiting when a turn ends (stopped, or interrupted by a restart) will never get a result.
 function closeStaleCards() {
@@ -746,6 +752,11 @@ function append(node, parent = renderTarget()) {
 // While busy the input stays open: what you send is an interjection the agent sees at its next step.
 function setBusy(value) {
   busy = value;
+  if (value) {
+    if (turnStartedAt === null) setTurnStartedAt();
+  } else {
+    clearTurnStartedAt();
+  }
   if (value) setDot("busy");
   else if (dotState === "busy") setDot("ok");
   sendBtn.disabled = input.disabled = !current;
@@ -762,6 +773,29 @@ function setBusy(value) {
     : value
       ? "agent 正在工作：输入内容（可粘贴图片）会在它下一步之前送达（插话），Esc 停止"
       : "描述任务，输入 / 选择命令或技能，Shift+Enter 换行";
+}
+
+function setTurnStartedAt(value = Date.now()) {
+  turnStartedAt = Number.isFinite(value) ? value : Date.now();
+  if (statusTimer === null) statusTimer = setInterval(renderStatus, 1000);
+  renderStatus();
+}
+
+function clearTurnStartedAt() {
+  turnStartedAt = null;
+  if (statusTimer !== null) {
+    clearInterval(statusTimer);
+    statusTimer = null;
+  }
+  renderStatus();
+}
+
+function formatElapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  return `${hours ? `${hours}h ` : ""}${hours || minutes ? `${minutes}m ` : ""}${rest}s`;
 }
 
 function setDot(state) {
@@ -1820,6 +1854,7 @@ const handlers = {
       queuedBubbles.push(bubble);
     }
     append(bubble);
+    if (!e.queued) setTurnStartedAt(replaying && replayTurnStartedAt !== null ? replayTurnStartedAt : undefined);
     setBusy(true);
   },
   command(e) {
@@ -2050,6 +2085,7 @@ function endTurn(continues) {
   closeStaleCards();
   foldTools();
   if (continues) {
+    setTurnStartedAt();
     setBusy(true);
     settleQueued(undefined, "插话 · 作为下一轮发送");
     append(el("div", "note", sessionMode?.mode === "loop" ? "自动继续下一轮…" : "继续处理插话内容…"));
@@ -2144,6 +2180,10 @@ function renderPlan() {
   if (!show) return;
   const done = planItems.filter((item) => item.status === "completed").length;
   $("plan-count").textContent = `${done}/${planItems.length}`;
+  const toggle = $("plan-toggle");
+  toggle.textContent = planCollapsed ? "展开" : "收起";
+  toggle.setAttribute("aria-expanded", String(!planCollapsed));
+  $("plan-items").hidden = planCollapsed;
   $("plan-run").hidden = sessionMode?.mode !== "plan";
   $("plan-exit").hidden = sessionMode?.mode !== "plan";
   $("plan-clear").hidden = planItems.length === 0;
@@ -2191,6 +2231,11 @@ function renderPlan() {
   });
   $("plan-items").replaceChildren(...(rows.length ? rows : [el("li", "note", "还没有计划项。")]));
 }
+
+$("plan-toggle").onclick = () => {
+  planCollapsed = !planCollapsed;
+  renderPlan();
+};
 
 async function savePlan(items) {
   if (!current) return;
@@ -2263,6 +2308,8 @@ function openSession(id) {
   sessionModelLoading = sessionModelSaving = false;
   const resumeCursor = current === id ? sessionCursor : 0;
   events?.close();
+  clearTurnStartedAt();
+  replayTurnStartedAt = null;
   attachments = [];
   restoreDraft(id);
   renderAttachments();
@@ -2285,6 +2332,7 @@ function openSession(id) {
   sessionMode = null;
   planItems = [];
   planEditing = null;
+  planCollapsed = false;
   renderSessionMode();
   renderPlan();
   if (!current) {
@@ -2332,11 +2380,14 @@ function openSession(id) {
     links.replaceChildren(limitsBtn, diffBtn, statsBtn, eventsBtn);
     applySessionInfo(info);
     showMode(info.approvalMode);
+    replayTurnStartedAt = info.busy && Number.isFinite(info.turnStartedAt) ? info.turnStartedAt : null;
+    turnStartedAt = replayTurnStartedAt;
     setBusy(info.busy);
     replaying = !info.resume;
   });
   events.addEventListener("replay_done", () => {
     replaying = false;
+    replayTurnStartedAt = null;
     setBusy(busy);
     $("scroller").scrollTop = $("scroller").scrollHeight;
   });
@@ -2632,7 +2683,7 @@ function pendingApproval() {
 function renderStatus() {
   const s = sessionList.find((x) => x.id === current);
   const state = $("st-state");
-  state.textContent = !current ? "NO SESSION" : busy ? "RUNNING" : "IDLE";
+  state.textContent = !current ? "NO SESSION" : busy ? `Raw Working... ${formatElapsed(Date.now() - (turnStartedAt ?? Date.now()))}` : "IDLE";
   state.className = "state" + (!current ? "" : busy ? " busy" : " idle");
   $("st-ctx").hidden = $("st-cost").hidden = !s;
   if (s) {

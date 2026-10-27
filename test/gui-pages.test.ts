@@ -114,7 +114,7 @@ test("plan panel renders items with status, edit and delete actions", () => {
 
   const nodes = new Map();
   const node = (id: string) => {
-    if (!nodes.has(id)) nodes.set(id, { hidden: false, textContent: "", children: [] as unknown[], append(...items: unknown[]) { (this as { children: unknown[] }).children.push(...items); }, replaceChildren(...items: unknown[]) { (this as { children: unknown[] }).children = items; } });
+    if (!nodes.has(id)) nodes.set(id, { hidden: false, textContent: "", children: [] as unknown[], append(...items: unknown[]) { (this as { children: unknown[] }).children.push(...items); }, replaceChildren(...items: unknown[]) { (this as { children: unknown[] }).children = items; }, setAttribute() {} });
     return nodes.get(id);
   };
   const el = (tag: string, className?: string, text?: string) => ({ tag, className: className ?? "", textContent: text ?? "", children: [] as unknown[], value: "", type: "", title: "", hidden: false,
@@ -124,11 +124,19 @@ test("plan panel renders items with status, edit and delete actions", () => {
     sessionMode: { mode: "plan", prompt: "", max: 10, count: 0 },
     planItems: [{ text: "read", status: "completed" }, { text: "edit", status: "in_progress" }],
     planEditing: 1,
+    planCollapsed: false,
   });
   vm.runInContext([...constants, renderPlan].join("\n"), context);
   context.renderPlan();
   assert.equal(node("plan-panel").hidden, false);
   assert.equal(node("plan-count").textContent, "1/2");
+  assert.equal(node("plan-toggle").textContent, "收起");
+  context.planCollapsed = true;
+  context.renderPlan();
+  assert.equal(node("plan-toggle").textContent, "展开");
+  assert.equal(node("plan-items").hidden, true);
+  context.planCollapsed = false;
+  context.renderPlan();
   assert.equal(node("plan-run").hidden, false);
   assert.equal(node("plan-exit").hidden, false);
   const rows = node("plan-items").children as { className: string; children: { tag?: string; value?: string }[] }[];
@@ -136,4 +144,15 @@ test("plan panel renders items with status, edit and delete actions", () => {
   assert.match(rows[0]!.className, /plan-item completed/);
   const editing = rows[1]!.children.find((child) => child.tag === "input");
   assert.equal(editing?.value, "edit");
+});
+
+test("turn status duration formats the current turn, including hours", () => {
+  const page = readFileSync(join(GUI, "index.html"), "utf8");
+  const source = page.match(/^function formatElapsed\([^]*?^}/m)?.[0];
+  assert.ok(source);
+  const context = vm.createContext({});
+  vm.runInContext(source, context);
+  assert.equal(context.formatElapsed(0), "0s");
+  assert.equal(context.formatElapsed(75_000), "1m 15s");
+  assert.equal(context.formatElapsed((1 * 3600 + 15 * 60 + 24) * 1000), "1h 15m 24s");
 });
