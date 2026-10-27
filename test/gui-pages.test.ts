@@ -146,6 +146,19 @@ test("plan panel renders items with status, edit and delete actions", () => {
   assert.equal(editing?.value, "edit");
 });
 
+test("unverified status names the actual blocking condition", () => {
+  const page = readFileSync(join(GUI, "index.html"), "utf8");
+  const source = page.match(/^function unverifiedLabel\([^]*?^}/m)?.[0];
+  assert.ok(source);
+  const context = vm.createContext({ planItems: [] });
+  vm.runInContext(source, context);
+  assert.equal(context.unverifiedLabel(), "检查未通过");
+  context.planItems = [{ text: "work", status: "in_progress" }];
+  assert.equal(context.unverifiedLabel(), "计划未完成");
+  context.planItems = [{ text: "work", status: "completed" }];
+  assert.equal(context.unverifiedLabel(), "检查未通过");
+});
+
 test("turn status duration formats the current turn, including hours", () => {
   const page = readFileSync(join(GUI, "index.html"), "utf8");
   const source = page.match(/^function formatElapsed\([^]*?^}/m)?.[0];

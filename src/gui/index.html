@@ -2059,7 +2059,9 @@ const handlers = {
       renderPlan();
       append(el("div", "note", "计划已生成：可以修改、删除计划项，确认后点「执行计划」"));
     } else {
-      const label = { interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止", stagnant: "交替调用仍无进展，已停止", unverified: "计划未完成或未通过检查" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason);
+      const label = e.finishReason === "unverified"
+        ? unverifiedLabel()
+        : ({ interrupted: "已停止", max_steps: "达到步数上限", max_cost: "达到单轮成本上限", budget: "累计额度用完", repeated: "重复调用同一工具，已停止", stagnant: "交替调用仍无进展，已停止" }[e.finishReason] || (ok ? "完成" : "停止：" + e.finishReason));
       append(el("div", "end" + (ok ? "" : " bad"), `${label} · ${e.steps} 步`));
     }
     endTurn(e.continues);
@@ -2125,6 +2127,10 @@ $("mode-auto").addEventListener("change", async (ev) => {
 // ---------- /plan and /loop ----------
 const PLAN_MARK = { pending: "[ ]", in_progress: "[~]", completed: "[x]" };
 const NEXT_STATUS = { pending: "in_progress", in_progress: "completed", completed: "pending" };
+
+function unverifiedLabel() {
+  return planItems.some((item) => item.status !== "completed") ? "计划未完成" : "检查未通过";
+}
 
 // The `hello` event carries the whole session; switch tabs only change which event stream is open.
 function renderMultiAgent() {
