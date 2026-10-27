@@ -2,6 +2,8 @@
 
 从零搭的 coding agent，用于学习。主循环、工具、会话和评测由项目自己实现；原生多厂商协议使用 `@earendil-works/pi-ai`，现有 Chat Completions 兼容端点保留 `openai` SDK 适配。
 
+> 安全边界：这是本机运行的学习项目，不是沙箱。Agent 可读写工作区并执行 shell；`auto` 模式会自动批准工具调用。不要在含生产凭据或敏感文件的目录运行。启用 `--remote` 或 `--public` 前，先配置身份认证，并假设对话、代码和命令输出会被远端服务看到。
+
 ## 项目架构
 
 这是一个**在本机运行的 Node.js 编码 Agent**。CLI、网页和评测复用同一套会话与 Agent 核心；模型通过适配器接入，工具在目标工作区执行，会话与统计保存在本地文件中。
@@ -300,7 +302,7 @@ eval/tasks/             15 个练习任务（repo / check / solution / task.json
 test/                   loop、tools、权限、协议转换（含流式）、trace/脱敏、会话、HTTP 接口、eval
 ```
 
-★ 标记的文件是"决策点"，详见 [DECISIONS.md](DECISIONS.md)。
+★ 标记的文件是"决策点"，相关取舍记录在提交历史和源码注释中。
 
 <a id="orca--opencode"></a>
 

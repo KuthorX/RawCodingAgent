@@ -17,7 +17,7 @@
       "module": "agent",
       "title": "从零搭建 coding agent",
       "problem": "想看清楚 coding agent 内部到底怎么工作：主循环、工具调用、停止条件、上下文，而不是隐藏在框架后面。",
-      "change": "只用 openai SDK 发请求，自己写主循环（兼容任何 OpenAI Chat Completions 服务，默认 DeepSeek）；工具 read_file / write_file / edit_file / bash；会话持久化，可以继续、停止、在运行中插话；每个会话有自己的审批模式。DECISIONS.md 列出了可以做实验的设计决策点。",
+      "change": "只用 openai SDK 发请求，自己写主循环（兼容任何 OpenAI Chat Completions 服务，默认 DeepSeek）；工具 read_file / write_file / edit_file / bash；会话持久化，可以继续、停止、在运行中插话；每个会话有自己的审批模式。设计取舍记录在提交历史和源码注释中。",
       "commits": ["9f6a39f"]
     },
     {
