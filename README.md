@@ -72,6 +72,12 @@ npm run gui                              # 终端会打印带 token 的地址，
 npm run gui -- --cwd ../some-repo        # 可选：顺便把这个目录加入项目列表
 ```
 
+![网页界面：项目和会话列表](docs/screenshots/web-ui.png)
+
+![网页界面：会话对话页](docs/screenshots/web-ui-session.png)
+
+上面的截图使用本地伪造会话数据生成，只展示界面结构，不包含真实项目内容。
+
 - **项目**：在侧边栏点"+ 打开项目"，再点"选择…"弹出系统的文件夹选择框（macOS 用 `osascript`，Windows 用 PowerShell，Linux 需要 `zenity`），也可以在输入框里填路径（支持 `~`）后点"打开"。可以同时打开多个，列表保存在 `.projects.json`（旧的 `.workspaces.json` 会自动改名过来），下次启动不用再给 `--cwd`。项目通常是一个 git 仓库，也可以是仓库里的子目录或者普通文件夹。移除项目只是从列表拿掉，不删文件、worktree 和会话（会话会出现在"其他"分组）。
 - **工作区**（git worktree，参考 [Orca](https://github.com/stablyai/orca)）：项目下面列出它的工作区，第一个是项目目录本身（"主目录"），其余是这个仓库的 git worktree，每个显示分支和未提交的文件数。会话属于某个工作区，在工作区上点"+ 会话"就在那个目录里工作；不同工作区的会话改文件互不干扰。
   - **新建**：项目上点"+ 工作区"。可以新建分支 `agent/<名字>`，名字里带 `/`（如 `feat/login`）时就用它作分支全名、目录名把 `/` 换成 `-`（默认从 `origin/HEAD`，没有就依次试 `origin/main`、`origin/master`、`main`、`master`），也可以检出一个已有分支。目录放在仓库旁边的 `<仓库>.worktrees/<名字>`，仓库根目录的 `.worktreeinclude`（每行一个路径或 glob，如 `.env`）里列出的未跟踪文件会被复制过去。建好后自动在里面新建一个会话。项目是仓库里的子目录时，worktree 建在仓库这一级，会话进入 worktree 里同一个子目录。

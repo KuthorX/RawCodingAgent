@@ -12,7 +12,7 @@ interface Dialog {
   cancelCodes: number[];
 }
 
-function dialogFor(platform: NodeJS.Platform): Dialog {
+export function dialogFor(platform: NodeJS.Platform): Dialog {
   if (platform === "darwin") {
     // `activate` brings the dialog in front of the browser; -128 (exit 1) is "User canceled".
     return { cmd: "osascript", args: ["-e", "activate", "-e", `POSIX path of (choose folder with prompt "${PROMPT}")`], cancelCodes: [1] };
@@ -20,6 +20,8 @@ function dialogFor(platform: NodeJS.Platform): Dialog {
   if (platform === "win32") {
     const script = [
       "Add-Type -AssemblyName System.Windows.Forms",
+      "$OutputEncoding = [Text.Encoding]::UTF8",
+      "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
       "$d = New-Object System.Windows.Forms.FolderBrowserDialog",
       `$d.Description = '${PROMPT}'`,
       "if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.SelectedPath) }",
