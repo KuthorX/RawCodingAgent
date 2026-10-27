@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getCatalogModel, listCatalogModels, PROVIDERS, validateModelSelection } from "../src/providers/catalog.ts";
-import { PiProvider, PiProviderError, toPiContext } from "../src/providers/pi.ts";
+import { PI_MAX_OUTPUT_TOKENS, PiProvider, PiProviderError, toPiContext } from "../src/providers/pi.ts";
 import type { CompletionRequest, Message, ModelDelta } from "../src/types.ts";
 
 interface Call { url: string; headers: IncomingHttpHeaders; body: Record<string, unknown> }
@@ -93,7 +93,7 @@ test("Pi DeepSeek streams reasoning/tools, replays native reasoning, and account
   assert.equal(sent.messages.find((message) => message.role === "tool")?.tool_call_id, "call_ds");
   assert.equal(sent.thinking.type, "enabled");
   assert.equal(sent.reasoning_effort, "high");
-  assert.equal(sent.max_tokens, 8192);
+  assert.equal(sent.max_tokens, PI_MAX_OUTPUT_TOKENS);
   assert.equal(server.calls[0]!.url, "/v1/chat/completions");
   assert.equal(server.calls[0]!.headers.authorization, "Bearer test-deepseek-key");
 });
@@ -143,7 +143,7 @@ test("Pi Anthropic preserves signatures, counts cache writes, and caps thinking 
   const rates = getCatalogModel("anthropic", "claude-sonnet-4-5").cost;
   assert.ok(Math.abs(first.usage.costUsd! - (50 * rates.input + 20 * rates.cacheRead + 30 * rates.cacheWrite + 8 * rates.output) / 1_000_000) < 1e-12);
   const body = server.calls[0]!.body as { max_tokens: number; thinking: { type: string; budget_tokens: number } };
-  assert.ok(body.max_tokens <= 8192);
+  assert.ok(body.max_tokens <= PI_MAX_OUTPUT_TOKENS);
   assert.ok(body.thinking.budget_tokens < body.max_tokens);
   assert.equal(server.calls[0]!.url, "/v1/messages?beta=true");
   const followup = { ...request, messages: [...request.messages, first.message, { role: "tool_results" as const, results: [{ callId: "tool_a", content: "file", isError: false }] }] };
@@ -182,7 +182,7 @@ test("Pi OpenAI uses Responses and retains encrypted reasoning and text signatur
   // New Responses models encode the selected effort as a transcript configuration update.
   assert.ok(sent.input.some((item) => typeof item === "object" && item !== null && (item as { type?: string }).type === "configuration_update" && (item as { reasoning?: { effort?: string } }).reasoning?.effort === "xhigh"));
   assert.equal(result.message.piMessage?.providerThinkingLevel, "xhigh");
-  assert.equal(sent.max_output_tokens, 8192);
+  assert.equal(sent.max_output_tokens, PI_MAX_OUTPUT_TOKENS);
   assert.ok(Array.isArray(sent.input));
   assert.equal(server.calls[0]!.url, "/v1/responses");
   await provider.complete({ ...request, messages: [...request.messages, result.message, { role: "user", content: "continue" }] });

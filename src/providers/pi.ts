@@ -3,7 +3,7 @@ import type { AssistantMessage, Context, ImageContent, Message as PiMessage, Tex
 import type { CompletionRequest, CompletionResponse, Message, ModelDelta, Provider, ToolCall } from "../types.ts";
 import { getPiModel, nativeModels, validateModelSelection, type ModelSelection } from "./catalog.ts";
 
-export const PI_MAX_OUTPUT_TOKENS = 8192;
+export const PI_MAX_OUTPUT_TOKENS = 32768;
 type ReportedUsage = CompletionResponse["usage"];
 
 export class PiProviderError extends Error {
