@@ -18,379 +18,448 @@
       "title": "从零搭建 coding agent",
       "problem": "想看清楚 coding agent 内部到底怎么工作：主循环、工具调用、停止条件、上下文，而不是隐藏在框架后面。",
       "change": "只用 openai SDK 发请求，自己写主循环（兼容任何 OpenAI Chat Completions 服务，默认 DeepSeek）；工具 read_file / write_file / edit_file / bash；会话持久化，可以继续、停止、在运行中插话；每个会话有自己的审批模式。设计取舍记录在提交历史和源码注释中。",
-      "commits": ["9f6a39f"]
+      "commits": ["0757d6a"]
     },
     {
       "module": "gui",
       "title": "本地网页界面",
       "problem": "终端里看不清一轮里发生了什么，也不方便管理多个会话。",
       "change": "多工作区侧栏、对话页（bash 调用在页面上审批）、统计页（token、成本、每轮的 span 瀑布图）、原文件查看器；只监听 127.0.0.1，所有接口要 token。",
-      "commits": ["9f6a39f"]
+      "commits": ["0757d6a"]
     },
     {
       "module": "eval",
       "title": "评测：10 个练习任务",
       "problem": "改了 agent 之后没法知道是变好还是变坏。",
       "change": "每个任务有初始仓库、隐藏的验收测试和参考答案；PASS = 检查通过 + 自己结束 + 步数和成本都在预算内。工作区放在系统临时目录并各自 git init，运行前删掉环境变量里的凭据。",
-      "commits": ["9f6a39f"]
+      "commits": ["0757d6a"]
     },
     {
       "module": "gui",
       "title": "用系统对话框选择文件夹",
       "problem": "打开工作区要手敲绝对路径，容易出错。",
       "change": "侧栏的“选择文件夹…”弹出系统的文件夹选择框（macOS osascript、Windows PowerShell、Linux zenity）。",
-      "commits": ["4030e8c"]
+      "commits": ["5932ca5"]
     },
     {
       "module": "agent",
       "title": "按成本和重复调用截停失控的一轮，停之前先总结",
       "problem": "只有步数上限：一轮可能在步数用完前就烧掉很多钱，或者反复做同一个调用；被截停时也没有任何交接，用户不知道做到哪了。",
       "change": "新增单轮成本上限（默认 $0.5）和连续重复调用上限（默认 3 次），步数上限改为 100 只作兜底。碰到任何上限都追加一条说明再请求一次模型，让它总结已完成、剩余和下一步（保持同样的请求前缀，提示缓存仍然命中）。",
-      "commits": ["1006fc2"]
+      "commits": ["1bc2259"]
     },
     {
       "module": "gui",
       "title": "页面脚本语法错误导致整个页面失效",
       "problem": "一处字符串里的 ASCII 引号让页面脚本解析失败：会话列表全空、文件夹选择按钮失效，而 HTTP 测试发现不了。",
       "change": "修正引号；新增测试：编译每个页面的内联脚本和公共 JS。",
-      "commits": ["1006fc2"]
+      "commits": ["1bc2259"]
     },
     {
       "module": "eval",
       "title": "expert 难度任务与提示词规则实验",
       "problem": "通过率约 95%，区分不出改动的好坏；也不知道往 system prompt 里加规则到底有没有用。",
       "change": "新增 5 个 expert 任务；AGENT_PROMPT_RULES 可以 A/B 不同规则；npm run eval -- --report 并排比较多次运行（只比内容没变的任务，带置信区间）；实验后默认开启 spec 规则。统计页和侧栏显示当前上下文大小。",
-      "commits": ["bd79a8d"]
+      "commits": ["f7fc7a5"]
     },
     {
       "module": "tools",
       "title": "Windows 上可用的 bash，新增 glob / grep",
       "problem": "Windows 上 bash 可能是 WSL 的、输出乱码（GBK）、停止时杀不掉子进程、后台任务让会话永远卡住。",
       "change": "用 Git Bash（找不到时退回 PowerShell）并在工具描述里说明；整组杀进程；shell 退出就返回；非 UTF-8 的行按系统代码页解码。新增只读、免审批、限制在工作区内的 glob 和 grep。",
-      "commits": ["4bbf83d"]
+      "commits": ["358fb69"]
     },
     {
       "module": "model",
       "title": "连接中途断开时重试模型调用",
       "problem": "DeepSeek 偶尔在返回途中断开连接，SDK 不重试，一轮直接以“错误：terminated”结束。",
       "change": "对这类断连（以及 ECONNRESET 等）在 1 秒、3 秒后重试，每次尝试是单独的 llm span；等待期间点停止会正常结束这一轮。",
-      "commits": ["1c01cdd"]
+      "commits": ["36f43b1"]
     },
     {
       "module": "gui",
       "title": "助手消息按 Markdown 渲染",
       "problem": "只渲染了代码块，标题、加粗、表格、列表都显示成原始语法。",
       "change": "一个不依赖第三方库的小渲染器，先解析成数据（在 Node 里测试），再只用 textContent 构建 DOM，模型输出无法注入 HTML；只有 http(s) 链接可点。",
-      "commits": ["150b3d6"]
+      "commits": ["5e5508d"]
     },
     {
       "module": "tools",
       "title": "edit_file / write_file 保留 CRLF",
       "problem": "Windows 上签出的文件是 CRLF，模型给的 \\n 文本匹配不到。一个真实会话里，一次失败让模型此后 600 多次工具调用都不再用 edit_file，改写了 163 个 Python 替换脚本；write_file 还把 README 的换行全改了。",
       "change": "精确匹配不到时按 CRLF 再匹配并用 CRLF 写回；覆盖 CRLF 文件时保持 CRLF。评测的检查命令也改用 agent 的 shell，Windows 上能整组超时杀掉。",
-      "commits": ["5959e10"]
+      "commits": ["9ed351d"]
     },
     {
       "module": "tools",
       "title": "bash 输出和退出码之间不再多一个空行",
       "problem": "模型用 sed -n 读代码时，把这个多出来的空行当成文件里的空行抄进 edit_file 的 old_string，编辑因此失败。",
       "change": "去掉输出末尾和 [exit code] 之间多余的换行。",
-      "commits": ["8aa8e2d"]
+      "commits": ["03cc7ec"]
     },
     {
       "module": "tools",
       "title": "read_file 分段读取、edit_file 一次改多处",
       "problem": "一个 GUI 会话里约 3/4 的 bash 调用在做专用工具该做的事：43 次用 Python 脚本改文件、23 次 sed -n / cat 读片段。原因之一是 read_file 只能读整个文件、edit_file 一次只能改一处。",
       "change": "read_file 支持 offset / limit（默认最多 2000 行并提示从哪继续）；edit_file 支持 edits 数组，按顺序执行，任何一处失败整个文件不动。",
-      "commits": ["eba7d44"]
+      "commits": ["86e50d6"]
     },
     {
       "module": "prompt",
       "title": "提示词规则 tools：文件操作用专用工具",
       "problem": "即使有了专用工具，DeepSeek 仍然习惯用 bash 读、搜、改文件。",
       "change": "新增规则 tools（默认开启）：读、搜、改文件用专用工具，bash 只跑程序、测试和 git。AGENT_PROMPT_RULES=spec 可以关掉做对比。",
-      "commits": ["eba7d44"]
+      "commits": ["86e50d6"]
     },
     {
       "module": "gui",
       "title": "对话页交互重做",
       "problem": "会话被另一个进程占用时页面一片空白；中断后工具卡片一直显示“运行中”；审批结果的横条一直留着；层级扁平，每个工具调用都是一张带色边的卡片。",
       "change": "用 ai-design-quality skill 的独立评审循环（只看截图打分，4 → 5 分）：连续的工具调用合成一条时间线，3 次以上自动折叠；危险命令的审批标红；侧栏每个会话两行；没选会话时列出工作区；显示打不开会话的原因。",
-      "commits": ["f29a6af"]
+      "commits": ["7958f3c"]
     },
     {
       "module": "observability",
       "title": "trace 里记录每个会话实际用的 system prompt",
       "problem": "提示词规则在进程启动时确定，事后无法确认某个会话到底有没有启用 tools 规则。",
       "change": "每次加载会话，trace 的 session 事件都记录启用的规则、工具列表和完整 system prompt。",
-      "commits": ["f10054a"]
+      "commits": ["bc62792"]
     },
     {
       "module": "eval",
       "title": "度量 bash 偏好：bash file ops 指标",
       "problem": "感觉模型偏爱 bash，但没有数字，也就没法判断 tools 规则这类改动有没有效果。",
       "change": "按命令文本把 bash 调用分成读 / 搜 / 改文件、工作区外、其他；eval 结果和 --report 显示“工作区内经 bash 的文件操作 / 全部文件操作”。一个真实会话里这个比例是 69%，另有 51 次在工作区外。",
-      "commits": ["f10054a"]
+      "commits": ["bc62792"]
     },
     {
       "module": "tools",
       "title": "web_search：联网查资料",
       "problem": "遇到文档、报错信息、库版本这类工作区里没有的信息，agent 只能猜。",
       "change": "配了 TAVILY_API_KEY 就注册 web_search（只读、免审批，默认 5 条结果）；key 从 bash 能看到的环境变量里删掉；评测不启用，保证结果可比。",
-      "commits": ["f10054a"]
+      "commits": ["bc62792"]
     },
     {
       "module": "session",
       "title": "复制 session id、fork 会话",
       "problem": "想在另一个终端里 --resume 或在别处引用会话时，拿不到 session id；想从某个会话的当前进度分出去试另一种做法时，只能重新开始。",
       "change": "会话右键：复制 session id、复制工作区路径、fork。fork 复制到最后一轮结束为止的历史和审批模式，之后两边互不影响；统计只算 fork 之后的花费。",
-      "commits": ["7fd31bc"]
+      "commits": ["db10b33"]
     },
     {
       "module": "session",
       "title": "粘贴图片作为附件",
       "problem": "截图、报错画面没法直接发给 agent。",
       "change": "输入框可以粘贴或拖入最多 8 张图片，逐张可删；图片存在会话的 attachments/，消息里只记路径。模型支持图片时（OPENAI_VISION=true）作为图片发送，不支持时（如 deepseek-chat）告诉模型图片保存在哪里。",
-      "commits": ["bbd600f"]
+      "commits": ["a1e1d29"]
     },
     {
       "module": "workspace",
       "title": "项目与 git worktree 工作区（参考 Orca）",
       "problem": "一个目录只能有一个人在改：fork 出来的会话、并行的几个任务都在同一份代码上互相踩。",
       "change": "原来的“工作区”改叫项目；项目下的工作区就是仓库的 git worktree，各自有分支和目录。新建时可开新分支 agent/<名字> 或检出已有分支，放在 <仓库>.worktrees/ 下，按 .worktreeinclude 复制 .env 等文件；删除时检查未提交的改动，合并过的分支一起删。会话可以 fork 到新工作区。",
-      "commits": ["cdbe5ea"]
+      "commits": ["ec98aff"]
     },
     {
       "module": "cost",
       "title": "项目 / 工作区 / 会话的额度，以及每个会话的单轮上限",
       "problem": "只有全局的单轮步数和成本上限：没法给某个项目定总预算，也没法对某个会话说“步数不限，但每轮别超过 $1”。",
       "change": "会话可以单独设置每轮步数、每轮花费（默认 / 不限 / 自定义）和累计花费；项目和工作区可以设累计花费上限，侧栏显示“已花 / 上限”。一轮中途碰到上限会停下总结，用完后新消息被拒绝并说明是哪一层。",
-      "commits": ["7c8fc89"]
+      "commits": ["2d269b0"]
     },
     {
       "module": "gui",
       "title": "迭代记录页",
       "problem": "改动越来越多，只看 git log 不容易知道每次迭代解决了什么问题，也不方便按模块回顾。",
       "change": "新增 /iterations 页面：按时间线或按模块查看每次迭代的问题和改动，点击提交可以直接看完整的改动内容（git show），也能跳到 GitHub。数据在 docs/iterations.json，没被任何记录引用的提交会单独列出来，避免漏记。",
-      "commits": ["43f0e03"]
+      "commits": ["9acac1c"]
     },
     {
       "module": "session",
       "title": "插话也能带图片",
       "problem": "agent 运行中只能插话文字，想给它看截图得等这一轮结束或先停止。",
       "change": "运行中粘贴的图片跟插话一起，在下一步调用模型之前送达；这一轮先结束时，晚到的几条插话合并成下一轮的一条消息，文字和图片都保留。",
-      "commits": ["d27e95f"]
+      "commits": ["08ee9b6"]
     },
     {
       "module": "agent",
       "title": "工具调用被 max_tokens 截断后拆小重试",
       "problem": "模型一次 write_file 写整个大文件，输出超过上限被截断，这一轮直接停在 max_tokens，文件也没写进去。",
       "change": "截断的调用仍不执行，但返回结果让模型先写骨架、再用 edit_file 分段补全或拆成多个文件，然后继续这一轮；连续截断 2 次后才停下。界面和终端会提示每次重试。",
-      "commits": ["674e2f4"]
+      "commits": ["c4b0556"]
     },
     {
       "module": "cost",
       "title": "默认不限制步数",
       "problem": "长任务经常在 100 步时被打断，而跑飞的一轮其实已经有单轮成本上限和重复调用检查兜底。",
       "change": "AGENT_MAX_STEPS 改成和成本上限一样：0 或不设表示不限（默认），正整数才设上限；单独设过步数的会话不受影响。",
-      "commits": ["350a99a"]
+      "commits": ["2600caf"]
     },
     {
       "module": "workspace",
       "title": "工作区名字里的 / 保留为分支名",
       "problem": "新建工作区填 feat/xxx，斜杠被去掉，变成 agent/featxxx 这样不像样的分支。",
       "change": "名字带 / 时就是分支全名（feat/login），目录名把 / 换成 -（feat-login）；不带 / 的名字仍是 agent/<名字>。对话框里的分支预览同一规则。",
-      "commits": ["2e6bdd7"]
+      "commits": ["d56cd41"]
     },
     {
       "module": "gui",
       "title": "切换会话提速",
       "problem": "切到长会话很卡：3 MB、约 2000 条事件的会话要 6–7 秒才显示出来。",
       "change": "回放时不再每条事件都读 scrollHeight（每次都触发整页排版），回放完一次性滚到底；事件流里的工具输入和输出每个字段只发前 2000 字，工具结果不再重复带调用输入，传输量从 2.7 MB 降到 1.2 MB，截断的卡片可以点“显示全部”按需加载，审批仍显示完整命令。切换耗时降到约 0.4 秒。",
-      "commits": ["e1d7de8"]
+      "commits": ["d4be8a9"]
     },
     {
       "module": "gui",
       "title": "常驻标签页、会话搜索、归档与删除、设置页",
       "problem": "会话、统计、迭代记录是三个独立页面，切换时整页重新加载会闪一下，导航也不常驻顶部；会话只能越积越多，没法归档、删除或搜索；“新会话自动批准 bash”挤在侧栏底部。",
       "change": "一个页面四个常驻标签：会话 / 统计 / 迭代记录 / 设置。统计和迭代记录放在只创建一次、之后只隐藏的 iframe 里，切换是瞬时的，状态也保留；地址里的 #stats/<会话> 等记录当前标签。侧栏搜索框按标题、消息和回复搜索（不搜工具调用），高亮匹配片段。右键可以归档（收进“已归档”）或删除整个会话目录。新会话自动批准移到设置页，默认开启，存在 .settings.json。",
-      "commits": ["670ea2b"]
+      "commits": ["3b0ce78"]
     },
     {
       "module": "gui",
       "title": "统一的终端风格界面，浅色 / 深色主题，键盘操作",
       "problem": "各页面风格不统一，审批、运行状态这些需要人处理的东西不够醒目；只能用鼠标；代码块在中文 Windows 上落到宋体；原文件页切换文件会整页刷新。",
       "change": "全站等宽字体，琥珀色只标当前标签、运行中和等待批准；浅色、深色两套配色，默认跟随系统，可在设置里固定。1–4 切换标签，/ 搜索，y / n / a 回答审批，底部状态栏显示会话状态和可用按键。工具调用一行一个带 ✓ ✗ 标记，统计改成点线对齐的数值表，迭代记录保留模块配色；审批模式改成 switch，原文件页的文件改成原地切换的标签。",
-      "commits": ["b59a71c"]
+      "commits": ["4d61f5d"]
     },
     {
       "module": "tools",
       "title": "符号链接不能再把文件工具带出工作区",
       "problem": "路径检查只看字面路径。工作区里一个指向外面的链接（agent 用 bash 建的，或者仓库自带的）能让免审批的 read_file / write_file / edit_file 读写任意文件；SWE-bench 模式下 bash 关进了容器，这成了唯一的逃逸路径。",
       "change": "按真实路径检查：存在的部分解析符号链接，还不存在的文件看最近一级存在的父目录。指向工作区内的链接照常可用。",
-      "commits": ["cf8ddfd"]
+      "commits": ["f5cb48c"]
     },
     {
       "module": "eval",
       "title": "在 SWE-bench Verified 上评测",
       "problem": "自建任务通过率在 95% 左右，已经分不出改动的好坏，也没法和外部结果对照。",
       "change": "npm run eval:swe：从官方镜像复制代码、同路径挂回容器，只把 bash 换成在容器里执行的版本；在容器里以开始前的提交为基准取补丁（--binary），在新容器里按官方顺序打补丁、跑实例自带的评测脚本，用固定版本的 swebench 包解析日志。--validate 用参考答案验证评分链路。试跑 Django 6 题解决 3 题，$0.16；两道步数用完的题占了 84% 的花费。",
-      "commits": ["e9bbb26"]
+      "commits": ["a005cf6"]
     },
     {
       "module": "gui",
       "title": "已归档会话单独一个标签，会话菜单里设额度",
       "problem": "归档的会话堆在项目树最底下的一组里，看不出各自属于哪个项目和工作区；额度只能给当前打开的会话设，想改别的会话得先点开它。",
       "change": "侧栏分成\"会话 / 已归档\"两个标签，已归档是平铺列表，每条注明所属项目和工作区；会话右键菜单加\"设置额度…\"，直接给那个会话打开额度对话框。顺带修了输入框的 \">\" 提示符样式漏到对话框表单里。",
-      "commits": ["a3b53cb"]
+      "commits": ["da6fde9"]
     },
     {
       "module": "gui",
       "title": "页面内的确认和报错对话框",
       "problem": "删除、出错用的是浏览器原生的 alert() / confirm()：样式和界面不搭，报错带着 HTTP 状态码前缀；删除确认默认焦点在\"确定\"，回车就删了；在对话框里按 Esc 还会顺带停止正在运行的 agent。",
       "change": "common.js 里的 ask() / notice() 换成和界面同风格的页面内对话框：Enter 确认、Esc 取消；删除会话或工作区是红色的，默认焦点在\"取消\"；报错去掉状态码前缀；对话框里的 Esc 不再停止 agent。\"在文件管理器中打开\"按系统显示 Finder / 资源管理器。",
-      "commits": ["cac29c6"]
+      "commits": ["0986bfe"]
     },
     {
       "module": "gui",
       "title": "从手机和其他电脑访问（Tailscale）",
       "problem": "网页只监听 127.0.0.1，离开这台电脑就看不到 agent 在做什么、也批不了审批。直接监听局域网地址没有 HTTPS（浏览器限制多、token 会被同网段嗅探），也到不了外网。",
       "change": "--remote：读 tailscale status 拿本机 tailnet 名和所属账号，另开一个只给远程用的本地端口，用 tailscale serve --bg 在 tailnet 名上提供 HTTPS 并转发过去；局域网和外网都能用。算本机还是远程看请求进的是哪个端口，不看 Host（serve 原样转发 Host，独立审查发现按 Host 判断能被冒充成本机）。远程请求要过四层：tailnet Host、Tailscale-User-Login 等于本机账号、写请求同源、配对得到的设备 cookie。配对码只能在本机页面生成（二维码，5 分钟一次性），设备可撤销并立即断开推送；系统选择框和在 Finder 中显示只在本机可用。没用前台 serve：macOS 1.104 上进程被 kill 后配置不清，端口一直被占；--bg 退出时关掉，进程号记在 .remote-serve-<端口>.json，强杀留下的配置下次能认出来，别人的配置、另一个在跑的实例或 Funnel 则拒绝启动。",
-      "commits": ["e5c9ea8"]
+      "commits": ["1135f41"]
     },
     {
       "module": "gui",
       "title": "手机布局",
       "problem": "配上远程访问后在手机上打开，侧栏和对话挤在一起、文字一字一行；右键菜单和悬停才出现的按钮在触屏上用不了，iOS 聚焦输入框还会放大页面。",
       "change": "720px 以下一次一栏：会话列表，打开会话后是对话，\"‹\" 回到列表；表格横向滑动，统计瀑布图每个 span 两行，提交详情盖住整页。触屏上长按打开菜单（iOS Safari 没有 contextmenu 事件），悬停按钮常显，Enter 换行、点发送才发出；输入框 16px、高度用 dvh。",
-      "commits": ["3c147d6"]
+      "commits": ["34af11a"]
     },
     {
       "module": "gui",
       "title": "从公网访问（Cloudflare Tunnel + Access）",
       "problem": "手机不装 Tailscale 就打不开。公网入口意味着任何人都能连过来，而页面能让 agent 执行 bash；先单独做了技术评估（Funnel、Cloudflare Tunnel + Access、VPS + frp、端到端加密中继），选了边缘先登录、陌生人到不了 Mac 的 Cloudflare 方案，代价是 Cloudflare 能看到明文。",
       "change": "--public：再开一个只给 cloudflared 的本地端口（默认 4318），cloudflared 作为系统服务由用户自己配。每个请求先验 Cf-Access-Jwt-Assertion（node:crypto 手写 RS256 验签，只认 RS256 防算法混淆；iss、aud、exp/nbf 带 60 秒容差、邮箱白名单；不认识的密钥 ID 最多每分钟重取一次，取不到返回 503），再要配对过的设备。配对码和设备凭证绑定生成它的入口。从公网新建或 fork 的会话从每次询问开始（独立审查发现最初漏了 fork）。.audit.jsonl 记远程的写请求和被拒请求（用 close 事件，上传中途断开的也记下）。前端：请求失败时用 redirect: manual 探一次，确认 Access 登录过期就整页刷新，草稿存进 sessionStorage 刷新后恢复，一分钟内不重复刷新；iOS 回到前台超过 10 秒、bfcache 恢复或网络恢复时重连推送。还没用真实域名和 Cloudflare 账号实测。",
-      "commits": ["6e56dfb", "a82b716"]
+      "commits": ["355a96e", "015f3c4"]
     },
     {
       "module": "gui",
       "title": "通知、上下文压缩和会话模型切换",
       "problem": "会话结束后只能从灯的静态状态判断结果；长会话没有自动或手动压缩入口；侧栏只显示配置模型的泛化名称，无法查看和切换实际可用模型 ID。",
       "change": "增加浏览器 turn 状态通知，支持全局开关和右键菜单里的会话级三态覆盖；设置里新增默认 400000 token 自动压缩阈值，输入 /compact 可手动压缩并保留摘要与最近用户消息；通过 OpenAI 兼容 /models 拉取模型 ID，在会话顶部展示并允许切换；相关状态和设置持久化。",
-      "commits": ["771d4ed"]
+      "commits": ["510cc72"]
     },
     {
       "module": "gui",
       "title": "修复通知连接耗尽导致的 /compact 卡死",
       "problem": "全局通知为每个会话建立一个 EventSource，多个会话会耗尽浏览器连接并为每个锁注册进程退出监听器；空会话执行 /compact 时没有完成事件，页面会一直显示工作中。",
       "change": "改为一条复用的多会话通知流，事件携带会话 ID；会话锁改用单个进程退出清理钩子；空会话也发送压缩完成事件，并补充服务端、会话和页面回归测试。",
-      "commits": ["df4999d"]
+      "commits": ["e2bfbb7"]
     },
     {
       "module": "gui",
       "title": "显示压缩进度并补全斜杠命令",
       "problem": "发送 /compact 后要等压缩结束才看到界面反馈，侧栏无法区分普通运行和压缩；输入斜杠命令必须手动打完整。",
       "change": "新增压缩开始事件，当前会话立即显示压缩中提示，侧栏显示压缩中标记；输入 / 后提供命令候选，支持上下方向键、Tab 和鼠标补全。",
-      "commits": ["1914f7b"]
+      "commits": ["ea0baac"]
     },
     {
       "module": "gui",
       "title": "完善模型设置并兼容 Flash 推理历史",
       "problem": "设置页没有新会话默认模型；模型列表和单会话切换没有统一校验；从旧会话切到 deepseek-flash 后，历史 assistant 消息缺少 reasoning_content 会被 DeepSeek 400 拒绝。",
       "change": "设置页新增新会话默认模型并与通知、自动压缩分块；新会话和单会话模型只接受服务实际返回的 ID；保存并回传 reasoning_content，旧历史在 thinking 模型请求中补兼容字段。",
-      "commits": ["fce2338"]
+      "commits": ["aad4b3c"]
     },
     {
       "module": "gui",
       "title": "在会话行上直接归档或取消归档",
       "problem": "归档或取消归档只能通过右键菜单，触屏上还要长按；会话列表和搜索结果里都没有一眼可见的入口，已归档列表里的会话也只能右键恢复。",
       "change": "会话行右侧增加归档图标，已归档行和搜索结果里是对应的恢复图标；悬停、键盘聚焦或当前会话时出现，已归档列表和触屏上一直显示并有更大的点击区域。行改为链接加按钮的两栏结构，按钮不再嵌在链接里；归档行的时间和工作区仍在链接内，整行照样可以打开会话。",
-      "commits": ["021c227"]
+      "commits": ["678212b"]
     },
     {
       "module": "session",
       "title": "计划与循环会话模式",
       "problem": "计划清单只能由模型写，用户没法改、删或批准；多步任务每轮结束后还要手动说继续，长任务容易半途停下。",
       "change": "新增 /plan：会话进入只读模式，只暴露 read_file / list_dir / glob / grep / web_search / web_fetch / plan，探索后由模型写计划；网页顶部的计划面板可以切状态、原地改文字、删除单项、清空，点“执行计划”退出只读并让 agent 按清单开始。新增 /loop：一轮以 unverified 结束时用可编辑的提示词自动续跑，正常完成、出错、停止或达到最多轮数（默认 10）结束；模式条显示循环次数，可停止、改提示词和轮数、退出。模式和循环设置存进 meta.json，重启保留；/clear 和 fork 不继承模式，fork 仍复制计划。新增 POST /api/sessions/:id/mode 和 /plan 接口，运行中的会话拒绝改模式或计划。计划项同时只能有一个 in_progress：共享解析器和网页状态切换都保证这一点。",
-      "commits": ["118183d", "8f7f404"]
+      "commits": ["edfae3a", "e1f7830"]
     },
     {
       "module": "agent",
       "title": "一个会话里并发多个子 agent",
       "problem": "只在会话内部署一个 agent：调查任务要么串行搜索，要么把大量工具输出塞进主历史挤占上下文；独立的多文件改动也没法并行做，因为会话只有一个工作区。已有的 delegate_task 只能串行、只读、看不见过程。",
       "change": "新增 /multiagent 开关和 multi_agent 工具：一次调用最多 4 个子 agent 并发。scout 只拿只读工具，在会话工作区里并行搜索阅读；worker 按当前提交新建 git worktree 和 agent/multi-… 分支，在自己的工作区里改代码，父工作区不受影响。子 agent 的对话不进入父历史，只把最终回答、路径或分支写回工具结果；它们共享父 turn 的停止信号和预算，费用计入父 turn。连续只读工具调用也改成同一步并行（最多 3 个）。子 agent 事件带 agent id 写入 events.jsonl，网页在 multi_agent 卡片里为每个子 agent 开一个可折叠面板，实时显示它的工具调用、文本和结束时的步数/花费/分支。",
-      "commits": ["dd4b741", "b3f78d4"]
+      "commits": ["8ddad21", "75b4f11"]
     },
     {
       "module": "gui",
       "title": "设置页分区，顶栏标签收紧",
       "problem": "设置项一路加下来变成一屏长滚动：模型、厂商、通知、压缩、外观、远程访问全挤在一起，找一项要滚半天；顶部四个标签两侧各 16px 内边距，相邻标签之间空出 32px，看起来像多余的空白。",
       "change": "设置页加分区导航「模型 / 会话 / 界面 / 远程访问」，一次只显示一段，选择存 localStorage，刷新后回到同一段；「模型」放新会话默认模型和厂商连接，「会话」放自动批准、通知、压缩阈值，「界面」放外观，「远程访问」放配对和已配对设备。顶栏标签的内边距从 16px 收到 8px、数字与文字的间隔从 6px 收到 4px，标签之间的空隙减半。",
-      "commits": ["085fd1a"]
+      "commits": ["045fc46"]
     },
     {
       "module": "session",
       "title": "技能命令和 /clear",
       "problem": "技能只能靠改工作区文件切换，一个会话跑久了想重开又不想丢配置，也没有一条命令能把常用流程一次带进来。",
       "change": "新增技能发现与加载：从工作区及祖先目录、用户目录的 .agents/skills、.codex/skills、.claude/skills 读 SKILL.md，/skill 名称 [任务] 或 /技能名 [任务] 加载，加载内容并入 system prompt 并记录在 meta.json 的 skills 里。新增 /clear：切到同工作区、模型、思考强度和额度设置的空会话，旧会话保留可查，计划和已加载技能重置。终端和网页共用同一套命令解析，网页输入 / 时弹出命令和技能列表，方向键选择、Tab 补全。",
-      "commits": ["6b8331f"]
+      "commits": ["5ab5d2a"]
     },
     {
       "module": "model",
       "title": "多厂商模型设置",
       "problem": "只能连一个 OpenAI 兼容端点，换厂商要改 .env 重启；每个会话也没法单独选模型和思考强度，费用统计按一个价格表算。",
       "change": "接入 pi-ai 的原生厂商协议（OpenAI、Anthropic、Google、DeepSeek、OpenRouter），兼容端点仍走原来的实现；厂商密钥存在本机 .providers.json 并对接口脱敏，会话只保存选择。新增全局默认选择（新会话用哪家、哪个模型、哪个强度）和会话级选择，思考强度只列出模型支持的档位。计费按 Pi 目录逐次估算，缓存命中、缓存写入和失败请求的用量都进入统计与预算。附带为 Orca / OpenCode 加了 opencode.json 的 DeepSeek 端点配置。",
-      "commits": ["46bd57f", "1165ed9"]
+      "commits": ["f833474", "dbe9b3d"]
     },
     {
       "module": "agent",
       "title": "交替调用无进展检测",
       "problem": "模型会在两个命令之间来回打转：交替调用同一组工具、每次都得到同样的观察，步数和费用一直涨，但没有任何改动。",
       "change": "新增 cycle-guard：在完整的工具批次之间比较调用签名和结果摘要，同一组 2–6 个调用连续重复三轮先提醒，提醒后仍重复才以 stagnant 停下；成功写入、观察到的工作区变化和用户插话会重置记录。提醒消息在压缩后仍然保留，避免刚提醒就被摘要吃掉。",
-      "commits": ["816d145"]
+      "commits": ["0fdc33a"]
     },
     {
       "module": "agent",
       "title": "运行时护栏与完成判定",
       "problem": "子进程会继承 provider 凭据，子 agent 和压缩请求的用量没有算进同一个花费上限；输入预算只在请求前粗略检查，中断后已经执行的工具结果也可能丢。",
       "change": "把凭据从子进程环境里剔除（只保留 PATH 等必要项），子 agent 和压缩的模型调用统一计入预算；每个模型调用前用完整请求（system、工具定义、reasoning、图片预留）估算输入预算，超窗时先压缩、失败再报错。每次工具执行前后各写一次检查点，中断后保留已知结果并把未确认的副作用标为不确定；正常结束必须有过真实跑过的验证证据。",
-      "commits": ["16df9bd", "c181a98"]
-    },
-    {
-      "module": "repo",
-      "title": "拆成独立仓库",
-      "problem": "raw-coding-agent 和博客内容混在一个仓库里，两边历史互相稀释，评论、CI 和发版也没法独立。",
-      "change": "用 git subtree split 把这个目录的 62 个提交切到新仓库，保留原提交信息和顺序；补了一处必须修的：docs/iterations.json 里 45 个提交 hash 在重写后全部失效（测试会断言每个列出的提交都存在），按提交顺序一一映射重写。README、web-fetch 的 User-Agent 和两处测试里的旧仓库地址改成新仓库，父仓库只留一条删除提交。",
-      "commits": ["9207bf1"]
+      "commits": ["76fc7e2", "6b3ddc2"]
     },
     {
       "module": "gui",
       "title": "标签间距、设置分段与窄屏字号",
       "problem": "顶栏标签两侧各 16px 内边距、还带一条单侧边框，相邻标签之间空出 32px 且空隙被边框切成不均的两半；设置页一路加下来变成一屏长滚动，模型、厂商、通知、压缩、外观、远程访问全挤在一起。窄屏上 16px 的表单控件旁边是 12px 的标签文字，比例失调。",
       "change": "标签改成两侧各 12px、去掉单侧边框，标签之间的空隙由两个内边距对半组成；设置页加「模型 / 会话 / 界面 / 远程访问」分区导航，一次只显示一段，选择记在 localStorage，刷新后回到同一段。窄屏下把标签、设置导航、表单标签和说明文字统一提到 14px（表单控件保持 16px，避免 iOS 聚焦时缩放页面），并给设置导航加 border-radius: 0，去掉继承来的圆角。输入框去掉行首的 > 符号。",
-      "commits": ["adb029d", "cfd3a1d"]
+      "commits": ["c1ed75b", "d066781"]
     },
     {
       "module": "gui",
       "title": "自绘下拉框",
       "problem": "原生 select 的候选浮窗由系统绘制（蓝色高亮、圆角、系统字体），和终端风格的页面完全不搭，也没法统一键盘和触屏行为。",
       "change": "每个 select 都套一层 pick-wrap：真实 select 透明覆盖在原位，继续承担 value、options 和 change 事件，前面放一个页面绘制的按钮显示当前值；点击弹出本页绘制的菜单（方角、等宽字体、✓ 标记当前项、超出滚动、按视口上下翻转）。弹窗里的 select 把菜单挂进所属 dialog，因为模态对话框在顶层，挂到 body 会被盖住。代码里直接改 select.value 也会触发按钮同步。",
-      "commits": ["fd23abd"]
+      "commits": ["3e139f2"]
     },
     {
       "module": "session",
       "title": "命令回显",
       "problem": "/help、/skills、/plan、/multiagent 这类命令只有输出没有输入：翻记录时看不出这条结果是谁、在什么时候触发的；重开会话回放时更是只剩一段无主的说明文字。",
       "change": "命令现在和普通消息一样进对话流：服务端执行命令时写一条 command 事件，网页渲染成带「命令」标记的用户气泡，回放也在。命令仍然不进模型历史；像 /plan 任务 这种带任务的命令只显示用户输入的整行，模型收到的仍只是任务文本。命令写错时也先回显再报错。",
-      "commits": ["5a43f34"]
+      "commits": ["678fd79"]
     },
     {
       "module": "gui",
       "title": "输入区改版、附件支持任意文件、自定义指令",
       "problem": "输入框只有一行、行首还挂着 >；权限开关和厂商/模型/思考强度挤在对话页顶部，和输入不在一个视线里；Fork 占着顶部的常用位置。只能传图片，从 Finder 复制的文件粘贴进去会被忽略。统计和事件要么切标签页、要么新开浏览器标签，看完还得自己找回来。设置里没有地方写“每次都要遵守”的指令。",
       "change": "输入区改成上下两块：上面是三行起步、随内容增高、最多 25vh 的多行输入，下面一行左边是 + 附件按钮和权限开关，右边是厂商 / 模型 / 思考强度（自绘下拉）和发送；Fork 只留在会话右键菜单，顶部换成额度、改动、统计、事件。统计在弹窗里显示会话统计页，事件在弹窗里显示 events.jsonl 原文（超过 40 万字符只显示末尾），弹窗左下角能在新标签页打开、右下角关闭。附件不再限于图片：+ 按钮、粘贴（含从 Finder 复制）和拖拽都能加，图片仍走 vision，其他文件存进会话的 attachments/ 并让消息带上绝对路径和大小，agent 用 read_file 读（附件目录是文件工具唯一的工作区外例外，二进制文件会明确报错）。设置新增「指令」分区，最多 8000 字符的自定义指令会作为 ## Custom instructions 进每个会话的 system prompt，排在仓库 AGENTS.md 之前。",
-      "commits": ["50c67c9"]
+      "commits": ["1822201"]
+    },
+    {
+      "module": "cost",
+      "title": "全局会话额度设置",
+      "problem": "项目、工作区和会话已有额度，但无法统一设置新会话默认的累计上限。",
+      "change": "增加全局会话额度配置，并在 CLI、网页设置和会话创建流程中复用；现有会话额度继续按自身配置执行。",
+      "commits": ["41b77d4"]
+    },
+    {
+      "module": "repo",
+      "title": "仓库引用切换到 RawCodingAgent",
+      "problem": "拆仓后 README、工具 User-Agent 和测试仍指向旧仓库，链接与标识不一致。",
+      "change": "统一替换仓库 URL、项目名和 web-fetch User-Agent；更新工作区与迭代测试中的仓库引用。",
+      "commits": ["8ea6420"]
+    },
+    {
+      "module": "repo",
+      "title": "架构图与运行时差距分析",
+      "problem": "代码结构变化后，架构说明、图表和可复现分析没有同步，审查难以定位真实缺口。",
+      "change": "补充组件、总览和任务时序图；整理 README 架构入口；加入运行时分析与复现脚本，记录多 agent、工具批次和 worker 基准的差距。",
+      "commits": ["74bb35b", "64ed1ef", "3ac386e"]
+    },
+    {
+      "module": "agent",
+      "title": "混合工具批次串行化并保持 worker 基准",
+      "problem": "同一批工具同时含串行和并行调用时，执行顺序不稳定；worker 创建后基准提交可能漂移。",
+      "change": "按批次正确串行化混合工具调用；创建 worker 时固定父工作区基准，补充多 agent 回归覆盖。",
+      "commits": ["cbdf9eb"]
+    },
+    {
+      "module": "repo",
+      "title": "公开发布准备",
+      "problem": "项目准备公开发布时缺少许可证、安全政策和完整的发布说明。",
+      "change": "新增 LICENSE 与 SECURITY.md，补齐 README 的公开仓库说明、运行方式和截图入口。",
+      "commits": ["abbccb1"]
+    },
+    {
+      "module": "workspace",
+      "title": "保留中文 Windows 项目路径",
+      "problem": "Windows 中文路径经过系统选择和工作区转换后可能被错误编码或截断。",
+      "change": "保留原始 Unicode 路径并在 GUI、工作区创建和测试中覆盖中文路径。",
+      "commits": ["3016310"]
+    },
+    {
+      "module": "gui",
+      "title": "补充 GUI 发布截图",
+      "problem": "README 只有少量界面图片，无法展示会话、设置、统计和迭代页的完整状态。",
+      "change": "补充四个主要页面截图与截图脚本，更新 README 的展示入口和依赖锁定。",
+      "commits": ["a538ce3"]
+    },
+    {
+      "module": "gui",
+      "title": "回合计时与计划开关",
+      "problem": "长回合没有直接的耗时反馈，计划模式状态也不够明显。",
+      "change": "会话页显示当前回合计时，并增加计划模式开关；回合结束、停止和切换状态时同步清理计时。",
+      "commits": ["a1cada3"]
+    },
+    {
+      "module": "model",
+      "title": "提高原生 provider 输出上限",
+      "problem": "原生 provider 的输出限制过低，长回复和大工具调用容易提前截断。",
+      "change": "提高原生 provider 的 max output token 上限，并补充 provider 测试，保持预算与截断处理链路有效。",
+      "commits": ["a7cbabf"]
+    },
+    {
+      "module": "gui",
+      "title": "区分计划失败与检查失败",
+      "problem": "计划执行失败和验证检查失败在界面上使用同一种错误提示，用户无法判断下一步。",
+      "change": "按失败阶段显示计划或检查错误，更新状态渲染与页面测试，保留原始错误详情。",
+      "commits": ["b1982ba"]
+    },
+    {
+      "module": "agent",
+      "title": "未改文件的测试不再触发检查未通过",
+      "problem": "只运行 pytest 或 npm test 且工作区未变化时，验证器仍把 bash 调用当成改动，回合结束显示检查未通过。",
+      "change": "验证器记录所有 bash 调用前的状态，并按执行前后工作区指纹恢复未发生变化的状态；真实文件改动仍要求验证。新增回归测试。",
+      "commits": ["57c4f77"]
     }
-
   ]
 }
