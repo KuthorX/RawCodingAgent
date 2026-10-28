@@ -344,3 +344,31 @@ test("bash checks that leave workspace unchanged do not block completion", async
   assert.equal(result.isError, false);
   assert.equal(await verification.check(), null);
 });
+
+test("read-only bash does not fingerprint a noisy workspace", async () => {
+  const workspace = tempWorkspace();
+  const verification = await Verification.create(workspace);
+  const call = { id: "list", name: "bash" as const, input: { command: "ls -a . | head -20" } };
+  const result = await executeToolCall(call, makeDeps(new ScriptedProvider([]), {
+    workspace,
+    beforeTool: (toolCall) => verification.beforeTool(toolCall),
+    afterTool: (toolCall) => verification.afterTool(toolCall),
+  }));
+  assert.equal(result.isError, false);
+  assert.equal(await verification.check(), null);
+});
+
+test("read-only research turns finish without verification", async () => {
+  const provider = new ScriptedProvider([
+    reply("", [{ id: "list", name: "bash", input: { command: "ls -a . | head -20" } }]),
+    reply("research complete"),
+  ]);
+  const runtime = testRuntime(provider);
+  const meta = runtime.store.create(tempWorkspace(), "m", "auto");
+  const runner = new SessionRunner({ store: runtime.store, meta, makeDeps: runtime.makeDeps });
+  await runner.send("research").done;
+  const end = runtime.store.loadEvents(meta.id).at(-1)!;
+  assert.ok(end.type === "turn_end" && end.finishReason === "end_turn");
+  assert.doesNotMatch(JSON.stringify(runtime.store.loadMessages(meta.id)), /\[unverified\]/);
+  runner.close();
+});

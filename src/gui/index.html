@@ -2129,7 +2129,7 @@ const PLAN_MARK = { pending: "[ ]", in_progress: "[~]", completed: "[x]" };
 const NEXT_STATUS = { pending: "in_progress", in_progress: "completed", completed: "pending" };
 
 function unverifiedLabel() {
-  return planItems.some((item) => item.status !== "completed") ? "计划未完成" : "检查未通过";
+  return planItems.some((item) => item.status !== "completed") ? "计划未完成" : "未验证";
 }
 
 // The `hello` event carries the whole session; switch tabs only change which event stream is open.

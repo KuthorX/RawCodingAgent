@@ -152,11 +152,11 @@ test("unverified status names the actual blocking condition", () => {
   assert.ok(source);
   const context = vm.createContext({ planItems: [] });
   vm.runInContext(source, context);
-  assert.equal(context.unverifiedLabel(), "检查未通过");
+  assert.equal(context.unverifiedLabel(), "未验证");
   context.planItems = [{ text: "work", status: "in_progress" }];
   assert.equal(context.unverifiedLabel(), "计划未完成");
   context.planItems = [{ text: "work", status: "completed" }];
-  assert.equal(context.unverifiedLabel(), "检查未通过");
+  assert.equal(context.unverifiedLabel(), "未验证");
 });
 
 test("turn status duration formats the current turn, including hours", () => {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { findFiles } from "../tools/search.ts";
 import { runShell, formatShellResult, TIMEOUT_MS } from "../tools/bash.ts";
+import { isReadOnlyBashCommand } from "./permissions.ts";
 import { ToolError, type Tool } from "../tools/types.ts";
 import type { ToolCall } from "../types.ts";
 import { resolveInWorkspace } from "../tools/workspace.ts";
@@ -114,6 +115,9 @@ export class Verification {
 
   async beforeTool(call: ToolCall): Promise<void> {
     if (call.name === "bash") {
+      // Proven read-only shell commands cannot mutate the workspace. Skipping the fingerprint also avoids
+      // treating unrelated runtime churn in broad directories such as /tmp as an agent edit.
+      if (isReadOnlyBashCommand(String(call.input.command ?? ""))) return;
       this.beforeBash = await fingerprint(this.workspace, this.env);
       this.previousState = { changed: this.changed, checked: this.checked };
       this.changed = true;
