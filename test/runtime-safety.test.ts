@@ -331,3 +331,16 @@ test("bash modifications and incomplete plans cannot produce a successful comple
   }));
   assert.equal(planned.finishReason, "unverified");
 });
+
+test("bash checks that leave workspace unchanged do not block completion", async () => {
+  const workspace = tempWorkspace();
+  const verification = await Verification.create(workspace);
+  const call = { id: "check", name: "bash" as const, input: { command: "node -e 'process.exit(0)'" } };
+  const result = await executeToolCall(call, makeDeps(new ScriptedProvider([]), {
+    workspace,
+    beforeTool: (toolCall) => verification.beforeTool(toolCall),
+    afterTool: (toolCall) => verification.afterTool(toolCall),
+  }));
+  assert.equal(result.isError, false);
+  assert.equal(await verification.check(), null);
+});

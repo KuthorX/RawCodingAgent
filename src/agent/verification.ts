@@ -9,7 +9,6 @@ import { runShell, formatShellResult, TIMEOUT_MS } from "../tools/bash.ts";
 import { ToolError, type Tool } from "../tools/types.ts";
 import type { ToolCall } from "../types.ts";
 import { resolveInWorkspace } from "../tools/workspace.ts";
-import { isReadOnlyBashCommand } from "./permissions.ts";
 
 const exec = promisify(execFile);
 const INTERNAL = new Set([".sessions", ".eval-runs", ".codegraph", "__pycache__", ".pytest_cache", ".venv", "node_modules", ".git"]);
@@ -116,7 +115,7 @@ export class Verification {
   async beforeTool(call: ToolCall): Promise<void> {
     if (call.name === "bash") {
       this.beforeBash = await fingerprint(this.workspace, this.env);
-      this.previousState = isReadOnlyBashCommand(String(call.input.command ?? "")) ? { changed: this.changed, checked: this.checked } : undefined;
+      this.previousState = { changed: this.changed, checked: this.checked };
       this.changed = true;
       this.checked = undefined;
       this.persist();
