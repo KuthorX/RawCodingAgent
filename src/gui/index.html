@@ -78,6 +78,13 @@
 
   .layout { display: flex; }
   aside { width: 300px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  .sidebar-toggle { display: flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; height: 26px; padding: 0 10px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--muted); background: none; }
+  .sidebar-toggle:hover:not(:disabled) { color: var(--ink); background: var(--soft); }
+  .sidebar-toggle .icon { font-size: 16px; line-height: 1; }
+  #root.sidebar-collapsed aside { width: 34px; }
+  #root.sidebar-collapsed #sidebar-content { display: none; }
+  #root.sidebar-collapsed .sidebar-toggle { justify-content: center; padding: 0; }
+  #root.sidebar-collapsed .sidebar-toggle .label { display: none; }
   .new { padding: 10px 12px 0; display: flex; flex-direction: column; gap: 8px; }
   .new input[type=text] { flex: 1; min-width: 0; font-size: 12px; padding: 0 8px; height: 26px; border: 1px solid var(--line); background: var(--bg); }
   .new input[type=text]:focus { outline: none; border-color: var(--accent); }
@@ -418,6 +425,9 @@
     .tabs a { flex: 1; justify-content: center; padding: 8px 4px; white-space: nowrap; }
     .tabs a kbd, .topbar h1 { display: none; }
     aside { width: auto; flex: 1; min-width: 0; border-right: 0; }
+    .sidebar-toggle { display: none; }
+    #root.sidebar-collapsed aside { width: auto; }
+    #root.sidebar-collapsed #sidebar-content { display: block; }
     #root:not(.no-session) aside, #root.no-session .chat { display: none; }
     .chat-head { padding: 4px 10px; height: auto; min-height: 34px; flex-wrap: wrap; row-gap: 2px; }
     .chat-head .title { max-width: none; flex: 1; }
@@ -554,16 +564,19 @@
 </div>
 <div class="view layout" id="root">
   <aside>
-    <div class="new">
-      <button id="ws-add" type="button">+ 打开项目</button>
-      <div class="open-row" id="ws-form" hidden>
-        <input type="text" id="ws-path" placeholder="项目路径，或点右边选择">
-        <button id="ws-open" type="button" title="弹出系统的文件夹选择框">选择…</button>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="sidebar-content" aria-expanded="true" title="收起会话列表"><span class="icon" aria-hidden="true">‹</span><span class="label">收起会话列表</span></button>
+    <div id="sidebar-content">
+      <div class="new">
+        <button id="ws-add" type="button">+ 打开项目</button>
+        <div class="open-row" id="ws-form" hidden>
+          <input type="text" id="ws-path" placeholder="项目路径，或点右边选择">
+          <button id="ws-open" type="button" title="弹出系统的文件夹选择框">选择…</button>
+        </div>
       </div>
+      <div class="search"><label>/<input type="search" id="search" placeholder="搜索标题、消息、回复" autocomplete="off"></label></div>
+      <div class="side-tabs" id="side-tabs"><button type="button" data-list="active">会话</button><button type="button" data-list="archived">已归档 <span class="n" id="archived-count"></span></button></div>
+      <div id="sessions"></div>
     </div>
-    <div class="search"><label>/<input type="search" id="search" placeholder="搜索标题、消息、回复" autocomplete="off"></label></div>
-    <div class="side-tabs" id="side-tabs"><button type="button" data-list="active">会话</button><button type="button" data-list="archived">已归档 <span class="n" id="archived-count"></span></button></div>
-    <div id="sessions"></div>
   </aside>
   <section class="chat">
     <div class="chat-head">
@@ -825,6 +838,21 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !ev.de
 
 // ---------- session list ----------
 const collapsed = new Set(JSON.parse(localStorage.getItem("rca.collapsed") || '["__other__"]'));
+let sidebarCollapsed = localStorage.getItem("rca.sidebar-collapsed") === "1";
+function setSidebarCollapsed(value) {
+  sidebarCollapsed = value;
+  $("root").classList.toggle("sidebar-collapsed", value);
+  localStorage.setItem("rca.sidebar-collapsed", value ? "1" : "0");
+  const toggle = $("sidebar-toggle");
+  toggle.setAttribute("aria-expanded", String(!value));
+  toggle.title = value ? "展开会话列表" : "收起会话列表";
+  toggle.setAttribute("aria-label", toggle.title);
+  const icon = el("span", "icon", value ? "›" : "‹");
+  icon.setAttribute("aria-hidden", "true");
+  toggle.replaceChildren(icon, el("span", "label", value ? "展开会话列表" : "收起会话列表"));
+}
+$("sidebar-toggle").onclick = () => setSidebarCollapsed(!sidebarCollapsed);
+setSidebarCollapsed(sidebarCollapsed);
 let currentWorkspace = null;
 const THINK_LABELS = { off: "关闭", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "更高", max: "最高" };
 let providerList = [];
